@@ -1,13 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Search, ChefHat, Users, ArrowRight, Star, Clock, TrendingUp, Sparkles, Play } from 'lucide-react';
+import { Search, ChefHat, Users, ArrowRight, Star, Clock, TrendingUp, Sparkles, Play, Heart, BookOpen } from 'lucide-react';
 import { useRecipeStore } from '../stores/recipeStore';
 import { useAuthStore } from '../stores/authStore';
 import { motion, AnimatePresence } from 'framer-motion';
 
 const HomePage: React.FC = () => {
   const { featuredRecipes, recipes, fetchFeaturedRecipes, fetchRecipes, searchRecipes } = useRecipeStore();
-  const { isAuthenticated } = useAuthStore();
+  const { isAuthenticated, user } = useAuthStore();
   const [searchQuery, setSearchQuery] = useState('');
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
 
@@ -30,18 +30,6 @@ const HomePage: React.FC = () => {
       title: 'Seared Scallops',
       description: 'Ocean delicacy with cauliflower purée',
       chef: 'Chef Isabella'
-    },
-    {
-      url: 'https://images.pexels.com/photos/291528/pexels-photo-291528.jpeg?auto=compress&cs=tinysrgb&w=1920',
-      title: 'Chocolate Lava',
-      description: 'Molten indulgence, served warm',
-      chef: 'Chef Pierre'
-    },
-    {
-      url: 'https://images.pexels.com/photos/357756/pexels-photo-357756.jpeg?auto=compress&cs=tinysrgb&w=1920',
-      title: 'Sushi Artistry',
-      description: 'Japanese precision, chef\'s selection',
-      chef: 'Chef Takeshi'
     }
   ];
 
@@ -83,29 +71,21 @@ const HomePage: React.FC = () => {
     window.location.href = '/explore';
   };
 
-  const nextImage = () => {
-    setCurrentImageIndex((prev) => (prev + 1) % heroImages.length);
-  };
-
-  const prevImage = () => {
-    setCurrentImageIndex((prev) => (prev - 1 + heroImages.length) % heroImages.length);
-  };
-
   const recentRecipes = recipes.slice(0, 6);
   const trendingRecipes = recipes.filter(r => r.rating >= 4.7).slice(0, 4);
 
   return (
     <div className="min-h-screen bg-white dark:bg-gray-900">
-      {/* Hero Section with Rotating Food Images */}
-      <section className="relative h-screen flex items-center justify-center overflow-hidden">
-        {/* Rotating Background Images */}
-        <div className="absolute inset-0">
+      {/* Hero Section - Fixed Layout */}
+      <section className="relative min-h-screen flex items-center justify-center overflow-hidden">
+        {/* Background with fixed positioning */}
+        <div className="absolute inset-0 z-0">
           <AnimatePresence mode="wait">
             <motion.div
               key={currentImageIndex}
-              initial={{ opacity: 0, scale: 1.1 }}
+              initial={{ opacity: 0, scale: 1.05 }}
               animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.9 }}
+              exit={{ opacity: 0, scale: 0.95 }}
               transition={{ duration: 1.5, ease: "easeInOut" }}
               className="absolute inset-0"
             >
@@ -115,80 +95,17 @@ const HomePage: React.FC = () => {
                 className="w-full h-full object-cover"
               />
               <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/40 to-black/20"></div>
-              <div className="absolute inset-0 bg-gradient-to-r from-black/30 via-transparent to-black/30"></div>
             </motion.div>
           </AnimatePresence>
         </div>
 
-        {/* Navigation Arrows */}
-        <motion.button
-          whileHover={{ scale: 1.1, x: -5 }}
-          whileTap={{ scale: 0.95 }}
-          onClick={prevImage}
-          className="absolute left-8 top-1/2 transform -translate-y-1/2 z-20 p-4 rounded-full bg-white/10 backdrop-blur-md text-white hover:bg-white/20 transition-all duration-300 border border-white/20"
-        >
-          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-          </svg>
-        </motion.button>
-        
-        <motion.button
-          whileHover={{ scale: 1.1, x: 5 }}
-          whileTap={{ scale: 0.95 }}
-          onClick={nextImage}
-          className="absolute right-8 top-1/2 transform -translate-y-1/2 z-20 p-4 rounded-full bg-white/10 backdrop-blur-md text-white hover:bg-white/20 transition-all duration-300 border border-white/20"
-        >
-          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-          </svg>
-        </motion.button>
-
-        {/* Image Indicators */}
-        <div className="absolute bottom-8 left-1/2 transform -translate-x-1/2 z-20 flex space-x-3">
-          {heroImages.map((_, index) => (
-            <motion.button
-              key={index}
-              whileHover={{ scale: 1.2 }}
-              onClick={() => setCurrentImageIndex(index)}
-              className={`w-3 h-3 rounded-full transition-all duration-300 ${
-                index === currentImageIndex 
-                  ? 'bg-white scale-125 shadow-lg shadow-white/50' 
-                  : 'bg-white/50 hover:bg-white/75'
-              }`}
-            />
-          ))}
-        </div>
-
-        {/* Image Info */}
-        <div className="absolute bottom-24 left-8 z-20 text-white max-w-md">
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={currentImageIndex}
-              initial={{ opacity: 0, y: 30, x: -20 }}
-              animate={{ opacity: 1, y: 0, x: 0 }}
-              exit={{ opacity: 0, y: -30, x: 20 }}
-              transition={{ duration: 0.8, ease: "easeOut" }}
-              className="backdrop-blur-sm bg-black/20 p-6 rounded-2xl border border-white/20"
-            >
-              <div className="text-sm text-white/80 mb-2 tracking-wider uppercase font-medium">
-                {heroImages[currentImageIndex].chef}
-              </div>
-              <h3 className="text-4xl font-bold mb-3 drop-shadow-lg tracking-wide">
-                {heroImages[currentImageIndex].title}
-              </h3>
-              <p className="text-white/90 text-lg drop-shadow-md leading-relaxed">
-                {heroImages[currentImageIndex].description}
-              </p>
-            </motion.div>
-          </AnimatePresence>
-        </div>
-
-        {/* Main Content */}
-        <div className="relative z-10 text-center text-white max-w-6xl mx-auto px-6">
+        {/* Content Container - Properly positioned */}
+        <div className="relative z-20 w-full max-w-6xl mx-auto px-6 py-20">
           <motion.div
             initial={{ opacity: 0, y: 40 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 1, ease: "easeOut" }}
+            className="text-center text-white"
           >
             {/* Logo/Brand */}
             <div className="flex items-center justify-center mb-8">
@@ -234,15 +151,14 @@ const HomePage: React.FC = () => {
               Discover extraordinary recipes from passionate chefs around the world
             </motion.p>
 
-            {/* Enhanced Search Bar */}
-            <motion.form 
+            {/* Search Bar - Properly positioned */}
+            <motion.div 
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.8, delay: 0.7 }}
-              onSubmit={handleSearch} 
               className="mb-8"
             >
-              <div className="relative max-w-4xl mx-auto">
+              <form onSubmit={handleSearch} className="relative max-w-4xl mx-auto">
                 <input
                   type="text"
                   value={searchQuery}
@@ -259,8 +175,8 @@ const HomePage: React.FC = () => {
                 >
                   Search
                 </motion.button>
-              </div>
-            </motion.form>
+              </form>
+            </motion.div>
 
             {/* Trending Tags */}
             <motion.div 
@@ -286,7 +202,7 @@ const HomePage: React.FC = () => {
               ))}
             </motion.div>
 
-            {/* Single Primary CTA */}
+            {/* CTA */}
             <motion.div 
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
@@ -315,7 +231,99 @@ const HomePage: React.FC = () => {
             </motion.div>
           </motion.div>
         </div>
+
+        {/* Image Indicators - Fixed positioning */}
+        <div className="absolute bottom-8 left-1/2 transform -translate-x-1/2 z-30 flex space-x-3">
+          {heroImages.map((_, index) => (
+            <motion.button
+              key={index}
+              whileHover={{ scale: 1.2 }}
+              onClick={() => setCurrentImageIndex(index)}
+              className={`w-3 h-3 rounded-full transition-all duration-300 ${
+                index === currentImageIndex 
+                  ? 'bg-white scale-125 shadow-lg shadow-white/50' 
+                  : 'bg-white/50 hover:bg-white/75'
+              }`}
+            />
+          ))}
+        </div>
       </section>
+
+      {/* Subscriber Favorites Section */}
+      {isAuthenticated && (
+        <section className="py-20 bg-gradient-to-br from-orange-50 via-rose-50 to-pink-50 dark:from-orange-900/10 dark:via-rose-900/10 dark:to-pink-900/10">
+          <div className="max-w-7xl mx-auto px-6">
+            <motion.div 
+              initial={{ opacity: 0, y: 30 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.8 }}
+              viewport={{ once: true }}
+              className="text-center mb-16"
+            >
+              <div className="flex items-center justify-center space-x-3 mb-4">
+                <Heart className="text-rose-500" size={32} />
+                <h2 className="text-4xl font-bold text-gray-900 dark:text-white">Your Favorites</h2>
+              </div>
+              <p className="text-gray-600 dark:text-gray-400 text-lg">Recipes you've saved and loved</p>
+            </motion.div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+              {featuredRecipes.slice(0, 3).map((recipe, index) => (
+                <motion.div
+                  key={recipe.id}
+                  initial={{ opacity: 0, y: 30 }}
+                  whileInView={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.6, delay: index * 0.1 }}
+                  viewport={{ once: true }}
+                  whileHover={{ y: -8 }}
+                >
+                  <Link
+                    to={`/recipe/${recipe.id}`}
+                    className="group block bg-white dark:bg-gray-800 rounded-3xl overflow-hidden shadow-lg hover:shadow-2xl transition-all duration-500 transform hover:scale-105 border border-gray-100 dark:border-gray-700"
+                  >
+                    <div className="aspect-[4/3] overflow-hidden relative">
+                      <img
+                        src={recipe.image_url}
+                        alt={recipe.title}
+                        className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700"
+                      />
+                      <div className="absolute top-4 right-4">
+                        <Heart className="text-rose-500 fill-current" size={20} />
+                      </div>
+                    </div>
+                    <div className="p-6">
+                      <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-2 group-hover:text-orange-500 transition-colors">
+                        {recipe.title}
+                      </h3>
+                      <div className="flex items-center justify-between text-sm text-gray-500 dark:text-gray-400">
+                        <div className="flex items-center space-x-2">
+                          <Clock size={14} />
+                          <span>{recipe.prep_time + recipe.cook_time}m</span>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <Star size={14} className="text-amber-500 fill-current" />
+                          <span>{recipe.rating.toFixed(1)}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </Link>
+                </motion.div>
+              ))}
+            </div>
+
+            <div className="text-center mt-12">
+              <Link
+                to="/saved"
+                className="inline-flex items-center space-x-2 bg-gradient-to-r from-rose-500 to-pink-500 text-white px-8 py-4 rounded-2xl font-semibold hover:from-rose-600 hover:to-pink-600 transition-all duration-300 shadow-lg hover:shadow-xl"
+              >
+                <Heart size={20} />
+                <span>View All Favorites</span>
+                <ArrowRight size={16} />
+              </Link>
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* Recipe Preview Section */}
       <section className="py-24 bg-gradient-to-br from-gray-50 via-white to-gray-50 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900">

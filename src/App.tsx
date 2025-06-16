@@ -22,14 +22,19 @@ import ProfilePage from './pages/ProfilePage';
 import SettingsPage from './pages/SettingsPage';
 import LoginPage from './pages/auth/LoginPage';
 import RegisterPage from './pages/auth/RegisterPage';
+
+// Admin Pages
 import AdminDashboard from './pages/admin/AdminDashboard';
 import AdminUsers from './pages/admin/AdminUsers';
 import AdminRecipes from './pages/admin/AdminRecipes';
 import AdminAnalytics from './pages/admin/AdminAnalytics';
+import SuperAdminDashboard from './pages/admin/SuperAdminDashboard';
+import ContentCreatorDashboard from './pages/admin/ContentCreatorDashboard';
 
-// Protected Route Component
+// Protected Route Components
 import ProtectedRoute from './components/auth/ProtectedRoute';
 import AdminRoute from './components/auth/AdminRoute';
+import RoleBasedRoute from './components/auth/RoleBasedRoute';
 
 function App() {
   const { initialize } = useAuthStore();
@@ -59,9 +64,9 @@ function App() {
 
             {/* Protected Routes */}
             <Route path="/add-recipe" element={
-              <ProtectedRoute>
+              <RoleBasedRoute requiredPermission={{ resource: 'recipes', action: 'create' }}>
                 <AddRecipePage />
-              </ProtectedRoute>
+              </RoleBasedRoute>
             } />
             <Route path="/my-recipes" element={
               <ProtectedRoute>
@@ -94,25 +99,39 @@ function App() {
               </ProtectedRoute>
             } />
 
-            {/* Admin Routes */}
+            {/* Role-Based Admin Routes */}
             <Route path="/admin" element={
-              <AdminRoute>
-                <AdminDashboard />
-              </AdminRoute>
+              <RoleBasedRoute requiredRole="admin">
+                <SuperAdminDashboard />
+              </RoleBasedRoute>
             } />
             <Route path="/admin/users" element={
-              <AdminRoute>
+              <RoleBasedRoute requiredPermission={{ resource: 'users', action: 'manage' }}>
                 <AdminUsers />
-              </AdminRoute>
+              </RoleBasedRoute>
             } />
             <Route path="/admin/recipes" element={
-              <AdminRoute>
+              <RoleBasedRoute requiredPermission={{ resource: 'content', action: 'moderate' }}>
                 <AdminRecipes />
-              </AdminRoute>
+              </RoleBasedRoute>
             } />
             <Route path="/admin/analytics" element={
-              <AdminRoute>
+              <RoleBasedRoute requiredPermission={{ resource: 'analytics', action: 'view' }}>
                 <AdminAnalytics />
+              </RoleBasedRoute>
+            } />
+
+            {/* Content Creator Dashboard */}
+            <Route path="/creator" element={
+              <RoleBasedRoute requiredRole="content_creator">
+                <ContentCreatorDashboard />
+              </RoleBasedRoute>
+            } />
+
+            {/* Legacy Admin Routes (for backward compatibility) */}
+            <Route path="/admin/dashboard" element={
+              <AdminRoute>
+                <AdminDashboard />
               </AdminRoute>
             } />
           </Routes>
@@ -122,6 +141,7 @@ function App() {
           position="top-right"
           toastOptions={{
             className: 'dark:bg-gray-800 dark:text-white',
+            duration: 4000,
           }}
         />
       </div>
