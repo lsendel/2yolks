@@ -12,6 +12,7 @@ const HomePage: React.FC = () => {
   const { isAuthenticated, user } = useAuthStore();
   const [searchQuery, setSearchQuery] = useState('');
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
+  const [currentChefIndex, setCurrentChefIndex] = useState(0);
 
   // Intersection Observer refs for animations
   const [heroRef, heroInView] = useInView({ threshold: 0.1, triggerOnce: true });
@@ -62,7 +63,7 @@ const HomePage: React.FC = () => {
     { name: 'Desserts', icon: '🍰', count: '90+', color: 'from-pink-400 to-rose-500', recipes: 'Sweet indulgences' }
   ];
 
-  // Featured chefs data
+  // Featured chefs (always shown first)
   const featuredChefs = [
     {
       name: 'Chef Alessandro',
@@ -70,7 +71,9 @@ const HomePage: React.FC = () => {
       avatar: 'https://images.pexels.com/photos/1239291/pexels-photo-1239291.jpeg?auto=compress&cs=tinysrgb&w=150',
       recipes: 24,
       followers: '2.1k',
-      rating: 4.9
+      rating: 4.9,
+      featured: true,
+      bio: 'Master of traditional Italian cuisine with modern techniques'
     },
     {
       name: 'Chef Isabella',
@@ -78,7 +81,9 @@ const HomePage: React.FC = () => {
       avatar: 'https://images.pexels.com/photos/220453/pexels-photo-220453.jpeg?auto=compress&cs=tinysrgb&w=150',
       recipes: 18,
       followers: '1.8k',
-      rating: 4.8
+      rating: 4.8,
+      featured: true,
+      bio: 'Innovative French chef bringing elegance to every dish'
     },
     {
       name: 'Chef Marcus',
@@ -86,9 +91,89 @@ const HomePage: React.FC = () => {
       avatar: 'https://images.pexels.com/photos/1040881/pexels-photo-1040881.jpeg?auto=compress&cs=tinysrgb&w=150',
       recipes: 31,
       followers: '3.2k',
-      rating: 4.9
+      rating: 4.9,
+      featured: true,
+      bio: 'Award-winning chef specializing in contemporary fine dining'
     }
   ];
+
+  // Regular chefs (rotated randomly)
+  const regularChefs = [
+    {
+      name: 'Chef Maria',
+      specialty: 'Spanish Tapas',
+      avatar: 'https://images.pexels.com/photos/1181686/pexels-photo-1181686.jpeg?auto=compress&cs=tinysrgb&w=150',
+      recipes: 16,
+      followers: '1.2k',
+      rating: 4.7,
+      featured: false,
+      bio: 'Authentic Spanish flavors with a contemporary twist'
+    },
+    {
+      name: 'Chef David',
+      specialty: 'Asian Fusion',
+      avatar: 'https://images.pexels.com/photos/1181424/pexels-photo-1181424.jpeg?auto=compress&cs=tinysrgb&w=150',
+      recipes: 22,
+      followers: '1.9k',
+      rating: 4.8,
+      featured: false,
+      bio: 'Blending traditional Asian techniques with modern presentation'
+    },
+    {
+      name: 'Chef Sophie',
+      specialty: 'Pastry & Desserts',
+      avatar: 'https://images.pexels.com/photos/1181690/pexels-photo-1181690.jpeg?auto=compress&cs=tinysrgb&w=150',
+      recipes: 19,
+      followers: '2.3k',
+      rating: 4.9,
+      featured: false,
+      bio: 'Creating sweet masterpieces that are works of art'
+    },
+    {
+      name: 'Chef Antonio',
+      specialty: 'Mediterranean',
+      avatar: 'https://images.pexels.com/photos/774909/pexels-photo-774909.jpeg?auto=compress&cs=tinysrgb&w=150',
+      recipes: 27,
+      followers: '1.7k',
+      rating: 4.6,
+      featured: false,
+      bio: 'Fresh Mediterranean ingredients in every seasonal dish'
+    },
+    {
+      name: 'Chef Emma',
+      specialty: 'Plant-Based',
+      avatar: 'https://images.pexels.com/photos/1043471/pexels-photo-1043471.jpeg?auto=compress&cs=tinysrgb&w=150',
+      recipes: 21,
+      followers: '1.5k',
+      rating: 4.7,
+      featured: false,
+      bio: 'Proving that plant-based cuisine can be extraordinary'
+    },
+    {
+      name: 'Chef James',
+      specialty: 'BBQ & Grilling',
+      avatar: 'https://images.pexels.com/photos/1239291/pexels-photo-1239291.jpeg?auto=compress&cs=tinysrgb&w=150',
+      recipes: 15,
+      followers: '1.4k',
+      rating: 4.8,
+      featured: false,
+      bio: 'Master of smoke and fire, creating bold flavors'
+    }
+  ];
+
+  // Function to get current chef rotation
+  const getCurrentChefRotation = () => {
+    // Always show the 3 featured chefs first
+    const rotation = [...featuredChefs];
+    
+    // Add 3 random regular chefs
+    const shuffledRegular = [...regularChefs].sort(() => Math.random() - 0.5);
+    rotation.push(...shuffledRegular.slice(0, 3));
+    
+    return rotation;
+  };
+
+  const [chefRotation, setChefRotation] = useState(getCurrentChefRotation());
 
   useEffect(() => {
     fetchFeaturedRecipes();
@@ -102,6 +187,21 @@ const HomePage: React.FC = () => {
     }, 5000);
     return () => clearInterval(interval);
   }, [heroShowcase.length]);
+
+  // Auto-rotate chefs every 10 seconds
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setCurrentChefIndex((prev) => {
+        const nextIndex = (prev + 3) % chefRotation.length;
+        // If we've shown all chefs, shuffle the regular chefs again
+        if (nextIndex === 0) {
+          setChefRotation(getCurrentChefRotation());
+        }
+        return nextIndex;
+      });
+    }, 10000);
+    return () => clearInterval(interval);
+  }, [chefRotation.length]);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -119,6 +219,9 @@ const HomePage: React.FC = () => {
   const currentHero = heroShowcase[currentImageIndex];
   const recentRecipes = recipes.slice(0, 8);
   const trendingRecipes = recipes.filter(r => r.rating >= 4.7).slice(0, 6);
+
+  // Get current 3 chefs to display
+  const currentChefs = chefRotation.slice(currentChefIndex, currentChefIndex + 3);
 
   return (
     <div className="min-h-screen bg-white dark:bg-gray-900 overflow-hidden">
@@ -394,7 +497,7 @@ const HomePage: React.FC = () => {
         </div>
       </section>
 
-      {/* Featured Chefs */}
+      {/* Featured Chefs - Rotating Display */}
       <section className="py-20 bg-gradient-to-br from-orange-50 via-rose-50 to-pink-50 dark:from-orange-900/10 dark:via-rose-900/10 dark:to-pink-900/10">
         <div className="max-w-7xl mx-auto px-6">
           <motion.div
@@ -404,57 +507,108 @@ const HomePage: React.FC = () => {
             viewport={{ once: true }}
             className="text-center mb-16"
           >
-            <h2 className="text-4xl font-bold text-gray-900 dark:text-white mb-4">
-              Meet Our Featured Chefs
-            </h2>
-            <p className="text-xl text-gray-600 dark:text-gray-400">
+            <div className="flex items-center justify-center space-x-3 mb-4">
+              <Award className="h-8 w-8 text-orange-500" />
+              <h2 className="text-4xl font-bold text-gray-900 dark:text-white">
+                Meet Our Chefs
+              </h2>
+            </div>
+            <p className="text-xl text-gray-600 dark:text-gray-400 mb-4">
               Learn from culinary masters sharing their expertise
             </p>
+            <div className="flex items-center justify-center space-x-2 text-sm text-gray-500 dark:text-gray-400">
+              <div className="w-2 h-2 bg-orange-400 rounded-full animate-pulse"></div>
+              <span>Featured chefs rotate every 10 seconds</span>
+            </div>
           </motion.div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-            {featuredChefs.map((chef, index) => (
-              <motion.div
-                key={chef.name}
-                initial={{ opacity: 0, y: 30 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.6, delay: index * 0.1 }}
-                viewport={{ once: true }}
-                whileHover={{ y: -8 }}
-                className="bg-white dark:bg-gray-800 rounded-3xl p-8 shadow-lg hover:shadow-2xl transition-all duration-500 text-center border border-gray-100 dark:border-gray-700"
-              >
-                <img
-                  src={chef.avatar}
-                  alt={chef.name}
-                  className="w-24 h-24 rounded-full mx-auto mb-6 object-cover ring-4 ring-orange-100 dark:ring-orange-900/30"
-                />
-                <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-2">
-                  {chef.name}
-                </h3>
-                <p className="text-orange-500 font-medium mb-4">{chef.specialty}</p>
-                
-                <div className="flex items-center justify-center space-x-6 text-sm text-gray-600 dark:text-gray-400 mb-6">
-                  <div className="text-center">
-                    <div className="font-bold text-gray-900 dark:text-white">{chef.recipes}</div>
-                    <div>Recipes</div>
-                  </div>
-                  <div className="text-center">
-                    <div className="font-bold text-gray-900 dark:text-white">{chef.followers}</div>
-                    <div>Followers</div>
-                  </div>
-                  <div className="text-center">
-                    <div className="font-bold text-gray-900 dark:text-white flex items-center">
-                      <Star size={14} className="text-amber-500 fill-current mr-1" />
-                      {chef.rating}
+            <AnimatePresence mode="wait">
+              {currentChefs.map((chef, index) => (
+                <motion.div
+                  key={`${chef.name}-${currentChefIndex}`}
+                  initial={{ opacity: 0, y: 30, scale: 0.9 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: -30, scale: 0.9 }}
+                  transition={{ 
+                    duration: 0.6, 
+                    delay: index * 0.1,
+                    ease: "easeInOut"
+                  }}
+                  whileHover={{ y: -8 }}
+                  className={`bg-white dark:bg-gray-800 rounded-3xl p-8 shadow-lg hover:shadow-2xl transition-all duration-500 text-center border border-gray-100 dark:border-gray-700 ${
+                    chef.featured ? 'ring-2 ring-orange-200 dark:ring-orange-800' : ''
+                  }`}
+                >
+                  {/* Featured Badge */}
+                  {chef.featured && (
+                    <div className="absolute -top-3 left-1/2 transform -translate-x-1/2">
+                      <span className="px-4 py-1 bg-gradient-to-r from-amber-400 to-orange-500 text-white rounded-full text-xs font-semibold shadow-lg">
+                        ⭐ Featured Chef
+                      </span>
                     </div>
-                    <div>Rating</div>
+                  )}
+
+                  <div className="relative">
+                    <img
+                      src={chef.avatar}
+                      alt={chef.name}
+                      className="w-24 h-24 rounded-full mx-auto mb-6 object-cover ring-4 ring-orange-100 dark:ring-orange-900/30"
+                    />
+                    {chef.featured && (
+                      <div className="absolute -top-1 -right-1">
+                        <div className="w-6 h-6 bg-gradient-to-r from-amber-400 to-orange-500 rounded-full flex items-center justify-center">
+                          <Star size={12} className="text-white fill-current" />
+                        </div>
+                      </div>
+                    )}
                   </div>
-                </div>
-                
-                <button className="w-full bg-gradient-to-r from-orange-500 to-rose-500 text-white py-3 rounded-2xl font-semibold hover:from-orange-600 hover:to-rose-600 transition-all duration-300 shadow-lg hover:shadow-xl">
-                  View Recipes
-                </button>
-              </motion.div>
+
+                  <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-2">
+                    {chef.name}
+                  </h3>
+                  <p className="text-orange-500 font-medium mb-3">{chef.specialty}</p>
+                  <p className="text-sm text-gray-600 dark:text-gray-400 mb-6 leading-relaxed">
+                    {chef.bio}
+                  </p>
+                  
+                  <div className="flex items-center justify-center space-x-6 text-sm text-gray-600 dark:text-gray-400 mb-6">
+                    <div className="text-center">
+                      <div className="font-bold text-gray-900 dark:text-white">{chef.recipes}</div>
+                      <div>Recipes</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="font-bold text-gray-900 dark:text-white">{chef.followers}</div>
+                      <div>Followers</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="font-bold text-gray-900 dark:text-white flex items-center justify-center">
+                        <Star size={14} className="text-amber-500 fill-current mr-1" />
+                        {chef.rating}
+                      </div>
+                      <div>Rating</div>
+                    </div>
+                  </div>
+                  
+                  <button className="w-full bg-gradient-to-r from-orange-500 to-rose-500 text-white py-3 rounded-2xl font-semibold hover:from-orange-600 hover:to-rose-600 transition-all duration-300 shadow-lg hover:shadow-xl">
+                    View Recipes
+                  </button>
+                </motion.div>
+              ))}
+            </AnimatePresence>
+          </div>
+
+          {/* Chef Rotation Indicators */}
+          <div className="flex justify-center mt-12 space-x-2">
+            {Array.from({ length: Math.ceil(chefRotation.length / 3) }).map((_, index) => (
+              <div
+                key={index}
+                className={`w-2 h-2 rounded-full transition-all duration-300 ${
+                  Math.floor(currentChefIndex / 3) === index
+                    ? 'bg-orange-500 scale-125'
+                    : 'bg-gray-300 dark:bg-gray-600'
+                }`}
+              />
             ))}
           </div>
         </div>
