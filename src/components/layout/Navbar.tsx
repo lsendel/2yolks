@@ -18,11 +18,14 @@ import {
 } from 'lucide-react';
 import { useAuthStore } from '../../stores/authStore';
 import { useThemeStore } from '../../stores/themeStore';
+import { useLanguageStore } from '../../stores/languageStore';
+import LanguageSelector from './LanguageSelector';
 import { motion, AnimatePresence } from 'framer-motion';
 
 const Navbar: React.FC = () => {
   const { user, isAuthenticated, signOut } = useAuthStore();
   const { theme, toggleTheme } = useThemeStore();
+  const { t } = useLanguageStore();
   const navigate = useNavigate();
   const location = useLocation();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -35,17 +38,17 @@ const Navbar: React.FC = () => {
   };
 
   const navItems = [
-    { path: '/', label: 'Home' },
-    { path: '/explore', label: 'Recipes', icon: BookOpen },
+    { path: '/', label: t('home') },
+    { path: '/explore', label: t('recipes'), icon: BookOpen },
   ];
 
   const userMenuItems = [
-    { path: '/add-recipe', label: 'Add Recipe', icon: Plus },
-    { path: '/my-recipes', label: 'My Recipes', icon: User },
-    { path: '/saved', label: 'Saved', icon: Heart },
-    { path: '/meal-planner', label: 'Meal Planner', icon: Calendar },
-    { path: '/shopping-list', label: 'Shopping List', icon: ShoppingCart },
-    { path: '/settings', label: 'Settings', icon: Settings },
+    { path: '/add-recipe', label: t('addRecipe'), icon: Plus },
+    { path: '/my-recipes', label: t('myRecipes'), icon: User },
+    { path: '/saved', label: t('saved'), icon: Heart },
+    { path: '/meal-planner', label: t('mealPlanner'), icon: Calendar },
+    { path: '/shopping-list', label: t('shoppingList'), icon: ShoppingCart },
+    { path: '/settings', label: t('settings'), icon: Settings },
   ];
 
   if (user?.is_admin) {
@@ -101,6 +104,9 @@ const Navbar: React.FC = () => {
             >
               <Search size={20} className="group-hover:scale-110 transition-transform duration-300" />
             </button>
+
+            {/* Language Selector */}
+            <LanguageSelector />
 
             {/* Theme Toggle */}
             <button
@@ -169,7 +175,7 @@ const Navbar: React.FC = () => {
                           className="flex items-center space-x-3 w-full px-4 py-3 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 transition-all duration-200 group"
                         >
                           <LogOut size={16} className="group-hover:scale-110 transition-transform duration-200" />
-                          <span className="tracking-wide">Sign Out</span>
+                          <span className="tracking-wide">{t('signOut')}</span>
                         </button>
                       </div>
                     </motion.div>
@@ -182,13 +188,13 @@ const Navbar: React.FC = () => {
                   to="/login"
                   className="px-6 py-2.5 text-sm font-medium text-gray-700 dark:text-gray-200 hover:text-orange-500 transition-all duration-300 tracking-wide"
                 >
-                  Sign In
+                  {t('signIn')}
                 </Link>
                 <Link
                   to="/register"
                   className="px-6 py-2.5 text-sm font-medium bg-gradient-to-r from-orange-500 to-rose-500 text-white rounded-2xl hover:from-orange-600 hover:to-rose-600 transition-all duration-300 shadow-lg hover:shadow-xl transform hover:scale-105 tracking-wide"
                 >
-                  Join Free
+                  {t('joinFree')}
                 </Link>
               </div>
             )}
