@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Search, ChefHat, Users, ArrowRight, Star, Clock, TrendingUp, Sparkles, Play, Heart, BookOpen, Eye, MessageCircle, Timer, Award, Crown, Check, Video, PlayCircle, Instagram, Youtube, TikTok } from 'lucide-react';
+import { Search, ChefHat, Users, ArrowRight, Star, Clock, TrendingUp, Sparkles, Play, Heart, BookOpen, Eye, MessageCircle, Timer, Award, Crown, Check, Video, PlayCircle, Instagram, Youtube, BookText as TikTok } from 'lucide-react';
 import { useRecipeStore } from '../stores/recipeStore';
 import { useAuthStore } from '../stores/authStore';
 import { motion, AnimatePresence } from 'framer-motion';
