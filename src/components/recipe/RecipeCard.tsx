@@ -1,15 +1,18 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { Clock, Star, Heart, User, ChefHat } from 'lucide-react';
+import { Clock, Star, Heart, User, ChefHat, Eye, MessageCircle, Bookmark } from 'lucide-react';
 import { Recipe } from '../../lib/supabase';
 import { motion } from 'framer-motion';
+import { trackRecipeView, trackRecipeSave } from '../../utils/seo';
 
 interface RecipeCardProps {
   recipe: Recipe;
   onSave?: (recipeId: string) => void;
   isSaved?: boolean;
   showAuthor?: boolean;
+  showActions?: boolean;
   className?: string;
+  variant?: 'default' | 'compact' | 'featured';
 }
 
 const RecipeCard: React.FC<RecipeCardProps> = ({
@@ -17,7 +20,9 @@ const RecipeCard: React.FC<RecipeCardProps> = ({
   onSave,
   isSaved = false,
   showAuthor = true,
+  showActions = false,
   className = '',
+  variant = 'default',
 }) => {
   const totalTime = recipe.prep_time + recipe.cook_time;
 
@@ -26,7 +31,12 @@ const RecipeCard: React.FC<RecipeCardProps> = ({
     e.stopPropagation();
     if (onSave) {
       onSave(recipe.id);
+      trackRecipeSave(recipe.id, recipe.title);
     }
+  };
+
+  const handleCardClick = () => {
+    trackRecipeView(recipe.id, recipe.title);
   };
 
   const getDifficultyColor = (difficulty: string) => {
@@ -42,13 +52,24 @@ const RecipeCard: React.FC<RecipeCardProps> = ({
     }
   };
 
+  const getVariantClasses = () => {
+    switch (variant) {
+      case 'compact':
+        return 'max-w-sm';
+      case 'featured':
+        return 'max-w-md ring-2 ring-orange-200 dark:ring-orange-800';
+      default:
+        return '';
+    }
+  };
+
   return (
     <motion.div
       whileHover={{ y: -8, scale: 1.02 }}
       transition={{ duration: 0.4, ease: "easeOut" }}
-      className={`group bg-white dark:bg-gray-800 rounded-3xl shadow-lg hover:shadow-2xl transition-all duration-500 overflow-hidden border border-gray-100 dark:border-gray-700 backdrop-blur-sm ${className}`}
+      className={`group bg-white dark:bg-gray-800 rounded-3xl shadow-lg hover:shadow-2xl transition-all duration-500 overflow-hidden border border-gray-100 dark:border-gray-700 backdrop-blur-sm ${getVariantClasses()} ${className}`}
     >
-      <Link to={`/recipe/${recipe.id}`} className="block">
+      <Link to={`/recipe/${recipe.id}`} className="block" onClick={handleCardClick}>
         {/* Image Container */}
         <div className="relative aspect-[4/3] overflow-hidden">
           {recipe.image_url ? (
@@ -56,6 +77,7 @@ const RecipeCard: React.FC<RecipeCardProps> = ({
               src={recipe.image_url}
               alt={recipe.title}
               className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700"
+              loading="lazy"
             />
           ) : (
             <div className="w-full h-full bg-gradient-to-br from-slate-100 via-slate-200 to-slate-300 dark:from-gray-700 dark:via-gray-800 dark:to-gray-900 flex items-center justify-center">
@@ -66,37 +88,60 @@ const RecipeCard: React.FC<RecipeCardProps> = ({
           {/* Gradient Overlay */}
           <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
           
-          {/* Save Button */}
-          {onSave && (
-            <motion.button
-              whileHover={{ scale: 1.1 }}
-              whileTap={{ scale: 0.95 }}
-              onClick={handleSaveClick}
-              className={`absolute top-4 right-4 p-3 rounded-full backdrop-blur-md transition-all duration-300 shadow-lg ${
-                isSaved
-                  ? 'bg-rose-500/90 text-white shadow-rose-500/25'
-                  : 'bg-white/90 text-gray-600 hover:bg-rose-500 hover:text-white shadow-black/10'
-              }`}
-            >
-              <Heart size={18} className={isSaved ? 'fill-current' : ''} />
-            </motion.button>
-          )}
+          {/* Action Buttons */}
+          <div className="absolute top-4 right-4 flex space-x-2">
+            {onSave && (
+              <motion.button
+                whileHover={{ scale: 1.1 }}
+                whileTap={{ scale: 0.95 }}
+                onClick={handleSaveClick}
+                className={`p-3 rounded-full backdrop-blur-md transition-all duration-300 shadow-lg ${
+                  isSaved
+                    ? 'bg-rose-500/90 text-white shadow-rose-500/25'
+                    : 'bg-white/90 text-gray-600 hover:bg-rose-500 hover:text-white shadow-black/10'
+                }`}
+              >
+                <Heart size={18} className={isSaved ? 'fill-current' : ''} />
+              </motion.button>
+            )}
+            
+            {showActions && (
+              <motion.button
+                whileHover={{ scale: 1.1 }}
+                whileTap={{ scale: 0.95 }}
+                className="p-3 rounded-full bg-white/90 text-gray-600 hover:bg-blue-500 hover:text-white backdrop-blur-md transition-all duration-300 shadow-lg"
+              >
+                <Bookmark size={18} />
+              </motion.button>
+            )}
+          </div>
 
-          {/* Difficulty Badge */}
-          <div className="absolute bottom-4 left-4">
+          {/* Badges */}
+          <div className="absolute bottom-4 left-4 flex space-x-2">
             <span className={`px-4 py-2 rounded-full text-sm font-semibold backdrop-blur-md shadow-lg ${getDifficultyColor(recipe.difficulty)}`}>
               {recipe.difficulty}
             </span>
-          </div>
-
-          {/* Featured Badge */}
-          {recipe.is_featured && (
-            <div className="absolute top-4 left-4">
+            
+            {recipe.is_featured && (
               <span className="px-4 py-2 rounded-full text-sm font-semibold bg-gradient-to-r from-amber-400 to-orange-500 text-white backdrop-blur-md shadow-lg shadow-amber-500/25">
                 ⭐ Featured
               </span>
+            )}
+          </div>
+
+          {/* Quick Stats Overlay */}
+          <div className="absolute top-4 left-4 opacity-0 group-hover:opacity-100 transition-opacity duration-500">
+            <div className="flex space-x-3 text-white text-sm">
+              <div className="flex items-center space-x-1 bg-black/30 backdrop-blur-sm rounded-full px-3 py-1">
+                <Eye size={14} />
+                <span>{recipe.review_count * 10}</span>
+              </div>
+              <div className="flex items-center space-x-1 bg-black/30 backdrop-blur-sm rounded-full px-3 py-1">
+                <MessageCircle size={14} />
+                <span>{recipe.review_count}</span>
+              </div>
             </div>
-          )}
+          </div>
         </div>
 
         {/* Content */}
@@ -107,7 +152,7 @@ const RecipeCard: React.FC<RecipeCardProps> = ({
           </h3>
 
           {/* Description */}
-          {recipe.description && (
+          {recipe.description && variant !== 'compact' && (
             <p className="text-gray-600 dark:text-gray-400 text-sm mb-6 line-clamp-2 leading-relaxed">
               {recipe.description}
             </p>
@@ -135,7 +180,7 @@ const RecipeCard: React.FC<RecipeCardProps> = ({
             </div>
 
             {/* Nutrition Highlight */}
-            {recipe.nutrition && (
+            {recipe.nutrition && variant !== 'compact' && (
               <div className="text-xs text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 px-4 py-2 rounded-full font-medium">
                 {recipe.nutrition.calories} cal
               </div>
@@ -143,13 +188,14 @@ const RecipeCard: React.FC<RecipeCardProps> = ({
           </div>
 
           {/* Author */}
-          {showAuthor && recipe.author && (
+          {showAuthor && recipe.author && variant !== 'compact' && (
             <div className="flex items-center space-x-3 mb-6 pb-6 border-b border-gray-100 dark:border-gray-700">
               {recipe.author.avatar_url ? (
                 <img
                   src={recipe.author.avatar_url}
                   alt={recipe.author.username}
                   className="w-10 h-10 rounded-full object-cover ring-2 ring-gray-200 dark:ring-gray-700"
+                  loading="lazy"
                 />
               ) : (
                 <div className="w-10 h-10 bg-gradient-to-r from-orange-400 to-rose-400 rounded-full flex items-center justify-center shadow-lg">
@@ -168,7 +214,7 @@ const RecipeCard: React.FC<RecipeCardProps> = ({
           )}
 
           {/* Tags */}
-          {recipe.tags && recipe.tags.length > 0 && (
+          {recipe.tags && recipe.tags.length > 0 && variant !== 'compact' && (
             <div className="flex flex-wrap gap-2">
               {recipe.tags.slice(0, 3).map((tag) => (
                 <span
@@ -183,6 +229,20 @@ const RecipeCard: React.FC<RecipeCardProps> = ({
                   +{recipe.tags.length - 3}
                 </span>
               )}
+            </div>
+          )}
+
+          {/* Compact variant tags */}
+          {recipe.tags && recipe.tags.length > 0 && variant === 'compact' && (
+            <div className="flex flex-wrap gap-1">
+              {recipe.tags.slice(0, 2).map((tag) => (
+                <span
+                  key={tag}
+                  className="px-2 py-1 bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300 text-xs rounded-full font-medium"
+                >
+                  {tag}
+                </span>
+              ))}
             </div>
           )}
         </div>

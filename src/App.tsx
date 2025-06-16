@@ -1,8 +1,9 @@
 import React, { useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, useLocation } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { useAuthStore } from './stores/authStore';
 import { useThemeStore } from './stores/themeStore';
+import { trackPageView } from './utils/seo';
 
 // Layout Components
 import Navbar from './components/layout/Navbar';
@@ -22,6 +23,7 @@ import ProfilePage from './pages/ProfilePage';
 import SettingsPage from './pages/SettingsPage';
 import LoginPage from './pages/auth/LoginPage';
 import RegisterPage from './pages/auth/RegisterPage';
+import SocialLoginPage from './pages/auth/SocialLoginPage';
 
 // Admin Pages
 import AdminDashboard from './pages/admin/AdminDashboard';
@@ -35,6 +37,18 @@ import ContentCreatorDashboard from './pages/admin/ContentCreatorDashboard';
 import ProtectedRoute from './components/auth/ProtectedRoute';
 import AdminRoute from './components/auth/AdminRoute';
 import RoleBasedRoute from './components/auth/RoleBasedRoute';
+
+// Analytics wrapper component
+const AnalyticsWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const location = useLocation();
+
+  useEffect(() => {
+    // Track page views
+    trackPageView(window.location.href, document.title);
+  }, [location]);
+
+  return <>{children}</>;
+};
 
 function App() {
   const { initialize } = useAuthStore();
@@ -50,101 +64,104 @@ function App() {
 
   return (
     <Router>
-      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 transition-colors">
-        <Navbar />
-        <main className="flex-1">
-          <Routes>
-            {/* Public Routes */}
-            <Route path="/" element={<HomePage />} />
-            <Route path="/explore" element={<ExplorePage />} />
-            <Route path="/recipe/:id" element={<RecipeDetailPage />} />
-            <Route path="/profile/:username" element={<ProfilePage />} />
-            <Route path="/login" element={<LoginPage />} />
-            <Route path="/register" element={<RegisterPage />} />
+      <AnalyticsWrapper>
+        <div className="min-h-screen bg-gray-50 dark:bg-gray-900 transition-colors">
+          <Navbar />
+          <main className="flex-1">
+            <Routes>
+              {/* Public Routes */}
+              <Route path="/" element={<HomePage />} />
+              <Route path="/explore" element={<ExplorePage />} />
+              <Route path="/recipe/:id" element={<RecipeDetailPage />} />
+              <Route path="/profile/:username" element={<ProfilePage />} />
+              <Route path="/login" element={<LoginPage />} />
+              <Route path="/register" element={<RegisterPage />} />
+              <Route path="/signup" element={<SocialLoginPage />} />
 
-            {/* Protected Routes */}
-            <Route path="/add-recipe" element={
-              <RoleBasedRoute requiredPermission={{ resource: 'recipes', action: 'create' }}>
-                <AddRecipePage />
-              </RoleBasedRoute>
-            } />
-            <Route path="/my-recipes" element={
-              <ProtectedRoute>
-                <MyRecipesPage />
-              </ProtectedRoute>
-            } />
-            <Route path="/saved" element={
-              <ProtectedRoute>
-                <SavedRecipesPage />
-              </ProtectedRoute>
-            } />
-            <Route path="/meal-planner" element={
-              <ProtectedRoute>
-                <MealPlannerPage />
-              </ProtectedRoute>
-            } />
-            <Route path="/shopping-list" element={
-              <ProtectedRoute>
-                <ShoppingListPage />
-              </ProtectedRoute>
-            } />
-            <Route path="/cooking/:id" element={
-              <ProtectedRoute>
-                <CookingModePage />
-              </ProtectedRoute>
-            } />
-            <Route path="/settings" element={
-              <ProtectedRoute>
-                <SettingsPage />
-              </ProtectedRoute>
-            } />
+              {/* Protected Routes */}
+              <Route path="/add-recipe" element={
+                <RoleBasedRoute requiredPermission={{ resource: 'recipes', action: 'create' }}>
+                  <AddRecipePage />
+                </RoleBasedRoute>
+              } />
+              <Route path="/my-recipes" element={
+                <ProtectedRoute>
+                  <MyRecipesPage />
+                </ProtectedRoute>
+              } />
+              <Route path="/saved" element={
+                <ProtectedRoute>
+                  <SavedRecipesPage />
+                </ProtectedRoute>
+              } />
+              <Route path="/meal-planner" element={
+                <ProtectedRoute>
+                  <MealPlannerPage />
+                </ProtectedRoute>
+              } />
+              <Route path="/shopping-list" element={
+                <ProtectedRoute>
+                  <ShoppingListPage />
+                </ProtectedRoute>
+              } />
+              <Route path="/cooking/:id" element={
+                <ProtectedRoute>
+                  <CookingModePage />
+                </ProtectedRoute>
+              } />
+              <Route path="/settings" element={
+                <ProtectedRoute>
+                  <SettingsPage />
+                </ProtectedRoute>
+              } />
 
-            {/* Role-Based Admin Routes */}
-            <Route path="/admin" element={
-              <RoleBasedRoute requiredRole="admin">
-                <SuperAdminDashboard />
-              </RoleBasedRoute>
-            } />
-            <Route path="/admin/users" element={
-              <RoleBasedRoute requiredPermission={{ resource: 'users', action: 'manage' }}>
-                <AdminUsers />
-              </RoleBasedRoute>
-            } />
-            <Route path="/admin/recipes" element={
-              <RoleBasedRoute requiredPermission={{ resource: 'content', action: 'moderate' }}>
-                <AdminRecipes />
-              </RoleBasedRoute>
-            } />
-            <Route path="/admin/analytics" element={
-              <RoleBasedRoute requiredPermission={{ resource: 'analytics', action: 'view' }}>
-                <AdminAnalytics />
-              </RoleBasedRoute>
-            } />
+              {/* Role-Based Admin Routes */}
+              <Route path="/admin" element={
+                <RoleBasedRoute requiredRole="admin">
+                  <SuperAdminDashboard />
+                </RoleBasedRoute>
+              } />
+              <Route path="/admin/users" element={
+                <RoleBasedRoute requiredPermission={{ resource: 'users', action: 'manage' }}>
+                  <AdminUsers />
+                </RoleBasedRoute>
+              } />
+              <Route path="/admin/recipes" element={
+                <RoleBasedRoute requiredPermission={{ resource: 'content', action: 'moderate' }}>
+                  <AdminRecipes />
+                </RoleBasedRoute>
+              } />
+              <Route path="/admin/analytics" element={
+                <RoleBasedRoute requiredPermission={{ resource: 'analytics', action: 'view' }}>
+                  <AdminAnalytics />
+                </RoleBasedRoute>
+              } />
 
-            {/* Content Creator Dashboard */}
-            <Route path="/creator" element={
-              <RoleBasedRoute requiredRole="content_creator">
-                <ContentCreatorDashboard />
-              </RoleBasedRoute>
-            } />
+              {/* Content Creator Dashboard */}
+              <Route path="/creator" element={
+                <RoleBasedRoute requiredRole="content_creator">
+                  <ContentCreatorDashboard />
+                </RoleBasedRoute>
+              } />
 
-            {/* Legacy Admin Routes (for backward compatibility) */}
-            <Route path="/admin/dashboard" element={
-              <AdminRoute>
-                <AdminDashboard />
-              </AdminRoute>
-            } />
-          </Routes>
-        </main>
-        <Footer />
-        <Toaster
-          position="top-right"
-          toastOptions={{
-            className: 'dark:bg-gray-800 dark:text-white',
-            duration: 4000,
-          }}
-        />
-      </div>
+              {/* Legacy Admin Routes (for backward compatibility) */}
+              <Route path="/admin/dashboard" element={
+                <AdminRoute>
+                  <AdminDashboard />
+                </AdminRoute>
+              } />
+            </Routes>
+          </main>
+          <Footer />
+          <Toaster
+            position="top-right"
+            toastOptions={{
+              className: 'dark:bg-gray-800 dark:text-white',
+              duration: 4000,
+            }}
+          />
+        </div>
+      </AnalyticsWrapper>
     </Router>
   );
 }
