@@ -1,7 +1,9 @@
 //! yolk-harvest: provenance-first recipe source harvester.
 //!
 //! Ground rules (approved plan):
-//! - robots.txt is respected; one request per domain per `--delay` seconds.
+//! - robots.txt is respected, re-fetched per redirect target host.
+//! - No proxy env is honored; DNS is validated at connection time.
+//! - Requests are time- and size-bounded; failures fail closed.
 //! - Every record carries provenance: source URL, license, fetched-at.
 //! - Output goes to a local review queue (JSONL). Nothing publishes
 //!   automatically; a source needs a clearance review before any bulk run.
@@ -111,8 +113,9 @@ pub fn is_forbidden_host(host: &str) -> bool {
         if seg[0] & 0xfe00 == 0xfc00 || seg[0] & 0xffc0 == 0xfe80 || (seg[0] == 0x2001 && seg[1] == 0x0db8) {
             return true;
         }
-        // IPv4-mapped ::ffff:a.b.c.d - evaluate the embedded v4 address
-        if let Some(v4) = ip.to_ipv4_mapped() {
+        // IPv4-mapped (::ffff:a.b.c.d) and deprecated IPv4-compatible
+        // (::a.b.c.d) forms - evaluate the embedded v4 address
+        if let Some(v4) = ip.to_ipv4() {
             return is_forbidden_host(&v4.to_string());
         }
         return false;
@@ -167,8 +170,11 @@ impl ureq::unversioned::resolver::Resolver for GuardedResolver {
     }
 }
 
-fn fetch_and_queue(url: &str, license: &str, out: &std::path::Path) -> Result<(), String> {
-    let config = ureq::Agent::config_builder()
+/// Agent configuration for all harvesting requests. Never honor ambient
+/// proxy env vars: an HTTP proxy would move target DNS resolution to the
+/// proxy, outside GuardedResolver. Timeouts bound hanging hosts.
+fn harvest_config() -> ureq::config::Config {
+    ureq::Agent::config_builder()
         .user_agent("yolk-harvest/0.1 (private pilot; contact: site owner)")
         // Redirects handled manually: every hop re-validates scheme, host
         // (SSRF guard) and robots for the NEW host - a redirect must never
@@ -177,7 +183,17 @@ fn fetch_and_queue(url: &str, license: &str, out: &std::path::Path) -> Result<()
         // Return 4xx/5xx as responses so robots.txt 404 (no rules) and
         // fetch status handling decide explicitly instead of ureq erroring.
         .http_status_as_error(false)
-        .build();
+        // CRITICAL: ureq's default config reads ALL_PROXY/HTTPS_PROXY/
+        // HTTP_PROXY. A proxy would bypass the connection-time DNS guard.
+        .proxy(None)
+        .timeout_global(Some(std::time::Duration::from_secs(60)))
+        .timeout_per_call(Some(std::time::Duration::from_secs(30)))
+        .timeout_resolve(Some(std::time::Duration::from_secs(10)))
+        .build()
+}
+
+fn fetch_and_queue(url: &str, license: &str, out: &std::path::Path) -> Result<(), String> {
+    let config = harvest_config();
     let agent = ureq::Agent::with_parts(
         config,
         ureq::unversioned::transport::DefaultConnector::default(),
@@ -222,6 +238,8 @@ fn fetch_and_queue(url: &str, license: &str, out: &std::path::Path) -> Result<()
         }
         break resp
             .into_body()
+            .with_config()
+            .limit(5 * 1024 * 1024) // 5 MiB cap: a recipe page never needs more
             .read_to_string()
             .map_err(|e| format!("read failed: {e}"))?;
     };
@@ -275,7 +293,7 @@ mod ssrf_tests {
 
     #[test]
     fn blocks_private_ipv6_forms() {
-        for h in ["fc00::1", "fd12::1", "fe80::1", "2001:db8::1", "[fd00::1]", "::ffff:127.0.0.1", "::ffff:10.1.2.3"] {
+        for h in ["fc00::1", "fd12::1", "fe80::1", "2001:db8::1", "[fd00::1]", "::ffff:127.0.0.1", "::ffff:10.1.2.3", "::127.0.0.1", "::10.0.0.1", "::192.168.1.1", "[::127.0.0.1]"] {
             assert!(is_forbidden_host(h), "{h} should be blocked");
         }
         assert!(!is_forbidden_host("2606:4700:4700::1111"), "public v6 allowed");
@@ -316,5 +334,20 @@ mod resolver_tests {
         // Literal IPs parse without DNS, so this needs no network.
         let out = resolve("https://93.184.215.14/").unwrap();
         assert!(out.iter().any(|a| a.port() == 443));
+    }
+}
+
+
+#[cfg(test)]
+mod config_tests {
+    #[test]
+    fn harvest_config_never_uses_ambient_proxy_env() {
+        // ureq's default config builder adopts ALL_PROXY/HTTPS_PROXY/
+        // HTTP_PROXY when set; harvest_config must override that so target
+        // DNS always stays inside GuardedResolver.
+        let cfg = super::harvest_config();
+        assert!(cfg.proxy().is_none(), "harvesting must not use any proxy");
+        let t = cfg.timeouts();
+        assert!(t.global.is_some() && t.per_call.is_some() && t.resolve.is_some());
     }
 }

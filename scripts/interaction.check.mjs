@@ -57,6 +57,10 @@ try {
   // timer: mx steps have no time mention -> hidden; en step 2 has "3 minutes"
   const timerHidden = await page.$eval('[data-cook-timer]', (el) => el.hidden);
   check('cook mode: timer hidden without time mention', timerHidden);
+  // Pixel-level regression: the hidden attribute must win over display:flex
+  // (computed style), or MX untimed steps show a blank timer button.
+  const cookTimerState = await page.$eval('[data-cook-timer]', (el) => getComputedStyle(el).display);
+  check('cook mode: untimed step hides timer visually', cookTimerState === 'none', cookTimerState);
   await page.click('[data-cook-close]');
   const overlayClosed = await page.$eval('[data-cook-mode]', (el) => el.hidden);
   check('cook mode: closes', overlayClosed);

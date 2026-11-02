@@ -92,6 +92,8 @@ pub fn fetch_rules(agent: &ureq::Agent, url: &url::Url) -> Result<Rules, String>
     }
     let body = resp
         .body_mut()
+        .with_config()
+        .limit(1024 * 1024) // 1 MiB cap (RFC 9309 requires >= 500 KiB support)
         .read_to_string()
         .map_err(|e| RobotsError::Fetch(e.to_string()).to_string())?;
     Ok(Rules::parse(&body))

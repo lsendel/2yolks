@@ -10,8 +10,14 @@ time is a risk indicator, not a precise production CPU measurement; the gap
 ## Options qualified
 
 ### Passkeys (WebAuthn) - recommended primary
-- Ceremony cost: signature verification only (WebCrypto), a fraction of the
-  CPU budget. No password hashing anywhere.
+- Ceremony cost measured in local workerd (dev route /api/dev/passkey-spike,
+  Nov 1 2026): ECDSA P-256 verify 0.08 ms avg over 25 iterations (2 ms total);
+  keygen+sign 2 ms. WebCrypto executes natively and per Cloudflare docs is not
+  billed against Workers CPU time, so a passkey ceremony fits the free 10 ms
+  CPU budget with wide margin. No password hashing anywhere.
+- Still NOT a full-flow verification: the spike measures the dominant crypto
+  op, not an end-to-end WebAuthn registration/assertion with the Better Auth
+  passkey plugin, which remains to be wired and measured before activation.
 - No email delivery dependency for sign-in.
 - Caveats: account bootstrap + cross-device recovery still need an email
   fallback; Better Auth has a passkey plugin (verify against current release

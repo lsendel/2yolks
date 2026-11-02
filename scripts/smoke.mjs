@@ -6,9 +6,34 @@ const PORT = Number(process.env.PORT || 8799);
 const BASE = `http://127.0.0.1:${PORT}`;
 let failures = 0;
 
+process.on('unhandledRejection', (err) => {
+  failures++;
+  console.error('FAIL - unhandled rejection:', err && err.message ? err.message : err);
+});
+
 function check(name, cond, extra = '') {
   if (cond) { console.log(`ok - ${name}`); }
   else { failures++; console.error(`FAIL - ${name} ${extra}`); }
+}
+
+// Spawn detached so the whole process tree (npx shim + wrangler + workerd)
+// can be killed as a group; un-killed grandchildren leak ports and turn a
+// green run into a nonzero exit under CI process reaping.
+function spawnServer(args) {
+  const child = spawn('npx', args, { stdio: 'ignore', detached: true });
+  child.on('error', () => {});
+  return child;
+}
+
+function stopServer(child) {
+  return new Promise((resolve) => {
+    if (!child || child.exitCode !== null || child.signalCode !== null) return resolve();
+    const done = () => resolve();
+    child.once('close', done);
+    setTimeout(done, 5000).unref();
+    try { process.kill(-child.pid, 'SIGTERM'); }
+    catch { try { child.kill('SIGTERM'); } catch {} }
+  });
 }
 
 async function get(path, init) {
@@ -22,7 +47,7 @@ execSync('npx wrangler d1 execute 2yolks --local --file packages/api/migrations/
 execSync('npx wrangler d1 execute 2yolks --local --file packages/api/seeds/0001_demo.sql', { stdio: 'ignore' });
 execSync('npx wrangler d1 execute 2yolks --local --file packages/api/seeds/0002_demo_malicious.sql', { stdio: 'ignore' });
 
-const server = spawn('npx', ['wrangler', 'dev', '--port', String(PORT), '--local'], { stdio: 'ignore' });
+const server = spawnServer(['wrangler', 'dev', '--port', String(PORT), '--local']);
 // production mode: ALLOW_DEMO_SEED defaults to false
 await new Promise((r) => setTimeout(r, 12000));
 
@@ -61,10 +86,9 @@ try {
   check('submissions closed by default (503)', r.status === 503);
 
   // dev mode: demo seed visible
-  server.kill('SIGTERM');
-  await new Promise((r2) => setTimeout(r2, 3000));
+  await stopServer(server);
   const PORT2 = PORT + 1;
-  const dev = spawn('npx', ['wrangler', 'dev', '--port', String(PORT2), '--local', '--var', 'ALLOW_DEMO_SEED:true', '--var', 'SUBMISSIONS_ENABLED:true'], { stdio: 'ignore' });
+  const dev = spawnServer(['wrangler', 'dev', '--port', String(PORT2), '--local', '--var', 'ALLOW_DEMO_SEED:true', '--var', 'SUBMISSIONS_ENABLED:true']);
   await new Promise((r2) => setTimeout(r2, 12000));
   try {
     const get2 = async (path) => { const res = await fetch(`http://127.0.0.1:${PORT2}` + path, { redirect: 'manual' }); return { status: res.status, headers: res.headers, body: await res.text(), location: res.headers.get('location') }; };
@@ -100,9 +124,9 @@ try {
     pr = await post({ source: { name: 'x', url: 'http://insecure.example', license: 'unknown' }, locales: [{ country: 'mx', lang: 'es', title: 't', ingredients: ['a'], steps: ['b'] }] });
     check('submission: insecure source url rejected', pr.status === 400);
   } finally {
-    dev.kill('SIGTERM');
+    await stopServer(dev);
   }
 } finally {
-  server.kill('SIGTERM');
+  await stopServer(server);
 }
 process.exit(failures === 0 ? 0 : 1);

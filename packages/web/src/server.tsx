@@ -69,6 +69,7 @@ ol.steps li { margin: 0.5rem 0; }
 .cook-nav button { flex: 1; background: var(--brand); color: #fff; border: 0; border-radius: 0.5rem; padding: 0.75rem; font-size: 1.1rem; font-weight: 700; cursor: pointer; }
 .cook-nav button:first-child { background: var(--card); color: var(--ink); border: 1px solid #e7e5e4; }
 .cook-timer { display: flex; gap: 0.75rem; align-items: center; }
+.cook-timer[hidden] { display: none; }
 .timer-btn { border: 1px solid var(--brand); color: var(--brand); background: none; border-radius: 0.5rem; padding: 0.4rem 0.9rem; font-weight: 600; cursor: pointer; }
 .timer-display { font-size: 1.4rem; font-weight: 700; font-variant-numeric: tabular-nums; }
 `;

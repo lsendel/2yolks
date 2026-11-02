@@ -67,6 +67,48 @@ app.get('/api/dev/cpu-spike', (c) => {
   return c.json({ scrypt_ms: ms, key_bytes: key.length, params: { N: 16384, r: 8, p: 1 } });
 });
 
+// Dev-only passkey-cost spike: a WebAuthn assertion verification is dominated
+// by one ECDSA P-256 verify. WebCrypto runs natively in workerd (off the
+// JS CPU clock per Cloudflare docs), so this measures the wall cost of the
+// operations a real passkey login performs per ceremony.
+app.get('/api/dev/passkey-spike', async (c) => {
+  if (!demoAllowed(c)) return c.notFound();
+  const iterations = 25;
+  const t0 = Date.now();
+  const keyPair = await crypto.subtle.generateKey(
+    { name: 'ECDSA', namedCurve: 'P-256' },
+    true,
+    ['sign', 'verify'],
+  );
+  const payload = new Uint8Array(37); // authenticatorData(32+) + clientDataHash(32) shape
+  crypto.getRandomValues(payload);
+  const sig = await crypto.subtle.sign(
+    { name: 'ECDSA', hash: 'SHA-256' },
+    keyPair.privateKey,
+    payload,
+  );
+  const setupMs = Date.now() - t0;
+  let verifyMs = 0;
+  for (let i = 0; i < iterations; i++) {
+    const t = Date.now();
+    const ok = await crypto.subtle.verify(
+      { name: 'ECDSA', hash: 'SHA-256' },
+      keyPair.publicKey,
+      sig,
+      payload,
+    );
+    verifyMs += Date.now() - t;
+    if (!ok) return c.json({ error: 'verify failed' }, 500);
+  }
+  return c.json({
+    keygen_sign_ms: setupMs,
+    verify_avg_ms: verifyMs / iterations,
+    verify_total_ms: verifyMs,
+    iterations,
+    note: 'WebCrypto executes natively; per Cloudflare docs it is not billed against Workers CPU time.',
+  });
+});
+
 app.get('/api/v1/countries', (c) =>
   c.json({ countries: COUNTRIES, locales: LOCALES }),
 );
