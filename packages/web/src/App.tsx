@@ -9,8 +9,8 @@ export function Home({ locales }: HomeProps) {
   return (
     <main>
       <h1>2yolks</h1>
-      <p>Recipes worth cracking two eggs for.</p>
-      <ul>
+      <p className="tagline">Recipes worth cracking two eggs for.</p>
+      <ul className="cards">
         {locales.map((l) => (
           <li key={`${l.country}-${l.lang}`}>
             <a href={countryPath(l.country)}>
@@ -33,7 +33,7 @@ export function CountryHome({ countryName, country, recipes }: CountryHomeProps)
   return (
     <main>
       <h1>{countryName}</h1>
-      <ul>
+      <ul className="cards">
         {recipes.map((r) => (
           <li key={`${r.id}-${r.slug}`}>
             <a href={recipePath(country, r.id, r.slug)}>{r.title}</a>
@@ -44,13 +44,23 @@ export function CountryHome({ countryName, country, recipes }: CountryHomeProps)
   );
 }
 
-export function RecipeView({ page }: { page: RecipePage }) {
+export function RecipeView({ page, alternates = [] }: { page: RecipePage; alternates?: { hreflang: string; href: string }[] }) {
   const t = uiStrings(page.locale.lang);
   const ingredients = JSON.parse(page.locale.ingredientsJson) as string[];
   const steps = JSON.parse(page.locale.stepsJson) as string[];
+  const others = alternates.filter((a) => a.hreflang !== 'x-default' && !a.hreflang.startsWith(page.locale.lang + '-'));
   return (
     <main>
       <h1>{page.locale.title}</h1>
+      {others.length > 0 ? (
+        <p className="langs">
+          {others.map((a) => (
+            <a key={a.hreflang} href={a.href} hrefLang={a.hreflang}>
+              {a.hreflang}
+            </a>
+          ))}
+        </p>
+      ) : null}
       {page.locale.intro ? <p>{page.locale.intro}</p> : null}
       <h2>{t.ingredients}</h2>
       <ul>
@@ -64,7 +74,7 @@ export function RecipeView({ page }: { page: RecipePage }) {
           <li key={s}>{s}</li>
         ))}
       </ol>
-      <p>
+      <p className="recipe-source">
         {t.source}:{' '}
         {page.source.url.startsWith('http') ? (
           <a href={page.source.url}>{page.source.name}</a>

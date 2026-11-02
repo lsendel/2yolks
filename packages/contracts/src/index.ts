@@ -132,6 +132,104 @@ export function uiStrings(lang: string): UiStrings {
 }
 
 // ---------------------------------------------------------------------------
+// Recipe submission validation (fail closed). All ingestion paths - UGC
+// forms, MCP submissions, harvester candidates - must parse through this
+// schema before any row is written. Unknown/invalid input is rejected, never
+// sanitized silently.
+// ---------------------------------------------------------------------------
+
+export interface RecipeLocaleInput {
+  country: string;
+  lang: string;
+  title: string;
+  slug?: string;
+  intro?: string;
+  ingredients: string[];
+  steps: string[];
+}
+
+export interface RecipeSubmission {
+  source: { name: string; url: string; license: string };
+  originCountry?: string;
+  locales: RecipeLocaleInput[];
+}
+
+export interface ValidationFailure {
+  path: string;
+  message: string;
+}
+
+export type ValidationResult =
+  | { ok: true; value: RecipeSubmission }
+  | { ok: false; errors: ValidationFailure[] };
+
+const MAX_LEN = { title: 200, intro: 2000, item: 1000, name: 200, url: 2000 };
+
+export function validateRecipeSubmission(input: unknown): ValidationResult {
+  const errors: ValidationFailure[] = [];
+  const fail = (path: string, message: string) => errors.push({ path, message });
+
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) {
+    return { ok: false, errors: [{ path: '', message: 'submission must be an object' }] };
+  }
+  const sub = input as Record<string, unknown>;
+
+  // source
+  const src = sub['source'];
+  if (typeof src !== 'object' || src === null) {
+    fail('source', 'source is required');
+  } else {
+    const s = src as Record<string, unknown>;
+    if (typeof s['name'] !== 'string' || s['name'].length === 0 || s['name'].length > MAX_LEN.name)
+      fail('source.name', 'required, max 200 chars');
+    if (typeof s['url'] !== 'string' || !(s['url'].startsWith('https://') || s['url'].startsWith('internal:')) || s['url'].length > MAX_LEN.url)
+      fail('source.url', 'must be https:// (or internal: for dev fixtures)');
+    if (typeof s['license'] !== 'string' || s['license'].length === 0)
+      fail('source.license', 'required (SPDX id, unknown, proprietary, or internal-demo)');
+  }
+
+  if (sub['originCountry'] !== undefined) {
+    if (typeof sub['originCountry'] !== 'string' || !getCountry(sub['originCountry'] as string))
+      fail('originCountry', 'unknown country code');
+  }
+
+  // locales
+  const locs = sub['locales'];
+  if (!Array.isArray(locs) || locs.length === 0) {
+    fail('locales', 'at least one locale is required');
+  } else {
+    const seen = new Set<string>();
+    locs.forEach((l, i) => {
+      if (typeof l !== 'object' || l === null) return fail(`locales[${i}]`, 'must be an object');
+      const lc = l as Record<string, unknown>;
+      const country = lc['country'];
+      const lang = lc['lang'];
+      if (typeof country !== 'string' || !getCountry(country)) fail(`locales[${i}].country`, 'unknown country');
+      if (typeof lang !== 'string' || typeof country !== 'string' || !localesFor(country).includes(lang))
+        fail(`locales[${i}].lang`, 'locale not enabled for this country');
+      if (typeof country === 'string' && typeof lang === 'string') {
+        const key = `${country}:${lang}`;
+        if (seen.has(key)) fail(`locales[${i}]`, 'duplicate country+lang locale');
+        seen.add(key);
+      }
+      if (typeof lc['title'] !== 'string' || lc['title'].length === 0 || lc['title'].length > MAX_LEN.title)
+        fail(`locales[${i}].title`, 'required, max 200 chars');
+      if (lc['slug'] !== undefined && (typeof lc['slug'] !== 'string' || !SLUG_PATTERN.test(lc['slug'])))
+        fail(`locales[${i}].slug`, 'must match slug pattern');
+      if (lc['intro'] !== undefined && (typeof lc['intro'] !== 'string' || lc['intro'].length > MAX_LEN.intro))
+        fail(`locales[${i}].intro`, 'max 2000 chars');
+      const arrOk = (v: unknown): v is string[] =>
+        Array.isArray(v) && v.length > 0 && v.every((x) => typeof x === 'string' && x.length > 0 && x.length <= MAX_LEN.item);
+      if (!arrOk(lc['ingredients'])) fail(`locales[${i}].ingredients`, 'non-empty string array required');
+      if (!arrOk(lc['steps'])) fail(`locales[${i}].steps`, 'non-empty string array required');
+    });
+  }
+
+  if (errors.length > 0) return { ok: false, errors };
+  return { ok: true, value: sub as unknown as RecipeSubmission };
+}
+
+// ---------------------------------------------------------------------------
 // Slug table (per approved plan):
 //   /{country}/                          country market home (default locale)
 //   /{country}/recipes/{id}-{slug}       recipe page

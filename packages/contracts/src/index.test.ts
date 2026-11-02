@@ -9,6 +9,7 @@ import {
   recipePath,
   slugify,
   uiStrings,
+  validateRecipeSubmission,
 } from './index';
 
 describe('country registry', () => {
@@ -57,5 +58,31 @@ describe('ui strings', () => {
     expect(uiStrings('es').ingredients).toBe('Ingredientes');
     expect(uiStrings('en').ingredients).toBe('Ingredients');
     expect(uiStrings('fr').steps).toBe('Steps'); // fallback to en
+  });
+});
+
+describe('recipe submission validation (fail closed)', () => {
+  const valid = {
+    source: { name: 'Demo', url: 'internal:demo-seed', license: 'internal-demo' },
+    originCountry: 'mx',
+    locales: [{ country: 'mx', lang: 'es', title: 'Flan', ingredients: ['huevos'], steps: ['mezclar'] }],
+  };
+  it('accepts a valid submission', () => {
+    const r = validateRecipeSubmission(valid);
+    expect(r.ok).toBe(true);
+  });
+  it('rejects malformed JSON shapes', () => {
+    expect(validateRecipeSubmission(null).ok).toBe(false);
+    expect(validateRecipeSubmission('x').ok).toBe(false);
+    expect(validateRecipeSubmission([]).ok).toBe(false);
+  });
+  it('rejects unknown countries and disabled locales', () => {
+    expect(validateRecipeSubmission({ ...valid, locales: [{ ...valid.locales[0], country: 'zz' }] }).ok).toBe(false);
+    expect(validateRecipeSubmission({ ...valid, locales: [{ ...valid.locales[0], lang: 'en' }] }).ok).toBe(false);
+  });
+  it('rejects bad slugs, empty ingredients, non-https source urls', () => {
+    expect(validateRecipeSubmission({ ...valid, locales: [{ ...valid.locales[0], slug: 'Bad Slug!' }] }).ok).toBe(false);
+    expect(validateRecipeSubmission({ ...valid, locales: [{ ...valid.locales[0], ingredients: [] }] }).ok).toBe(false);
+    expect(validateRecipeSubmission({ ...valid, source: { ...valid.source, url: 'http://x.com' } }).ok).toBe(false);
   });
 });

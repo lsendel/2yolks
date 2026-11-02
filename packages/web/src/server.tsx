@@ -27,6 +27,22 @@ interface ShellOptions {
   noindex?: boolean;
 }
 
+const BASE_CSS = `
+:root { color-scheme: light; --brand: #c2410c; --ink: #1c1917; --muted: #57534e; --bg: #fffbf5; --card: #ffffff; }
+* { box-sizing: border-box; }
+body { margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif; background: var(--bg); color: var(--ink); line-height: 1.6; }
+a { color: var(--brand); }
+.site-header { background: var(--card); border-bottom: 1px solid #e7e5e4; padding: 0.75rem 1rem; }
+.site-header a.brand { font-weight: 700; font-size: 1.25rem; text-decoration: none; color: var(--brand); }
+main { max-width: 42rem; margin: 0 auto; padding: 1.5rem 1rem 3rem; }
+.tagline { color: var(--muted); margin-top: -0.5rem; }
+.cards { list-style: none; padding: 0; display: grid; gap: 0.75rem; }
+.cards a { display: block; background: var(--card); border: 1px solid #e7e5e4; border-radius: 0.5rem; padding: 0.75rem 1rem; text-decoration: none; color: var(--ink); font-weight: 600; }
+.cards a:hover { border-color: var(--brand); }
+.recipe-source { color: var(--muted); font-size: 0.9rem; border-top: 1px solid #e7e5e4; margin-top: 2rem; padding-top: 1rem; }
+.langs { font-size: 0.9rem; color: var(--muted); }
+`;
+
 function shell(body: string, { title, alternates = [], jsonLd, noindex = false }: ShellOptions): string {
   const links = alternates
     .map((a) => `<link rel="alternate" hreflang="${escapeHtml(a.hreflang)}" href="${escapeHtml(a.href)}" />`)
@@ -41,8 +57,9 @@ function shell(body: string, { title, alternates = [], jsonLd, noindex = false }
     ${noindex ? '<meta name="robots" content="noindex, nofollow" />' : ''}
     ${links}
     ${ld}
+    <style>${BASE_CSS}</style>
   </head>
-  <body>${body}</body>
+  <body><header class="site-header"><a class="brand" href="/">2yolks</a></header>${body}</body>
 </html>`;
 }
 
@@ -68,7 +85,7 @@ export function renderRecipe(page: RecipePage, alternates: { hreflang: string; h
       text: s,
     })),
   };
-  return shell(renderToString(<RecipeView page={page} />), {
+  return shell(renderToString(<RecipeView page={page} alternates={alternates} />), {
     title: `${page.locale.title} - 2yolks`,
     alternates,
     jsonLd,
