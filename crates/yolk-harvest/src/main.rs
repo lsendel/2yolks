@@ -120,49 +120,69 @@ pub fn is_forbidden_host(host: &str) -> bool {
     false
 }
 
-/// Resolve a hostname and validate EVERY resolved IP against the guard.
-/// Fail closed on resolution error. Called before connecting so a hostname
-/// pointing at a private/loopback address is refused before any request.
-/// (Residual TOCTOU/rebinding gap: DNS could change between this check and
-/// ureq's own resolution. Acceptable for a local private-pilot CLI; a hosted
-/// fetcher would pin the resolved IP for the connection.)
-fn dns_guard(host: &str) -> Result<(), String> {
-    use std::net::ToSocketAddrs;
-    // Literal IPs never resolve; the string guard above already judged them.
-    if host
-        .trim_matches(['[', ']'])
-        .parse::<std::net::IpAddr>()
-        .is_ok()
-    {
-        return Ok(());
-    }
-    let addrs: Vec<std::net::SocketAddr> = (host, 443)
-        .to_socket_addrs()
-        .map_err(|e| format!("dns resolution failed for {host}: {e}"))?
-        .collect();
-    if addrs.is_empty() {
-        return Err(format!("dns resolution returned no addresses for {host}"));
-    }
-    for a in &addrs {
-        if is_forbidden_host(&a.ip().to_string()) {
-            return Err(format!(
-                "dns guard: {host} resolves to forbidden address {}",
-                a.ip()
-            ));
+
+/// DNS resolver that refuses forbidden addresses at CONNECTION time.
+/// ureq resolves through this for every request (including each redirect
+/// hop), so the validated IP set is the one actually dialed - there is no
+/// preflight/re-resolve gap for DNS rebinding to cross. TLS SNI and Host
+/// still come from the URL hostname.
+#[derive(Debug, Default)]
+struct GuardedResolver;
+
+impl ureq::unversioned::resolver::Resolver for GuardedResolver {
+    fn resolve(
+        &self,
+        uri: &ureq::http::Uri,
+        _config: &ureq::config::Config,
+        _timeout: ureq::unversioned::transport::NextTimeout,
+    ) -> Result<ureq::unversioned::resolver::ResolvedSocketAddrs, ureq::Error> {
+        use std::net::ToSocketAddrs;
+        use ureq::unversioned::resolver::DefaultResolver;
+        let scheme = uri.scheme().ok_or(ureq::Error::HostNotFound)?;
+        let authority = uri.authority().ok_or(ureq::Error::HostNotFound)?;
+        if is_forbidden_host(authority.host()) {
+            return Err(ureq::Error::HostNotFound);
         }
+        let addr = DefaultResolver::host_and_port(scheme, authority)
+            .ok_or(ureq::Error::HostNotFound)?;
+        let iter = addr
+            .to_socket_addrs()
+            .map_err(|_| ureq::Error::HostNotFound)?;
+        let mut result = ureq::unversioned::resolver::ResolvedSocketAddrs::from_fn(|_| {
+            std::net::SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0)), 0)
+        });
+        let mut any = false;
+        for a in iter {
+            if is_forbidden_host(&a.ip().to_string()) {
+                // Fail closed: a host with ANY forbidden address is refused.
+                return Err(ureq::Error::HostNotFound);
+            }
+            any = true;
+            let _ = result.try_push(a);
+        }
+        if !any {
+            return Err(ureq::Error::HostNotFound);
+        }
+        Ok(result)
     }
-    Ok(())
 }
 
 fn fetch_and_queue(url: &str, license: &str, out: &std::path::Path) -> Result<(), String> {
-    let agent: ureq::Agent = ureq::Agent::config_builder()
+    let config = ureq::Agent::config_builder()
         .user_agent("yolk-harvest/0.1 (private pilot; contact: site owner)")
         // Redirects handled manually: every hop re-validates scheme, host
         // (SSRF guard) and robots for the NEW host - a redirect must never
         // bypass the origin's robots evaluation.
         .max_redirects(0)
-        .build()
-        .into();
+        // Return 4xx/5xx as responses so robots.txt 404 (no rules) and
+        // fetch status handling decide explicitly instead of ureq erroring.
+        .http_status_as_error(false)
+        .build();
+    let agent = ureq::Agent::with_parts(
+        config,
+        ureq::unversioned::transport::DefaultConnector::default(),
+        GuardedResolver,
+    );
     let mut current = url::Url::parse(url).map_err(|e| format!("bad url: {e}"))?;
     let mut hops = 0;
     let html = loop {
@@ -173,7 +193,7 @@ fn fetch_and_queue(url: &str, license: &str, out: &std::path::Path) -> Result<()
         if is_forbidden_host(host) {
             return Err(format!("forbidden host (SSRF guard): {host}"));
         }
-        dns_guard(host)?;
+        let _ = host; // resolver enforces at connection time
         // robots.txt check for THIS host; a fetch failure here fails closed.
         let rules = robots::fetch_rules(&agent, &current)?;
         let path = current.path();
@@ -269,3 +289,32 @@ mod ssrf_tests {
     }
 }
 
+
+#[cfg(test)]
+mod resolver_tests {
+    use super::*;
+    use ureq::unversioned::resolver::{Resolver, ResolvedSocketAddrs};
+    use ureq::unversioned::transport::NextTimeout;
+
+    fn resolve(url: &str) -> Result<ResolvedSocketAddrs, ureq::Error> {
+        let uri: ureq::http::Uri = url.parse().unwrap();
+        let cfg = ureq::Agent::config_builder().build();
+        GuardedResolver.resolve(&uri, &cfg, NextTimeout::default())
+    }
+
+    #[test]
+    fn resolver_refuses_private_ip_literal() {
+        assert!(resolve("http://127.0.0.1:8080/x").is_err());
+        assert!(resolve("http://[fd00::1]/x").is_err());
+        assert!(resolve("http://[::1]/x").is_err());
+        assert!(resolve("http://169.254.169.254/latest/meta-data").is_err());
+        assert!(resolve("http://localhost/x").is_err());
+    }
+
+    #[test]
+    fn resolver_allows_public_ip_literal() {
+        // Literal IPs parse without DNS, so this needs no network.
+        let out = resolve("https://93.184.215.14/").unwrap();
+        assert!(out.iter().any(|a| a.port() == 443));
+    }
+}
