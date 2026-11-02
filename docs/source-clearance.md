@@ -126,3 +126,8 @@ Empty - first entries arrive with the MyPlate private pilot review.
   paths: (a) per-document permissive licenses, (b) state-level terms,
   (c) written clearance requests (needs Luis's approval - no outreach
   without it).
+- State-level bounded search (Nov 1, 2026): no promising Mexican state
+  source with permissive terms surfaced; state recipe publications sit on
+  gob.mx platform domains (same portal terms) and the only permissive hits
+  were other countries' governments (Costa Rica, Argentina). Search closed
+  as bounded; unresolved Mexico clearance summarized above.

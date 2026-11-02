@@ -52,3 +52,23 @@ time is a risk indicator, not a precise production CPU measurement; the gap
 ## Spike evidence
 - /api/dev/cpu-spike (ALLOW_DEMO_SEED gated, dev only): {"scrypt_ms":48-69,
   params N=16384 r=8 p=1 dkLen=32}.
+
+## Better Auth passkey full-flow wiring - status (Nov 1, 2026)
+
+Dependency conflict found at install time: better-auth@1.7.15 requires
+drizzle-orm ^0.45.2 (or 1.0 rc); the repo pins drizzle-orm@0.38.4. Not yet
+resolved. Candidate paths:
+- (a) Upgrade drizzle-orm to ^0.45.2 across the repo, re-run the full
+  suite against the existing D1 layer, then use better-auth's drizzle
+  adapter. Cleaner long-term; touches the reviewed data layer.
+- (b) Keep drizzle 0.38 for app tables and use better-auth's kysely
+  adapter with the Cloudflare D1 kysely dialect, installing with
+  --legacy-peer-deps (better-auth then never touches drizzle at runtime).
+  Lower blast radius; adds kysely as a second query layer.
+
+Remaining steps after the adapter decision: better-auth schema tables
+(user/session/account/passkey), RP ID + origin pinned to the canonical
+origin, a dev-only ceremony route that measures a real
+registration+assertion verification end to end in workerd (software
+authenticator fixture), and only then any activation decision. No auth
+code is activated anywhere; POST /api/v1/submissions stays 503-gated.
