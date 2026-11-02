@@ -11,6 +11,20 @@ process.on('unhandledRejection', (err) => {
   console.error('FAIL - unhandled rejection:', err && err.message ? err.message : err);
 });
 
+async function waitForHealth(port, timeoutMs = 90000) {
+  const url = `http://127.0.0.1:${port}/api/health`;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(url);
+      if (res.status === 200) return;
+    } catch {}
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  console.error(`FAIL - dev server did not become healthy on ${url} within ${timeoutMs / 1000}s`);
+  process.exit(1);
+}
+
 function check(name, cond, extra = '') {
   if (cond) { console.log(`ok - ${name}`); }
   else { failures++; console.error(`FAIL - ${name} ${extra}`); }
@@ -49,7 +63,9 @@ execSync('npx wrangler d1 execute 2yolks --local --file packages/api/seeds/0002_
 
 const server = spawnServer(['wrangler', 'dev', '--port', String(PORT), '--local']);
 // production mode: ALLOW_DEMO_SEED defaults to false
-await new Promise((r) => setTimeout(r, 12000));
+// Poll /api/health, not a fixed sleep: first `wrangler dev` on a cold CI
+// runner downloads workerd and can take far longer than 12s.
+await waitForHealth(PORT);
 
 try {
   let r = await get('/');
@@ -89,7 +105,7 @@ try {
   await stopServer(server);
   const PORT2 = PORT + 1;
   const dev = spawnServer(['wrangler', 'dev', '--port', String(PORT2), '--local', '--var', 'ALLOW_DEMO_SEED:true', '--var', 'SUBMISSIONS_ENABLED:true']);
-  await new Promise((r2) => setTimeout(r2, 12000));
+  await waitForHealth(PORT2);
   try {
     const get2 = async (path) => { const res = await fetch(`http://127.0.0.1:${PORT2}` + path, { redirect: 'manual' }); return { status: res.status, headers: res.headers, body: await res.text(), location: res.headers.get('location') }; };
     r = await get2('/mx/recipes/r1-huevos-rancheros');
