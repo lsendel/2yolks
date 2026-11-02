@@ -133,3 +133,135 @@ export function renderRecipe(page: RecipePage, alternates: { hreflang: string; h
     noindex: page.source.license === 'internal-demo',
   });
 }
+
+const AUTH_CSS = `
+.auth-card { background: var(--card); border: 1px solid #e7e5e4; border-radius: 0.75rem; padding: 1.25rem; margin-top: 1rem; }
+.auth-card h2 { margin-top: 0; font-size: 1.15rem; }
+.auth-card label { display: block; font-size: 0.9rem; color: var(--muted); margin: 0.6rem 0 0.15rem; }
+.auth-card input { width: 100%; padding: 0.5rem 0.6rem; border: 1px solid #d6d3d1; border-radius: 0.5rem; font: inherit; }
+.auth-card button { margin-top: 0.9rem; background: var(--brand); color: #fff; border: 0; border-radius: 0.5rem; padding: 0.55rem 1.1rem; font-weight: 700; cursor: pointer; font: inherit; }
+.auth-card button.secondary, .auth-session button { background: none; color: var(--brand); border: 1px solid var(--brand); }
+.auth-session button { border-radius: 0.5rem; padding: 0.4rem 0.9rem; font-weight: 600; cursor: pointer; font: inherit; }
+.auth-status { margin-top: 1rem; padding: 0.6rem 0.8rem; border-radius: 0.5rem; background: #f5f5f4; font-size: 0.9rem; }
+.auth-status.ok { background: #ecfdf5; color: #065f46; }
+.auth-status.err { background: #fef2f2; color: #991b1b; }
+.auth-session { margin-top: 1.5rem; border-top: 1px solid #e7e5e4; padding-top: 1rem; font-size: 0.9rem; color: var(--muted); }
+`;
+
+// DEV-ONLY auth UI: real sign-in/enrollment UX against the gated dev auth
+// handler. noindex always; never linked from production pages.
+export function renderAuthUi(opts: { authBase: string }): string {
+  const body = `<main>
+  <h1>Your account</h1>
+  <p class="tagline">Sign in with a passkey, or create an account and add one.</p>
+
+  <section class="auth-card" data-signin>
+    <h2>Sign in</h2>
+    <button type="button" data-passkey-signin>Sign in with passkey</button>
+  </section>
+
+  <section class="auth-card" data-enroll>
+    <h2>Create account</h2>
+    <label for="an">Name</label>
+    <input id="an" data-name autocomplete="name" />
+    <label for="ae">Email</label>
+    <input id="ae" data-email type="email" autocomplete="email" />
+    <label for="ap">Password</label>
+    <input id="ap" data-password type="password" autocomplete="new-password" />
+    <button type="button" data-create>Create account</button>
+    <button type="button" class="secondary" data-add-passkey hidden>Add a passkey</button>
+  </section>
+
+  <p class="auth-status" data-status hidden></p>
+
+  <section class="auth-session" data-session-box hidden>
+    <p>Signed in as <strong data-session-name></strong> (<span data-session-email></span>)</p>
+    <button type="button" class="secondary" data-signout>Sign out</button>
+  </section>
+</main>
+<style>${AUTH_CSS}</style>
+<script>${authUiScript(opts.authBase)}</script>`;
+  return shell(body, { title: 'Your account - 2yolks', noindex: true });
+}
+
+function authUiScript(base: string): string {
+  // Plain script (no bundler). Kept dependency-free on purpose.
+  return `
+var B = ${JSON.stringify(base)};
+var statusEl = document.querySelector('[data-status]');
+function say(msg, ok) {
+  statusEl.hidden = false;
+  statusEl.textContent = msg;
+  statusEl.className = 'auth-status ' + (ok === true ? 'ok' : ok === false ? 'err' : '');
+}
+function b64uToBuf(s) {
+  var bin = atob(s.replace(/-/g, '+').replace(/_/g, '/'));
+  return Uint8Array.from(bin, function (c) { return c.charCodeAt(0); }).buffer;
+}
+function bufToB64u(b) {
+  return btoa(String.fromCharCode.apply(null, new Uint8Array(b))).replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/, '');
+}
+function serCred(cred) {
+  return {
+    id: cred.id, rawId: bufToB64u(cred.rawId), type: cred.type,
+    response: {
+      clientDataJSON: bufToB64u(cred.response.clientDataJSON),
+      attestationObject: cred.response.attestationObject ? bufToB64u(cred.response.attestationObject) : undefined,
+      authenticatorData: cred.response.authenticatorData ? bufToB64u(cred.response.authenticatorData) : undefined,
+      signature: cred.response.signature ? bufToB64u(cred.response.signature) : undefined,
+      userHandle: cred.response.userHandle ? bufToB64u(cred.response.userHandle) : undefined,
+    },
+  };
+}
+function post(p, body) {
+  return fetch(B + p, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body || {}) })
+    .then(async function (r) { return { status: r.status, json: await r.json().catch(function () { return {}; }) }; });
+}
+function showSession(u) {
+  document.querySelector('[data-session-name]').textContent = u.name || '';
+  document.querySelector('[data-session-email]').textContent = u.email || '';
+  document.querySelector('[data-session-box]').hidden = false;
+}
+document.querySelector('[data-create]').onclick = async function () {
+  try {
+    var r = await post('/sign-up/email', {
+      name: document.querySelector('[data-name]').value,
+      email: document.querySelector('[data-email]').value,
+      password: document.querySelector('[data-password]').value,
+    });
+    if (r.status !== 200) return say('Could not create account: ' + (r.json.message || r.status), false);
+    say('Account created. Now add a passkey.', true);
+    document.querySelector('[data-add-passkey]').hidden = false;
+    showSession(r.json.user || {});
+  } catch (e) { say('Error: ' + (e && e.message || e), false); }
+};
+document.querySelector('[data-add-passkey]').onclick = async function () {
+  try {
+    var o = await fetch(B + '/passkey/generate-register-options').then(function (r) { return r.json(); });
+    o.challenge = b64uToBuf(o.challenge);
+    o.user.id = b64uToBuf(o.user.id);
+    var cred = await navigator.credentials.create({ publicKey: o });
+    var v = await post('/passkey/verify-registration', { response: serCred(cred) });
+    if (v.status !== 200) return say('Passkey not saved: ' + (v.json.message || v.status), false);
+    say('Passkey added. You can sign in with it next time.', true);
+  } catch (e) { say('Error: ' + (e && e.message || e), false); }
+};
+document.querySelector('[data-passkey-signin]').onclick = async function () {
+  try {
+    var o = await fetch(B + '/passkey/generate-authenticate-options').then(function (r) { return r.json(); });
+    o.challenge = b64uToBuf(o.challenge);
+    if (o.allowCredentials) o.allowCredentials = o.allowCredentials.map(function (d) { return Object.assign({}, d, { id: b64uToBuf(d.id) }); });
+    var cred = await navigator.credentials.get({ publicKey: o });
+    var v = await post('/passkey/verify-authentication', { response: serCred(cred) });
+    if (v.status !== 200) return say('Sign-in failed: ' + (v.json.message || v.status), false);
+    say('Signed in.', true);
+    showSession((v.json && v.json.user) || {});
+  } catch (e) { say('Error: ' + (e && e.message || e), false); }
+};
+document.querySelector('[data-signout]').onclick = async function () {
+  await post('/sign-out');
+  document.querySelector('[data-session-box]').hidden = true;
+  say('Signed out.', true);
+};
+`;
+}

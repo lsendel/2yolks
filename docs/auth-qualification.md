@@ -108,10 +108,14 @@ Adversarial regression probes (permanent, in the ceremony script):
 - weak password sign-up: 400
 - all dev routes 404 with ALLOW_DEMO_SEED unset (in smoke.mjs)
 
-Bootstrap: scripts/auth-ceremony.check.mjs resets .wrangler, applies
-migrations 0001+0002 to local D1, spawns and group-kills its own dev
-server, and polls /api/health for readiness - no dependence on dirty
-state, no leftover processes.
+Bootstrap: scripts/auth-ceremony.check.mjs uses its own disposable
+persistence dir (.wrangler-ceremony) for dev + d1 execute, applies
+migrations 0001+0002 there, spawns and group-kills its own dev server,
+and polls /api/health - no shared-state wipes, no leftover processes.
+REQUIREMENT: suites are safe to run CONCURRENTLY ACROSS suites (verified:
+ceremony + smoke together, exit 0 both) but NOT concurrently with
+themselves - persist dirs and ports are hardcoded per suite, so the same
+suite must run sequentially.
 
 Production denial verified: with ALLOW_DEMO_SEED unset, /api/dev/auth/*,
 /api/dev/auth-test, /api/dev/auth-spike all 404 (asserted in smoke.mjs).

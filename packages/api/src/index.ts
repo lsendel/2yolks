@@ -199,6 +199,14 @@ app.get('/api/dev/auth-test', (c) => {
   return c.html(AUTH_TEST_PAGE);
 });
 
+// Dev-only real auth UX (sign-in/enrollment) against the gated dev handler.
+app.get('/api/dev/auth-ui', async (c) => {
+  if (!demoAllowed(c)) return c.notFound();
+  const { renderAuthUi } = await import('@2yolks/web/server');
+  const base = new URL(c.req.url).origin + '/api/dev/auth';
+  return c.html(renderAuthUi({ authBase: base }));
+});
+
 app.get('/api/v1/countries', (c) =>
   c.json({ countries: COUNTRIES, locales: LOCALES }),
 );
