@@ -1,6 +1,11 @@
-# Auth qualification (Workers Free, paid OFF)
+# Auth qualification (free-tier engineering target; account is Workers Paid)
 
-Constraint: approved build is free-tier only. Better Auth's default password
+NOTE: the connected Cloudflare account is on Workers Paid (confirmed via
+dashboard, Nov 1 2026). The 10 ms free-CPU figure below is the engineering
+target for the approved no-new-spend build, not the account's actual plan;
+designing to it keeps the build portable and cost-free if the plan changes.
+
+Constraint: approved build targets free-tier limits (no new spend). Better Auth's default password
 hashing (scrypt N=16384 r=8 p=1) measures 48-69 ms wall in local workerd
 (dev route /api/dev/cpu-spike, 3 runs, Nov 1 2026) vs the 10 ms Workers Free
 CPU limit - password-hash auth as designed does NOT fit free CPU. Local wall

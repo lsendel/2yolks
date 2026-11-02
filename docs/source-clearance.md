@@ -37,10 +37,36 @@ Status values: CLEARED / CANDIDATE / RESTRICTED / DEV-ONLY.
   translation is US content in Spanish - it does not satisfy the Mexico
   native sample-set rule by itself. Candidate for the US sample set pending
   per-item rights; Mexico set still needs natively sourced recipes.
-- Open checks: myplate.gov terms page and robots.txt (our fetch path timed
-  out twice Nov 1, 2026; the harvester fails closed on robots fetch errors
-  and will record the result). Private format-sample fetch only if both
-  permit; no bulk run, no publication.
+- Open checks: myplate.gov terms page and robots.txt UNVERIFIED - the site
+  is unreachable from every available egress path (web_fetch CRAWL_TIMEOUT
+  x3; cloud-browser proxy 502 provider_unreachable; workspace DNS fails),
+  Nov 1, 2026. Harvester fails closed on robots fetch errors, so MyPlate
+  items cannot qualify until the site becomes reachable and both checks
+  pass. Deprioritized per "do not wait on MyPlate" guidance.
+
+## USDA department-wide copyright statement - RECORDED (not per-item clearance)
+- https://www.usda.gov/policies-and-links "Digital Rights and Copyright"
+  (fetched Nov 1, 2026): "Most information presented on the USDA Web site
+  is considered public domain information ... Some materials ... are
+  protected by copyright ... USDA has made every attempt to identify and
+  clearly label them." Basis: department statement + 17 U.S.C. 105. The
+  "most" + labeled-exceptions wording means every candidate item still
+  needs an individual check for labeling/attribution notices.
+
+## USDA FNS Team Nutrition (fns.usda.gov/tn/recipes) - CANDIDATE, mixed authorship
+- robots.txt fetched Nov 1, 2026: standard Drupal rules; /tn/ paths not
+  disallowed for user-agent *. Terms page not yet located on fns.usda.gov
+  (/copyright and /usda-website-policies-and-important-links both 404).
+- Rights basis is NOT uniform: the school recipes were "developed by state
+  child nutrition agencies" under FY2021 Team Nutrition Training Grants
+  (fns.usda.gov/tn/recipes, fetched Nov 1, 2026) - state-agency works are
+  not federal works and 17 U.S.C. 105 does not apply. Standardized recipes
+  have moved to the Institute of Child Nutrition (University of
+  Mississippi, a federal contractor) - separate rights again.
+- Consequence: FNS items qualify only per-item where the rights basis
+  resolves to a federal employee work or an explicit license; state/ICN
+  items need their own clearance and are not assumed.
+
 
 ## TheMealDB - DEV-ONLY
 - Free test key is for development only; recipes credit other sites.
@@ -58,3 +84,33 @@ Status values: CLEARED / CANDIDATE / RESTRICTED / DEV-ONLY.
 ## Per-item register
 Columns: item URL | rights basis | attribution | media excluded | locale fit | robots | terms | decision.
 Empty - first entries arrive with the MyPlate private pilot review.
+
+## Mexico-native candidates - investigated Nov 1, 2026
+
+### vidasaludable.gob.mx/recetarios - BARRED by default (portal terms)
+- Rich Mexico-native government collection: SEP (Recetario del Frijol),
+  SNDIF (Regionalizado de Alimentacion Escolar, Refrigerios Saludables),
+  Secretaria de Salud (Recetario Regional), plus one UNICEF recetario
+  (third-party rights). Locale fit: native Mexican Spanish, regional.
+- Terms: gob.mx portal terms (https://www.gob.mx/terminos, fetched Nov 1,
+  2026) grant "solamente para su uso personal y no para un uso comercial"
+  and forbid modification, reproduction, public display, and transfer.
+  That bars these recetarios for this commercial site BY DEFAULT.
+- Escape hatch, unverified: an individual recetario PDF carrying its own
+  permissive license would override the default for that document only;
+  none confirmed. robots.txt unreachable from our fetch path
+  (CRAWL_UNKNOWN_ERROR). Do not harvest; revisit only if a per-document
+  license is found or written clearance is obtained.
+
+### cultura.gob.mx "Recetario: Sabores Mexico" - TERMS UNVERIFIED
+- Site refuses our fetch path (HTTP 444). Federal cultural-ministry
+  publication; gob.mx default terms apply unless the PDF states otherwise.
+  Same default-barred posture as above.
+
+### Mexico sourcing conclusion (Nov 1, 2026)
+- Mexican federal sites do NOT grant commercial reuse by default, unlike
+  US federal sources. The Mexico native sample set currently has NO cleared
+  source. Candidate paths that remain: (a) per-document permissive licenses
+  inside specific recetario PDFs, (b) Libre Uso MX-licensed datasets on
+  datos.gob.mx if a recetario is published as open data, (c) state-level
+  DIF/secretariats with their own terms, (d) written clearance requests.
