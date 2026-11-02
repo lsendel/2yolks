@@ -101,9 +101,11 @@ Empty - first entries arrive with the MyPlate private pilot review.
   Regionalizado de Alimentacion Escolar Modalidad Caliente 2025"
   (vidasaludable.gob.mx direct PDF), SEP "Recetario del Frijol Vive
   Saludable", and cultura.gob.mx "Sabores Mexico 21Dic". NONE carries a
-  license, copyright notice, or reproduction grant in its text. Absence of
-  a permissive statement means the gob.mx portal non-commercial default
-  governs: all three remain BARRED.
+  license, copyright notice, or reproduction grant in its text. That
+  establishes no permission found for these documents - not proof that the
+  portal terms legally govern each PDF (link-specific applicability is
+  unverified). With no permissive basis at either level, the conservative
+  do-not-harvest hold stands for all three.
 - robots.txt unreachable from our fetch path (CRAWL_UNKNOWN_ERROR). Do not
   harvest; revisit only if a per-document license appears or written
   clearance is obtained.
@@ -114,9 +116,13 @@ Empty - first entries arrive with the MyPlate private pilot review.
   Same default-barred posture as above.
 
 ### Mexico sourcing conclusion (Nov 1, 2026)
-- Mexican federal sites do NOT grant commercial reuse by default, unlike
-  US federal sources. The Mexico native sample set currently has NO cleared
-  source. Candidate paths that remain: (a) per-document permissive licenses
-  inside specific recetario PDFs, (b) Libre Uso MX-licensed datasets on
-  datos.gob.mx if a recetario is published as open data, (c) state-level
-  DIF/secretariats with their own terms, (d) written clearance requests.
+- No cleared Mexico-native source found among the sources checked:
+  gob.mx-hosted recetarios are barred by the portal's non-commercial
+  terms, three specific recetario PDFs (DIF 2025, SEP frijol, Sabores
+  Mexico) carry no permissive statement, and datos.gob.mx surfaces no
+  recetario dataset. Search is bounded, not exhaustive: state-level leads
+  (state DIF/secretariat sites with their own terms) remain to finish,
+  then unresolved clearance gets summarized and work moves on. Candidate
+  paths: (a) per-document permissive licenses, (b) state-level terms,
+  (c) written clearance requests (needs Luis's approval - no outreach
+  without it).
