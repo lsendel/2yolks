@@ -9,7 +9,7 @@ VALUES ('demo-seed', 'Synthetic demo recipe (agent-authored)', 'internal:demo-se
 INSERT INTO recipes (id, source_id, origin_country) VALUES ('r1', 'demo-seed', 'mx');
 
 INSERT INTO recipe_locales (recipe_id, country, lang, title, slug, intro, ingredients_json, steps_json, status) VALUES
-  ('r1', 'mx', 'es', 'Huevos Rancheros', 'huevos-rancheros', 'Clasico de rancho.',
-   '["2 huevos","2 tortillas","salsa"]', '["Calentar tortillas","Freir huevos","Banar en salsa"]', 'published'),
+  ('r1', 'mx', 'es', 'Huevos Rancheros', 'huevos-rancheros', 'Clásico de rancho.',
+   '["2 huevos","2 tortillas","salsa"]', '["Calentar las tortillas","Freír los huevos","Bañar en salsa"]', 'published'),
   ('r1', 'us', 'en', 'Ranch Eggs', 'ranch-eggs', 'A ranch classic.',
    '["2 eggs","2 tortillas","salsa"]', '["Warm tortillas","Fry eggs","Top with salsa"]', 'published');

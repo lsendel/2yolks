@@ -113,6 +113,25 @@ export function defaultLocale(countryCode: string): string | undefined {
 }
 
 // ---------------------------------------------------------------------------
+// UI strings per locale (recipe page chrome).
+// ---------------------------------------------------------------------------
+
+export interface UiStrings {
+  ingredients: string;
+  steps: string;
+  source: string;
+}
+
+const UI_STRINGS: Record<string, UiStrings> = {
+  en: { ingredients: 'Ingredients', steps: 'Steps', source: 'Source' },
+  es: { ingredients: 'Ingredientes', steps: 'Pasos', source: 'Fuente' },
+};
+
+export function uiStrings(lang: string): UiStrings {
+  return UI_STRINGS[lang] ?? UI_STRINGS['en']!;
+}
+
+// ---------------------------------------------------------------------------
 // Slug table (per approved plan):
 //   /{country}/                          country market home (default locale)
 //   /{country}/recipes/{id}-{slug}       recipe page

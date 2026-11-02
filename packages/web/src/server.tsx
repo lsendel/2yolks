@@ -7,9 +7,10 @@ interface ShellOptions {
   /** hreflang alternates: exact content equivalents only */
   alternates?: { hreflang: string; href: string }[];
   jsonLd?: object;
+  noindex?: boolean;
 }
 
-function shell(body: string, { title, alternates = [], jsonLd }: ShellOptions): string {
+function shell(body: string, { title, alternates = [], jsonLd, noindex = false }: ShellOptions): string {
   const links = alternates
     .map((a) => `<link rel="alternate" hreflang="${a.hreflang}" href="${a.href}" />`)
     .join('\n    ');
@@ -20,6 +21,7 @@ function shell(body: string, { title, alternates = [], jsonLd }: ShellOptions): 
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>${title}</title>
+    ${noindex ? '<meta name="robots" content="noindex, nofollow" />' : ''}
     ${links}
     ${ld}
   </head>
@@ -53,5 +55,7 @@ export function renderRecipe(page: RecipePage, alternates: { hreflang: string; h
     title: `${page.locale.title} - 2yolks`,
     alternates,
     jsonLd,
+    // Synthetic/dev-only sources must never be indexed as real recipes.
+    noindex: page.source.license === 'internal-demo',
   });
 }
