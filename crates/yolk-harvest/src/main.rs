@@ -103,9 +103,55 @@ pub fn is_forbidden_host(host: &str) -> bool {
             || (ip.octets()[0] == 172 && (16..=31).contains(&ip.octets()[1]));
     }
     if let Ok(ip) = h.parse::<std::net::Ipv6Addr>() {
-        return ip.is_loopback() || ip.is_unspecified();
+        if ip.is_loopback() || ip.is_unspecified() {
+            return true;
+        }
+        let seg = ip.segments();
+        // fc00::/7 unique-local, fe80::/10 link-local, 2001:db8::/32 documentation
+        if seg[0] & 0xfe00 == 0xfc00 || seg[0] & 0xffc0 == 0xfe80 || (seg[0] == 0x2001 && seg[1] == 0x0db8) {
+            return true;
+        }
+        // IPv4-mapped ::ffff:a.b.c.d - evaluate the embedded v4 address
+        if let Some(v4) = ip.to_ipv4_mapped() {
+            return is_forbidden_host(&v4.to_string());
+        }
+        return false;
     }
     false
+}
+
+/// Resolve a hostname and validate EVERY resolved IP against the guard.
+/// Fail closed on resolution error. Called before connecting so a hostname
+/// pointing at a private/loopback address is refused before any request.
+/// (Residual TOCTOU/rebinding gap: DNS could change between this check and
+/// ureq's own resolution. Acceptable for a local private-pilot CLI; a hosted
+/// fetcher would pin the resolved IP for the connection.)
+fn dns_guard(host: &str) -> Result<(), String> {
+    use std::net::ToSocketAddrs;
+    // Literal IPs never resolve; the string guard above already judged them.
+    if host
+        .trim_matches(['[', ']'])
+        .parse::<std::net::IpAddr>()
+        .is_ok()
+    {
+        return Ok(());
+    }
+    let addrs: Vec<std::net::SocketAddr> = (host, 443)
+        .to_socket_addrs()
+        .map_err(|e| format!("dns resolution failed for {host}: {e}"))?
+        .collect();
+    if addrs.is_empty() {
+        return Err(format!("dns resolution returned no addresses for {host}"));
+    }
+    for a in &addrs {
+        if is_forbidden_host(&a.ip().to_string()) {
+            return Err(format!(
+                "dns guard: {host} resolves to forbidden address {}",
+                a.ip()
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn fetch_and_queue(url: &str, license: &str, out: &std::path::Path) -> Result<(), String> {
@@ -127,6 +173,7 @@ fn fetch_and_queue(url: &str, license: &str, out: &std::path::Path) -> Result<()
         if is_forbidden_host(host) {
             return Err(format!("forbidden host (SSRF guard): {host}"));
         }
+        dns_guard(host)?;
         // robots.txt check for THIS host; a fetch failure here fails closed.
         let rules = robots::fetch_rules(&agent, &current)?;
         let path = current.path();
@@ -204,6 +251,14 @@ mod ssrf_tests {
         for h in ["127.0.0.1", "10.0.0.5", "192.168.1.1", "172.16.0.1", "169.254.169.254", "100.64.0.1", "localhost", "0.0.0.0", "::1", "[::1]", "metadata.google.internal"] {
             assert!(is_forbidden_host(h), "{h} should be blocked");
         }
+    }
+
+    #[test]
+    fn blocks_private_ipv6_forms() {
+        for h in ["fc00::1", "fd12::1", "fe80::1", "2001:db8::1", "[fd00::1]", "::ffff:127.0.0.1", "::ffff:10.1.2.3"] {
+            assert!(is_forbidden_host(h), "{h} should be blocked");
+        }
+        assert!(!is_forbidden_host("2606:4700:4700::1111"), "public v6 allowed");
     }
 
     #[test]
