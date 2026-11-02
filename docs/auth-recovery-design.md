@@ -57,13 +57,31 @@ Out of scope for this design: device theft with an unlocked session
 - Audit: recovery events (issue/redeem/regenerate, never the code)
   logged with timestamp + IP for the account page's activity view.
 
+## Review blockers (recorded Nov 1, 2026 - MUST resolve before implementation)
+
+From the independent design review; design only, nothing implemented:
+1. Code hashing must use a distinct RECOVERY_CODE_PEPPER, separate from
+   the session secret, with a documented rotation story. (Supersedes the
+   open HMAC question: HMAC yes, but with its own pepper.)
+2. Rate limiting is BACKOFF, never hard account lockout: an
+   unauthenticated email-keyed lockout is a denial-of-service against the
+   account owner.
+3. A recovery event must trigger a mandatory, prominent notice at the
+   next sign-in, requiring the owner's acknowledgment.
+4. Single-use redeem must be atomic: the delete-and-create-session
+   transaction must assert exactly one row affected (rowcount == 1).
+5. The must-enroll-passkey state after redeem is enforced SERVER-side,
+   not by the UI.
+6. No-oracle responses include TIMING: nonexistent email, wrong code, and
+   backoff must be indistinguishable in body AND response time.
+7. Code entropy: consider 60-80 bits instead of 50 - the UX cost is low.
+   (Uncommitted recommendation; open.)
+
 ## Open questions for review
 
-1. HMAC-with-server-secret vs plain SHA-256 for code hashing.
-2. Exact rate-limit numbers and lockout vs backoff.
-3. Whether redeem may start WITHOUT email (passkey-only identifier)?
+1. Whether redeem may start WITHOUT email (passkey-only identifier)?
    Current design requires email as the lookup key - acceptable?
-4. Remaining-count visibility: exact number vs threshold warnings only.
+2. Remaining-count visibility: exact number vs threshold warnings only.
 
 ## Non-goals (first build)
 
