@@ -158,7 +158,8 @@ app.get('/:country/recipes/:idSlug', async (c) => {
   return c.html(renderRecipe(page, alternates));
 });
 
-// Everything else 404s (static assets are served by the assets binding).
-app.notFound((c) => c.text('Not found', 404));
+// Everything else falls through to static assets (JS/CSS/images), which 404
+// when no asset matches.
+app.notFound((c) => c.env.ASSETS.fetch(c.req.raw));
 
 export default app;
