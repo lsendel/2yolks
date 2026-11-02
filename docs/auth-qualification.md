@@ -125,3 +125,34 @@ password path fits CPU (passkey-first avoids it), Turnstile integration,
 account-recovery flows, multi-device UX, remote 0002 migration. Local
 passkey auth is QUALIFIED AS A DEV SPIKE ONLY - it is not a complete
 product auth and is not activated anywhere.
+
+## Production config draft (NOT activated, Nov 1, 2026)
+
+Draft values for when activation is authorized; none of this is live:
+- rpID: 2yolks.com (canonical origin host; https://2yolks.com as origin,
+  single entry, no www variant until a redirect strategy exists)
+- Session cookie: httpOnly, Secure, SameSite=Lax, __Host- prefix, 7-day
+  expiry (better-auth defaults), no cross-subdomain scope
+- Secret: BETTER_AUTH_SECRET from the vault at deploy time; the dev
+  fallback literal must be removed or fail-closed when ALLOW_DEMO_SEED is
+  unset (currently the dev routes are unreachable without the flag, so the
+  fallback is unreachable in production - keep it that way)
+- Base path: /api/auth/* (current dev mount /api/dev/auth/* is temporary)
+
+## Passkey-only: enrollment and recovery design (draft decision, not launch-ready)
+
+- Enrollment: user creates account, adds first passkey; adding MORE
+  passkeys per account must be supported (better-auth list/delete exist)
+  because a single-passkey account is a lost-device lockout.
+- Recovery options considered:
+  (a) recovery email link - requires qualified email sending (blocked:
+      no email account grant, and CF Email Sending is paid-only);
+  (b) one-time recovery codes shown at enrollment - no email dependency,
+      user-managed; needs secure display + hashed storage;
+  (c) multiple passkeys across devices - partial mitigation only.
+- Draft recommendation: passkey-first with (b) recovery codes at
+  enrollment + (a) when email qualifies. Password path stays OFF: hashing
+  busts free CPU by measurement and adds no UX the launch needs.
+- NOT launch-ready claims: this design is unreviewed; UX for
+  enrollment/recovery is not built; CPU billing is unmeasured in
+  production.

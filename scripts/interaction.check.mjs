@@ -1,10 +1,32 @@
-// Interaction tests against a live wrangler dev server: real Chrome via CDP.
+// Interaction tests: real Chrome via CDP.
 // Verifies serving-scaler math, cook-mode overlay/step navigation, and timer.
-// Usage: node scripts/interaction.test.mjs   (expects wrangler dev on PORT)
+// Self-bootstrapping: own disposable persistence dir + own dev server;
+// never touches shared .wrangler state. Usage: node scripts/interaction.check.mjs
+import { spawn, execSync } from 'node:child_process';
 import puppeteer from 'puppeteer-core';
 
 const PORT = Number(process.env.PORT || 8804);
 const BASE = `http://127.0.0.1:${PORT}`;
+const PERSIST = '.wrangler-interaction';
+execSync(`rm -rf ${PERSIST}`);
+execSync(`npx wrangler d1 execute 2yolks --local --persist-to ${PERSIST} --file packages/api/migrations/0001_init.sql`, { stdio: 'ignore' });
+execSync(`npx wrangler d1 execute 2yolks --local --persist-to ${PERSIST} --file packages/api/seeds/0001_demo.sql`, { stdio: 'ignore' });
+
+const server = spawn('npx', ['wrangler', 'dev', '--port', String(PORT), '--local', '--persist-to', PERSIST, '--var', 'ALLOW_DEMO_SEED:true'], { stdio: 'ignore', detached: true });
+server.on('error', () => {});
+for (let i = 0; i < 40; i++) {
+  try { const r = await fetch(`${BASE}/api/health`); if (r.ok) break; } catch {}
+  await new Promise((r) => setTimeout(r, 1000));
+}
+const stopServer = () => new Promise((resolve) => {
+  if (server.exitCode !== null || server.signalCode !== null) return resolve();
+  const done = () => resolve();
+  server.once('close', done);
+  setTimeout(done, 5000).unref();
+  try { process.kill(-server.pid, 'SIGTERM'); }
+  catch { try { server.kill('SIGTERM'); } catch {} }
+});
+
 let failures = 0;
 const check = (name, cond, extra = '') => {
   if (cond) console.log(`ok - ${name}`);
@@ -81,5 +103,6 @@ try {
   await page.screenshot({ path: '/downloads/shot-cookmode.png' });
 } finally {
   await browser.close();
+  await stopServer();
 }
 process.exit(failures === 0 ? 0 : 1);

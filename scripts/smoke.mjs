@@ -41,13 +41,15 @@ async function get(path, init) {
   return { status: res.status, headers: res.headers, body: await res.text(), location: res.headers.get('location') };
 }
 
-// fresh local D1: migration + demo seeds
-execSync('rm -rf .wrangler');
-execSync('npx wrangler d1 execute 2yolks --local --file packages/api/migrations/0001_init.sql', { stdio: 'ignore' });
-execSync('npx wrangler d1 execute 2yolks --local --file packages/api/seeds/0001_demo.sql', { stdio: 'ignore' });
-execSync('npx wrangler d1 execute 2yolks --local --file packages/api/seeds/0002_demo_malicious.sql', { stdio: 'ignore' });
+// fresh local D1 in THIS suite's disposable dir only: migration + demo seeds.
+// Never touch shared .wrangler state; suites run concurrently safely.
+const PERSIST = '.wrangler-smoke';
+execSync(`rm -rf ${PERSIST}`);
+execSync(`npx wrangler d1 execute 2yolks --local --persist-to ${PERSIST} --file packages/api/migrations/0001_init.sql`, { stdio: 'ignore' });
+execSync(`npx wrangler d1 execute 2yolks --local --persist-to ${PERSIST} --file packages/api/seeds/0001_demo.sql`, { stdio: 'ignore' });
+execSync(`npx wrangler d1 execute 2yolks --local --persist-to ${PERSIST} --file packages/api/seeds/0002_demo_malicious.sql`, { stdio: 'ignore' });
 
-const server = spawnServer(['wrangler', 'dev', '--port', String(PORT), '--local']);
+const server = spawnServer(['wrangler', 'dev', '--port', String(PORT), '--local', '--persist-to', PERSIST]);
 // production mode: ALLOW_DEMO_SEED defaults to false
 await new Promise((r) => setTimeout(r, 12000));
 
@@ -95,7 +97,7 @@ try {
   // dev mode: demo seed visible
   await stopServer(server);
   const PORT2 = PORT + 1;
-  const dev = spawnServer(['wrangler', 'dev', '--port', String(PORT2), '--local', '--var', 'ALLOW_DEMO_SEED:true', '--var', 'SUBMISSIONS_ENABLED:true']);
+  const dev = spawnServer(['wrangler', 'dev', '--port', String(PORT2), '--local', '--persist-to', PERSIST, '--var', 'ALLOW_DEMO_SEED:true', '--var', 'SUBMISSIONS_ENABLED:true']);
   await new Promise((r2) => setTimeout(r2, 12000));
   try {
     const get2 = async (path) => { const res = await fetch(`http://127.0.0.1:${PORT2}` + path, { redirect: 'manual' }); return { status: res.status, headers: res.headers, body: await res.text(), location: res.headers.get('location') }; };

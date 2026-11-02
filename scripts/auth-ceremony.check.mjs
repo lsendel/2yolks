@@ -19,10 +19,12 @@ const check = (name, cond, extra = '') => {
   else { failures++; console.error(`FAIL - ${name} ${extra}`); }
 };
 
-// --- clean local state: the ceremony must not depend on existing data ----
-execSync('rm -rf .wrangler');
-execSync('npx wrangler d1 execute 2yolks --local --file packages/api/migrations/0001_init.sql', { stdio: 'ignore' });
-execSync('npx wrangler d1 execute 2yolks --local --file packages/api/migrations/0002_auth.sql', { stdio: 'ignore' });
+// --- clean local state: dedicated disposable persistence dir, so the reset
+// can never erase shared .wrangler developer state or race other suites ----
+const PERSIST = '.wrangler-ceremony';
+execSync(`rm -rf ${PERSIST}`);
+execSync(`npx wrangler d1 execute 2yolks --local --persist-to ${PERSIST} --file packages/api/migrations/0001_init.sql`, { stdio: 'ignore' });
+execSync(`npx wrangler d1 execute 2yolks --local --persist-to ${PERSIST} --file packages/api/migrations/0002_auth.sql`, { stdio: 'ignore' });
 
 function spawnServer(args) {
   const child = spawn('npx', args, { stdio: 'ignore', detached: true });
@@ -40,7 +42,7 @@ function stopServer(child) {
   });
 }
 
-const server = spawnServer(['wrangler', 'dev', '--port', String(PORT), '--local', '--var', 'ALLOW_DEMO_SEED:true']);
+const server = spawnServer(['wrangler', 'dev', '--port', String(PORT), '--local', '--persist-to', PERSIST, '--var', 'ALLOW_DEMO_SEED:true']);
 // readiness poll instead of a fixed sleep
 for (let i = 0; i < 40; i++) {
   try { const r = await fetch(`${BASE}/api/health`); if (r.ok) break; } catch {}
@@ -111,8 +113,9 @@ try {
   check('replay of consumed assertion rejected 400 CHALLENGE_NOT_FOUND',
     replay.status === 400 && replay.code === 'CHALLENGE_NOT_FOUND', JSON.stringify(replay));
 
-  // 2+3. tampered challenge rejected 401, and the failed verify CONSUMES the
-  // live challenge so a subsequently valid assertion against it is 400.
+  // 2+3. FORGED challenge (sign a challenge the server never issued):
+  // rejected, and the failed verify CONSUMES the live challenge so a
+  // subsequently valid assertion against it is 400.
   const tamper = await page.evaluate(async () => {
     const getOpts = await (await fetch('/api/dev/auth/passkey/generate-authenticate-options')).json();
     const toBuf = (s) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0)).buffer;
@@ -146,11 +149,41 @@ try {
   console.log('probe tamper:', JSON.stringify(tamper));
   // Reviewer observed 401 AUTHENTICATION_FAILED; local reproduction returns
   // 400 with the same code - assert the semantic rejection, note both.
-  check('tampered challenge rejected (400/401) AUTHENTICATION_FAILED',
+  check('forged challenge rejected (400/401) AUTHENTICATION_FAILED',
     (tamper.bad.status === 400 || tamper.bad.status === 401) && tamper.bad.code === 'AUTHENTICATION_FAILED',
     JSON.stringify(tamper.bad));
   check('failed verification consumes the live challenge (valid replay 400)',
     tamper.afterFail.status === 400, JSON.stringify(tamper.afterFail));
+
+  // 3b. CORRUPTED SIGNATURE: a valid assertion over the LIVE challenge with
+  // flipped signature bytes - manual reviewer proved 401 here.
+  const corrupt = await page.evaluate(async () => {
+    const getOpts = await (await fetch('/api/dev/auth/passkey/generate-authenticate-options')).json();
+    const toBuf = (s) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0));
+    const b64 = (u8) => btoa(String.fromCharCode(...u8)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    const opts = { ...getOpts, challenge: toBuf(getOpts.challenge).buffer,
+      allowCredentials: (getOpts.allowCredentials || []).map((d) => ({ ...d, id: toBuf(d.id).buffer })) };
+    const cred = await navigator.credentials.get({ publicKey: opts });
+    const sig = new Uint8Array(cred.response.signature.slice(0));
+    sig[10] ^= 0xff; // corrupt the actual ECDSA signature bytes
+    const body = { response: {
+      id: cred.id, rawId: b64(new Uint8Array(cred.rawId)), type: cred.type,
+      response: {
+        clientDataJSON: b64(new Uint8Array(cred.response.clientDataJSON)),
+        authenticatorData: b64(new Uint8Array(cred.response.authenticatorData)),
+        signature: b64(sig),
+        userHandle: cred.response.userHandle ? b64(new Uint8Array(cred.response.userHandle)) : undefined,
+      },
+    } };
+    const r = await fetch('/api/dev/auth/passkey/verify-authentication', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+    });
+    let j = {}; try { j = await r.json(); } catch {}
+    return { status: r.status, code: j.code || '' };
+  });
+  console.log('probe corrupt-signature:', JSON.stringify(corrupt));
+  check('corrupted signature over live challenge rejected 401 AUTHENTICATION_FAILED',
+    corrupt.status === 401 && corrupt.code === 'AUTHENTICATION_FAILED', JSON.stringify(corrupt));
 
   // 4. verify without any options cookie
   const noCookie = await page.evaluate(async () => {

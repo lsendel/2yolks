@@ -24,3 +24,6 @@ dist-ssr
 *.sw?
 .env
 .wrangler/
+.wrangler-ceremony/
+.wrangler-interaction/
+.wrangler-smoke/
