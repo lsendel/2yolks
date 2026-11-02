@@ -10,6 +10,8 @@ import {
   slugify,
   uiStrings,
   validateRecipeSubmission,
+  parseIngredient,
+  formatQty,
 } from './index';
 
 describe('country registry', () => {
@@ -84,5 +86,32 @@ describe('recipe submission validation (fail closed)', () => {
     expect(validateRecipeSubmission({ ...valid, locales: [{ ...valid.locales[0], slug: 'Bad Slug!' }] }).ok).toBe(false);
     expect(validateRecipeSubmission({ ...valid, locales: [{ ...valid.locales[0], ingredients: [] }] }).ok).toBe(false);
     expect(validateRecipeSubmission({ ...valid, source: { ...valid.source, url: 'http://x.com' } }).ok).toBe(false);
+  });
+});
+
+describe('parseIngredient', () => {
+  it('parses whole numbers', () => {
+    expect(parseIngredient('2 eggs')).toEqual({ qty: 2, qtyEnd: null, rest: 'eggs' });
+  });
+  it('parses decimals and fractions', () => {
+    expect(parseIngredient('2.5 cups flour')).toEqual({ qty: 2.5, qtyEnd: null, rest: 'cups flour' });
+    expect(parseIngredient('1/2 tsp salt')).toEqual({ qty: 0.5, qtyEnd: null, rest: 'tsp salt' });
+    expect(parseIngredient('1 1/2 cups milk')).toEqual({ qty: 1.5, qtyEnd: null, rest: 'cups milk' });
+  });
+  it('parses unicode fractions and ranges', () => {
+    expect(parseIngredient('\u00bd onion')).toEqual({ qty: 0.5, qtyEnd: null, rest: 'onion' });
+    expect(parseIngredient('2-3 cloves garlic')).toEqual({ qty: 2, qtyEnd: 3, rest: 'cloves garlic' });
+  });
+  it('leaves quantity-free lines alone', () => {
+    expect(parseIngredient('salt to taste')).toEqual({ qty: null, qtyEnd: null, rest: 'salt to taste' });
+  });
+});
+
+describe('formatQty', () => {
+  it('formats wholes and fractions', () => {
+    expect(formatQty(2)).toBe('2');
+    expect(formatQty(0.5)).toBe('\u00bd');
+    expect(formatQty(1.5)).toBe('1 \u00bd');
+    expect(formatQty(0.25)).toBe('\u00bc');
   });
 });

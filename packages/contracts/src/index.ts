@@ -120,11 +120,29 @@ export interface UiStrings {
   ingredients: string;
   steps: string;
   source: string;
+  jumpToRecipe: string;
+  servings: string;
+  cookMode: string;
+  exitCookMode: string;
+  previousStep: string;
+  nextStep: string;
+  startTimer: string;
+  timerDone: string;
 }
 
 const UI_STRINGS: Record<string, UiStrings> = {
-  en: { ingredients: 'Ingredients', steps: 'Steps', source: 'Source' },
-  es: { ingredients: 'Ingredientes', steps: 'Pasos', source: 'Fuente' },
+  en: {
+    ingredients: 'Ingredients', steps: 'Steps', source: 'Source',
+    jumpToRecipe: 'Jump to recipe', servings: 'Servings', cookMode: 'Cook mode',
+    exitCookMode: 'Exit cook mode', previousStep: 'Back', nextStep: 'Next',
+    startTimer: 'Start timer', timerDone: 'Done!',
+  },
+  es: {
+    ingredients: 'Ingredientes', steps: 'Pasos', source: 'Fuente',
+    jumpToRecipe: 'Ir a la receta', servings: 'Porciones', cookMode: 'Modo cocina',
+    exitCookMode: 'Salir del modo cocina', previousStep: 'Atr\u00e1s', nextStep: 'Siguiente',
+    startTimer: 'Iniciar temporizador', timerDone: '\u00a1Listo!',
+  },
 };
 
 export function uiStrings(lang: string): UiStrings {
@@ -227,6 +245,72 @@ export function validateRecipeSubmission(input: unknown): ValidationResult {
 
   if (errors.length > 0) return { ok: false, errors };
   return { ok: true, value: sub as unknown as RecipeSubmission };
+}
+
+
+// ---------------------------------------------------------------------------
+// Ingredient quantity parsing + scaling (serving scaler).
+// Ingredients are stored as plain strings; a leading quantity (whole,
+// decimal, fraction "a/b" or unicode glyph, mixed "1 1/2", or range "2-3")
+// is parsed so the UI can scale it live. Everything after the quantity is
+// opaque text (unit + name + note).
+// ---------------------------------------------------------------------------
+
+const UNICODE_FRACTIONS: Record<string, number> = {
+  '\u00bc': 0.25, '\u00bd': 0.5, '\u00be': 0.75,
+  '\u2153': 1 / 3, '\u2154': 2 / 3,
+  '\u215b': 0.125, '\u215c': 0.375, '\u215d': 0.625, '\u215e': 0.875,
+  '\u2155': 0.2, '\u2156': 0.4, '\u2157': 0.6, '\u2158': 0.8,
+};
+
+export interface ParsedIngredient {
+  /** Leading quantity, or null when the line has none ("salt to taste"). */
+  qty: number | null;
+  /** Second quantity for ranges ("2-3 cups"). Null otherwise. */
+  qtyEnd: number | null;
+  /** Everything after the quantity: unit, name, notes. */
+  rest: string;
+}
+
+export function parseIngredient(text: string): ParsedIngredient {
+  const fracChars = Object.keys(UNICODE_FRACTIONS).join('');
+  // number forms: mixed "1 1/2", fraction "1/2", unicode glyph, decimal, int
+  const num = `(?:\\d+\\s+)?\\d+/\\d+|\\d+(?:\\.\\d+)?|[${fracChars}]`;
+  const re = new RegExp(`^\\s*(${num})(?:\\s*(?:-|\\u2013)\\s*(${num}))?\\s*(.*)$`);
+  const m = re.exec(text);
+  if (!m) return { qty: null, qtyEnd: null, rest: text.trim() };
+  const parse = (s: string): number | null => {
+    const mixed = /^(\d+)\s+(\d+)\/(\d+)$/.exec(s);
+    if (mixed) return Number(mixed[1]) + Number(mixed[2]) / Number(mixed[3]);
+    const frac = /^(\d+)\/(\d+)$/.exec(s);
+    if (frac) {
+      const d = Number(frac[2]);
+      return d === 0 ? null : Number(frac[1]) / d;
+    }
+    if (s in UNICODE_FRACTIONS) return UNICODE_FRACTIONS[s]!;
+    const n = Number(s);
+    return Number.isFinite(n) ? n : null;
+  };
+  const qty = parse(m[1]!);
+  const qtyEnd = m[2] ? parse(m[2]) : null;
+  return { qty, qtyEnd, rest: (m[3] ?? '').trim() };
+}
+
+/** Format a scaled quantity with unicode fractions (eighths and thirds). */
+export function formatQty(n: number): string {
+  const FRAC_DISPLAY: [number, string][] = [
+    [0.125, '\u215b'], [0.2, '\u2155'], [0.25, '\u00bc'], [1 / 3, '\u2153'],
+    [0.375, '\u215c'], [0.4, '\u2156'], [0.5, '\u00bd'], [0.6, '\u2157'],
+    [0.625, '\u215d'], [2 / 3, '\u2154'], [0.75, '\u00be'], [0.8, '\u2158'],
+    [0.875, '\u215e'],
+  ];
+  const whole = Math.floor(n + 1e-9);
+  const rem = n - whole;
+  if (rem < 0.06) return String(Math.round(n));
+  let best = FRAC_DISPLAY[0]!;
+  for (const f of FRAC_DISPLAY) if (Math.abs(f[0] - rem) < Math.abs(best[0] - rem)) best = f;
+  if (Math.abs(best[0] - rem) > 0.06) return (Math.round(n * 10) / 10).toString();
+  return whole > 0 ? `${whole} ${best[1]}` : best[1];
 }
 
 // ---------------------------------------------------------------------------
