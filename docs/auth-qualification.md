@@ -55,9 +55,16 @@ time is a risk indicator, not a precise production CPU measurement; the gap
 
 ## Better Auth passkey full-flow wiring - status (Nov 1, 2026)
 
-Dependency conflict found at install time: better-auth@1.7.15 requires
-drizzle-orm ^0.45.2 (or 1.0 rc); the repo pins drizzle-orm@0.38.4. Not yet
-resolved. Candidate paths:
+RESOLVED (branch auth-passkey-spike, Nov 1, 2026): path (a) taken -
+drizzle-orm upgraded to ^0.45.4, better-auth@1.7.15 + @better-auth/passkey
+@1.7.15 installed cleanly, full suite green (tsc, 18 vitest, 27 smoke with
+real D1 migrations/queries, 15 interaction), and a dev-only construction
+spike (/api/dev/auth-spike, ALLOW_DEMO_SEED-gated) proves better-auth +
+passkey plugin + drizzle adapter bundle and construct inside workerd. No
+schema, no migration, no auth routes mounted; submissions stay 503-gated.
+Original conflict record: better-auth@1.7.15 requires
+drizzle-orm ^0.45.2 (or 1.0 rc); the repo had pinned drizzle-orm@0.38.4.
+Considered paths:
 - (a) Upgrade drizzle-orm to ^0.45.2 across the repo, re-run the full
   suite against the existing D1 layer, then use better-auth's drizzle
   adapter. Cleaner long-term; touches the reviewed data layer.
@@ -66,7 +73,7 @@ resolved. Candidate paths:
   --legacy-peer-deps (better-auth then never touches drizzle at runtime).
   Lower blast radius; adds kysely as a second query layer.
 
-Remaining steps after the adapter decision: better-auth schema tables
+Remaining steps for full-flow qualification: better-auth schema tables
 (user/session/account/passkey), RP ID + origin pinned to the canonical
 origin, a dev-only ceremony route that measures a real
 registration+assertion verification end to end in workerd (software

@@ -109,6 +109,29 @@ app.get('/api/dev/passkey-spike', async (c) => {
   });
 });
 
+// Dev-only Better Auth construction spike: proves better-auth + the passkey
+// plugin + the drizzle adapter actually bundle and construct inside workerd.
+// No schema, no migration, no routes mounted - construction only.
+app.get('/api/dev/auth-spike', async (c) => {
+  if (!demoAllowed(c)) return c.notFound();
+  try {
+    const [{ betterAuth }, { passkey }, { drizzleAdapter }] = await Promise.all([
+      import('better-auth'),
+      import('@better-auth/passkey'),
+      import('better-auth/adapters/drizzle'),
+    ]);
+    const db = createDb(c.env.DB);
+    const auth = betterAuth({
+      secret: 'dev-spike-not-a-real-secret',
+      database: drizzleAdapter(db, { provider: 'sqlite' }),
+      plugins: [passkey()],
+    });
+    return c.json({ ok: true, constructed: typeof auth.handler === 'function' });
+  } catch (e) {
+    return c.json({ ok: false, error: String(e) }, 500);
+  }
+});
+
 app.get('/api/v1/countries', (c) =>
   c.json({ countries: COUNTRIES, locales: LOCALES }),
 );
