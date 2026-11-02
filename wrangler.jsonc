@@ -4,6 +4,9 @@
   "main": "packages/api/src/index.ts",
   "compatibility_date": "2026-10-30",
   "workers_dev": true,
+  "vars": {
+    "ALLOW_DEMO_SEED": "false"
+  },
   "assets": {
     "directory": "./packages/web/dist",
     "binding": "ASSETS",

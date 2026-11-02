@@ -38,3 +38,17 @@ npx wrangler deploy --dry-run --outdir /tmp/worker-dist
 US/English (`/us/en/`) and Mexico/Spanish (`/mx/es/`) with seed recipes.
 Content is UGC-first; harvested recipes wait on per-source license clearance
 (see the plan).
+
+## Local development
+
+```
+npm install
+npm run typecheck && npm run test && npm run build
+wrangler d1 execute 2yolks --local --file packages/api/migrations/0001_init.sql
+wrangler d1 execute 2yolks --local --file packages/api/seeds/0001_demo.sql   # synthetic demo data
+wrangler dev --local --var ALLOW_DEMO_SEED:true
+```
+
+The demo seed is synthetic agent-authored test data (`internal-demo` license)
+for local development only. The worker never serves `internal-demo` content
+unless `ALLOW_DEMO_SEED=true`; production config keeps it false.

@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, ne } from 'drizzle-orm';
 import {
   COUNTRIES,
   LOCALES,
@@ -16,9 +16,24 @@ import { createDb, recipes, recipeLocales, sources } from './db';
 type Bindings = {
   DB: D1Database;
   ASSETS: Fetcher;
+  /** 'true' only in local dev (wrangler dev --var ALLOW_DEMO_SEED:true).
+   * Synthetic demo-seed content must never be served in production. */
+  ALLOW_DEMO_SEED?: string;
 };
 
+const DEMO_LICENSE = 'internal-demo';
+
 const app = new Hono<{ Bindings: Bindings }>();
+
+/** Published-row predicate. Demo-seed rows are excluded unless
+ * ALLOW_DEMO_SEED=true (local dev only) - a production guard, not noindex. */
+function published(db: ReturnType<typeof createDb>, allowDemo: boolean) {
+  const conds = [eq(recipeLocales.status, 'published')];
+  if (!allowDemo) conds.push(ne(sources.license, DEMO_LICENSE));
+  return and(...conds);
+}
+
+const demoAllowed = (c: Context<{ Bindings: Bindings }>) => c.env.ALLOW_DEMO_SEED === 'true';
 
 // --- API ---------------------------------------------------------------
 
@@ -38,13 +53,16 @@ app.get('/api/v1/countries/:code/recipes', async (c) => {
       slug: recipeLocales.slug,
       title: recipeLocales.title,
       lang: recipeLocales.lang,
+      id: recipeLocales.recipeId,
     })
     .from(recipeLocales)
+    .innerJoin(recipes, eq(recipeLocales.recipeId, recipes.id))
+    .innerJoin(sources, eq(recipes.sourceId, sources.id))
     .where(
       and(
         eq(recipeLocales.country, country.code),
         eq(recipeLocales.lang, lang ?? ''),
-        eq(recipeLocales.status, 'published'),
+        published(db, demoAllowed(c)),
       ),
     );
   return c.json({ country: country.code, lang, recipes: rows });
@@ -71,12 +89,9 @@ const countryHome = async (c: Context<{ Bindings: Bindings }>) => {
   const rows = await db
     .select({ slug: recipeLocales.slug, title: recipeLocales.title, id: recipeLocales.recipeId })
     .from(recipeLocales)
-    .where(
-      and(
-        eq(recipeLocales.country, parsed.country),
-        eq(recipeLocales.status, 'published'),
-      ),
-    );
+    .innerJoin(recipes, eq(recipeLocales.recipeId, recipes.id))
+    .innerJoin(sources, eq(recipes.sourceId, sources.id))
+    .where(and(eq(recipeLocales.country, parsed.country), published(db, demoAllowed(c))));
   return c.html(
     renderCountryHome({
       countryName: country?.name ?? parsed.country,
@@ -101,10 +116,9 @@ app.get('/:country/recipes/:idSlug', async (c) => {
       and(
         eq(recipeLocales.country, parsed.country),
         eq(recipeLocales.recipeId, parsed.id),
-        eq(recipeLocales.status, 'published'),
+        published(db, demoAllowed(c)),
       ),
     );
-  if (rows.length === 0) return c.notFound();
   const canonical = rows.find((r) => r.recipe_locales.slug === parsed.slug);
   const target = canonical ?? rows[0];
   if (!canonical) {
@@ -120,7 +134,9 @@ app.get('/:country/recipes/:idSlug', async (c) => {
   const alternatesRows = await db
     .select({ country: recipeLocales.country, lang: recipeLocales.lang, slug: recipeLocales.slug })
     .from(recipeLocales)
-    .where(and(eq(recipeLocales.recipeId, parsed.id), eq(recipeLocales.status, 'published')));
+    .innerJoin(recipes, eq(recipeLocales.recipeId, recipes.id))
+    .innerJoin(sources, eq(recipes.sourceId, sources.id))
+    .where(and(eq(recipeLocales.recipeId, parsed.id), published(db, demoAllowed(c))));
   const origin = new URL(c.req.url).origin;
   const alternates = alternatesRows.map((a) => ({
     hreflang: `${a.lang}-${a.country.toUpperCase()}`,

@@ -8,6 +8,7 @@ import {
   countryPath,
   recipePath,
   slugify,
+  uiStrings,
 } from './index';
 
 describe('country registry', () => {
@@ -48,5 +49,13 @@ describe('slug table', () => {
   it('exposes default locales for wave 1', () => {
     expect(defaultLocale('us')).toBe('en');
     expect(defaultLocale('mx')).toBe('es');
+  });
+});
+
+describe('ui strings', () => {
+  it('localizes recipe page chrome', () => {
+    expect(uiStrings('es').ingredients).toBe('Ingredientes');
+    expect(uiStrings('en').ingredients).toBe('Ingredients');
+    expect(uiStrings('fr').steps).toBe('Steps'); // fallback to en
   });
 });
