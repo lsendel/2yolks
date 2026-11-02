@@ -96,11 +96,17 @@ Empty - first entries arrive with the MyPlate private pilot review.
   2026) grant "solamente para su uso personal y no para un uso comercial"
   and forbid modification, reproduction, public display, and transfer.
   That bars these recetarios for this commercial site BY DEFAULT.
-- Escape hatch, unverified: an individual recetario PDF carrying its own
-  permissive license would override the default for that document only;
-  none confirmed. robots.txt unreachable from our fetch path
-  (CRAWL_UNKNOWN_ERROR). Do not harvest; revisit only if a per-document
-  license is found or written clearance is obtained.
+- Per-document license checks (Nov 1, 2026): three candidate recetario
+  PDFs fetched and scanned for rights statements - DIF "Recetario
+  Regionalizado de Alimentacion Escolar Modalidad Caliente 2025"
+  (vidasaludable.gob.mx direct PDF), SEP "Recetario del Frijol Vive
+  Saludable", and cultura.gob.mx "Sabores Mexico 21Dic". NONE carries a
+  license, copyright notice, or reproduction grant in its text. Absence of
+  a permissive statement means the gob.mx portal non-commercial default
+  governs: all three remain BARRED.
+- robots.txt unreachable from our fetch path (CRAWL_UNKNOWN_ERROR). Do not
+  harvest; revisit only if a per-document license appears or written
+  clearance is obtained.
 
 ### cultura.gob.mx "Recetario: Sabores Mexico" - TERMS UNVERIFIED
 - Site refuses our fetch path (HTTP 444). Federal cultural-ministry
