@@ -12,4 +12,4 @@ INSERT INTO recipe_locales (recipe_id, country, lang, title, slug, intro, ingred
   ('r1', 'mx', 'es', 'Huevos Rancheros', 'huevos-rancheros', 'Clásico de rancho.',
    '["2 huevos","2 tortillas","salsa"]', '["Calentar las tortillas","Freír los huevos","Bañar en salsa"]', 'published'),
   ('r1', 'us', 'en', 'Ranch Eggs', 'ranch-eggs', 'A ranch classic.',
-   '["2 eggs","2 tortillas","salsa"]', '["Warm tortillas","Fry eggs","Top with salsa"]', 'published');
+   '["2 eggs","2 tortillas","salsa"]', '["Warm tortillas","Fry eggs 3 minutes","Top with salsa"]', 'published');

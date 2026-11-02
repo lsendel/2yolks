@@ -43,10 +43,12 @@ main { max-width: 42rem; margin: 0 auto; padding: 1.5rem 1rem 3rem; }
 .cards a:hover { border-color: var(--brand); }
 .recipe-source { color: var(--muted); font-size: 0.9rem; border-top: 1px solid #e7e5e4; margin-top: 2rem; padding-top: 1rem; }
 .langs { font-size: 0.9rem; color: var(--muted); }
-.recipe-actions { display: flex; gap: 0.75rem; align-items: center; margin: 0.5rem 0 1rem; }
+.recipe-actions { display: flex; flex-wrap: wrap; gap: 0.5rem 0.75rem; align-items: center; margin: 0.5rem 0 1rem; }
+main img { max-width: 100%; height: auto; }
+h1 { overflow-wrap: break-word; }
 .recipe-actions .jump { font-weight: 600; }
 .recipe-actions .cook-open { margin-left: auto; background: var(--brand); color: #fff; border: 0; border-radius: 0.5rem; padding: 0.5rem 1rem; font-weight: 700; cursor: pointer; }
-.scaler { display: inline-flex; gap: 0.25rem; align-items: center; margin: 0 0 0.75rem; }
+.scaler { display: flex; flex-wrap: wrap; gap: 0.25rem; align-items: center; margin: 0 0 0.75rem; }
 .scaler-label { color: var(--muted); font-size: 0.9rem; margin-right: 0.25rem; }
 .scaler button { border: 1px solid #e7e5e4; background: var(--card); border-radius: 0.375rem; padding: 0.25rem 0.6rem; cursor: pointer; font-weight: 600; }
 .scaler button[aria-pressed="true"] { background: var(--brand); color: #fff; border-color: var(--brand); }
