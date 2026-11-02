@@ -178,7 +178,8 @@ document.getElementById("authenticate").onclick = async () => { try {
   if (opts.allowCredentials) opts.allowCredentials = opts.allowCredentials.map((d) => ({ ...d, id: b64uToBuf(d.id) }));
   const cred = await navigator.credentials.get({ publicKey: opts });
   const t = Date.now();
-  const v = await post("/passkey/verify-authentication", { response: serCred(cred) });
+  window.__lastAuthBody = JSON.stringify({ response: serCred(cred) });
+  const v = await post("/passkey/verify-authentication", JSON.parse(window.__lastAuthBody));
   log("authenticate " + v.status + " verifyWall=" + (Date.now() - t) + "ms " + JSON.stringify(v.json).slice(0, 120));
 } catch (e) { log("authenticate ERROR " + (e && e.message ? e.message : String(e))); }
 };

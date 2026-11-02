@@ -96,11 +96,32 @@ Workers CPU billing measurement; the dominant op is ECDSA P-256 verify via
 WebCrypto, which Cloudflare documents as off-clock, and the microbenchmark
 (0.08 ms/verify) is consistent with a comfortable free-CPU margin.
 
+Adversarial regression probes (permanent, in the ceremony script):
+- replay of a consumed assertion: 400 CHALLENGE_NOT_FOUND
+- tampered challenge (different challenge signed): 400/401
+  AUTHENTICATION_FAILED (reviewer observed 401; local reproduction 400 -
+  same code, asserted as 400/401 + code)
+- a failed verification CONSUMES the live challenge: a valid assertion
+  against it afterwards is 400 CHALLENGE_NOT_FOUND
+- verify without the options cookie: 400
+- cookieless get-session: 200 null
+- weak password sign-up: 400
+- all dev routes 404 with ALLOW_DEMO_SEED unset (in smoke.mjs)
+
+Bootstrap: scripts/auth-ceremony.check.mjs resets .wrangler, applies
+migrations 0001+0002 to local D1, spawns and group-kills its own dev
+server, and polls /api/health for readiness - no dependence on dirty
+state, no leftover processes.
+
 Production denial verified: with ALLOW_DEMO_SEED unset, /api/dev/auth/*,
 /api/dev/auth-test, /api/dev/auth-spike all 404 (asserted in smoke.mjs).
 Secret comes from BETTER_AUTH_SECRET env var; the literal fallback is
 labeled dev-only and never ships.
 
-NOT established: production CPU billing (needs a deployed measurement),
-Turnstile integration, account-recovery flows, multi-device UX. No
-production auth route, schema, or migration is activated.
+NOT established (first-release gating): production CPU billing (needs a
+deployed measurement), canonical rpID/origin over HTTPS, secret store
+without the dev fallback, session/secure-cookie policy, whether any
+password path fits CPU (passkey-first avoids it), Turnstile integration,
+account-recovery flows, multi-device UX, remote 0002 migration. Local
+passkey auth is QUALIFIED AS A DEV SPIKE ONLY - it is not a complete
+product auth and is not activated anywhere.
