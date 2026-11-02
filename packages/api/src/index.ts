@@ -15,6 +15,7 @@ import {
 } from '@2yolks/contracts';
 import { renderHome, renderCountryHome, renderRecipe } from '@2yolks/web/server';
 import { createDb, recipes, recipeLocales, sources } from './db';
+import { scrypt } from '@noble/hashes/scrypt.js';
 
 type Bindings = {
   DB: D1Database;
@@ -52,6 +53,19 @@ const demoAllowed = (c: Context<{ Bindings: Bindings }>) => c.env.ALLOW_DEMO_SEE
 // --- API ---------------------------------------------------------------
 
 app.get('/api/health', (c) => c.json({ ok: true }));
+
+// Dev-only CPU spike: measure Better Auth's password hash (scrypt) inside
+// workerd. Wall time locally approximates CPU for pure compute; the Workers
+// Free limit is 10 ms CPU.
+app.get('/api/dev/cpu-spike', (c) => {
+  if (!demoAllowed(c)) return c.notFound();
+  const t0 = Date.now();
+  const key = scrypt('correct horse battery staple', '2yolks-spike-salt', {
+    N: 16384, r: 8, p: 1, dkLen: 32,
+  });
+  const ms = Date.now() - t0;
+  return c.json({ scrypt_ms: ms, key_bytes: key.length, params: { N: 16384, r: 8, p: 1 } });
+});
 
 app.get('/api/v1/countries', (c) =>
   c.json({ countries: COUNTRIES, locales: LOCALES }),

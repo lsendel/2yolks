@@ -80,29 +80,85 @@ fn now_iso() -> String {
     )
 }
 
-fn fetch_and_queue(url: &str, license: &str, out: &std::path::Path) -> Result<(), String> {
-    let parsed = url::Url::parse(url).map_err(|e| format!("bad url: {e}"))?;
-    if parsed.scheme() != "https" {
-        return Err("https only".into());
+/// Hosts that must never be fetched (SSRF guard): loopback, private,
+/// link-local, and unspecified ranges for IPv4 and IPv6.
+pub fn is_forbidden_host(host: &str) -> bool {
+    let h = host.trim_matches(['[', ']']).to_ascii_lowercase();
+    if h == "localhost" || h == "localhost." || h.ends_with(".localhost") || h == "metadata.google.internal" {
+        return true;
     }
+    if let Ok(ip) = h.parse::<std::net::Ipv4Addr>() {
+        return ip.is_loopback()
+            || ip.is_private()
+            || ip.is_link_local()
+            || ip.is_unspecified()
+            || ip.is_broadcast()
+            || ip.is_documentation()
+            || ip.octets()[0] == 0
+            || (ip.octets()[0] == 100 && (64..=127).contains(&ip.octets()[1])) // CGNAT
+            || (ip.octets()[0] == 169 && ip.octets()[1] == 254) // cloud metadata
+            || (ip.octets()[0] == 192 && ip.octets()[1] == 168)
+            || ip.octets()[0] == 127
+            || ip.octets()[0] == 10
+            || (ip.octets()[0] == 172 && (16..=31).contains(&ip.octets()[1]));
+    }
+    if let Ok(ip) = h.parse::<std::net::Ipv6Addr>() {
+        return ip.is_loopback() || ip.is_unspecified();
+    }
+    false
+}
+
+fn fetch_and_queue(url: &str, license: &str, out: &std::path::Path) -> Result<(), String> {
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .user_agent("yolk-harvest/0.1 (private pilot; contact: site owner)")
+        // Redirects handled manually: every hop re-validates scheme, host
+        // (SSRF guard) and robots for the NEW host - a redirect must never
+        // bypass the origin's robots evaluation.
+        .max_redirects(0)
         .build()
         .into();
-    // robots.txt check first; a fetch failure here fails closed.
-    let rules = robots::fetch_rules(&agent, &parsed)?;
-    let path = parsed.path();
-    if !rules.allows("yolk-harvest", path) {
-        return Err(format!("robots.txt disallows {path}"));
-    }
-    let html = agent
-        .get(url)
-        .call()
-        .map_err(|e| format!("fetch failed: {e}"))?
-        .body_mut()
-        .read_to_string()
-        .map_err(|e| format!("read failed: {e}"))?;
-    normalize_to_queue(&html, url, license, out)
+    let mut current = url::Url::parse(url).map_err(|e| format!("bad url: {e}"))?;
+    let mut hops = 0;
+    let html = loop {
+        if current.scheme() != "https" {
+            return Err("https only".into());
+        }
+        let host = current.host_str().ok_or("url has no host")?;
+        if is_forbidden_host(host) {
+            return Err(format!("forbidden host (SSRF guard): {host}"));
+        }
+        // robots.txt check for THIS host; a fetch failure here fails closed.
+        let rules = robots::fetch_rules(&agent, &current)?;
+        let path = current.path();
+        if !rules.allows("yolk-harvest", path) {
+            return Err(format!("robots.txt disallows {path}"));
+        }
+        let resp = agent
+            .get(current.as_str())
+            .call()
+            .map_err(|e| format!("fetch failed: {e}"))?;
+        if resp.status().is_redirection() {
+            hops += 1;
+            if hops > 3 {
+                return Err("too many redirects".into());
+            }
+            let loc = resp
+                .headers()
+                .get("location")
+                .and_then(|v| v.to_str().ok())
+                .ok_or("redirect without location")?;
+            current = current.join(loc).map_err(|e| format!("bad redirect: {e}"))?;
+            continue;
+        }
+        if !resp.status().is_success() {
+            return Err(format!("fetch failed: status {}", resp.status()));
+        }
+        break resp
+            .into_body()
+            .read_to_string()
+            .map_err(|e| format!("read failed: {e}"))?;
+    };
+    normalize_to_queue(&html, current.as_str(), license, out)
 }
 
 fn normalize_to_queue(
@@ -138,3 +194,23 @@ fn review(out: &std::path::Path) -> Result<(), String> {
     println!("{} record(s)", records.len());
     Ok(())
 }
+
+#[cfg(test)]
+mod ssrf_tests {
+    use super::is_forbidden_host;
+
+    #[test]
+    fn blocks_private_and_metadata_hosts() {
+        for h in ["127.0.0.1", "10.0.0.5", "192.168.1.1", "172.16.0.1", "169.254.169.254", "100.64.0.1", "localhost", "0.0.0.0", "::1", "[::1]", "metadata.google.internal"] {
+            assert!(is_forbidden_host(h), "{h} should be blocked");
+        }
+    }
+
+    #[test]
+    fn allows_public_hosts() {
+        for h in ["93.184.216.34", "myplate.gov", "1.1.1.1"] {
+            assert!(!is_forbidden_host(h), "{h} should be allowed");
+        }
+    }
+}
+

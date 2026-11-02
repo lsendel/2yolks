@@ -6,6 +6,7 @@
   "dependencies": {
     "@2yolks/contracts": "*",
     "@2yolks/web": "*",
+    "@noble/hashes": "^2.4.0",
     "drizzle-orm": "^0.38",
     "hono": "^4",
     "react": "^19",
