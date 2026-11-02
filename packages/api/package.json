@@ -16,5 +16,8 @@
   },
   "scripts": {
     "build": "echo api bundled by wrangler deploy"
+  },
+  "devDependencies": {
+    "drizzle-kit": "^0.31.11"
   }
 }

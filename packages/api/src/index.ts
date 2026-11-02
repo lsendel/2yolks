@@ -115,17 +115,8 @@ app.get('/api/dev/passkey-spike', async (c) => {
 app.get('/api/dev/auth-spike', async (c) => {
   if (!demoAllowed(c)) return c.notFound();
   try {
-    const [{ betterAuth }, { passkey }, { drizzleAdapter }] = await Promise.all([
-      import('better-auth'),
-      import('@better-auth/passkey'),
-      import('better-auth/adapters/drizzle'),
-    ]);
-    const db = createDb(c.env.DB);
-    const auth = betterAuth({
-      secret: 'dev-spike-not-a-real-secret',
-      database: drizzleAdapter(db, { provider: 'sqlite' }),
-      plugins: [passkey()],
-    });
+    const { createAuth } = await import('./auth');
+    const auth = createAuth(createDb(c.env.DB));
     return c.json({ ok: true, constructed: typeof auth.handler === 'function' });
   } catch (e) {
     return c.json({ ok: false, error: String(e) }, 500);
