@@ -17,7 +17,7 @@
     {
       "binding": "DB",
       "database_name": "2yolks",
-      "database_id": "00000000-0000-0000-0000-000000000000", // placeholder until wrangler d1 create runs at deploy time,
+      "database_id": "e8eadf5d-a251-4065-8013-810c710ebc40", // provisioned via CF dashboard 2026-11-01, free plan,
       "migrations_dir": "packages/api/migrations"
     }
   ]
