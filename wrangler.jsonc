@@ -1,0 +1,19 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "2yolks",
+  "main": "packages/api/src/index.ts",
+  "compatibility_date": "2026-10-30",
+  "workers_dev": true,
+  "assets": {
+    "directory": "./packages/web/dist",
+    "binding": "ASSETS"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "2yolks",
+      "database_id": "00000000-0000-0000-0000-000000000000", // placeholder until wrangler d1 create runs at deploy time,
+      "migrations_dir": "packages/api/migrations"
+    }
+  ]
+}

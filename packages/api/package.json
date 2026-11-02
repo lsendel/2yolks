@@ -1,0 +1,17 @@
+{
+  "name": "@2yolks/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@2yolks/contracts": "*",
+    "@2yolks/web": "*",
+    "drizzle-orm": "^0.38",
+    "hono": "^4",
+    "react": "^19",
+    "react-dom": "^19"
+  },
+  "scripts": {
+    "build": "echo api bundled by wrangler deploy"
+  }
+}
