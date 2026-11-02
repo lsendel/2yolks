@@ -66,13 +66,26 @@ try {
   console.log('status:', created);
   check('enroll: account created via real UI', /Account created/.test(created), created);
 
+  const afterEnroll = await page.evaluate(() => ({
+    pw: document.querySelector('[data-password]').value,
+    retired: document.querySelector('[data-enroll]').classList.contains('retired'),
+    createDisabled: document.querySelector('[data-create]').disabled,
+  }));
+  check('enroll: typed password cleared from DOM', afterEnroll.pw === '', JSON.stringify(afterEnroll));
+  check('enroll: signup controls retired with session', afterEnroll.retired && afterEnroll.createDisabled, JSON.stringify(afterEnroll));
+
   const added = await statusAfter(() => page.click('[data-add-passkey]'));
   console.log('status:', added);
-  check('enroll: passkey added via real UI', /Passkey added/.test(added), added);
+  check('enroll: passkey added via real UI (from account section)', /Passkey added/.test(added), added);
 
   await page.click('[data-signout]');
   await page.waitForFunction(() => document.querySelector('[data-session-box]').hidden, { timeout: 10000 });
   check('sign out hides session', true);
+  const restored = await page.evaluate(() => ({
+    retired: document.querySelector('[data-enroll]').classList.contains('retired'),
+    createDisabled: document.querySelector('[data-create]').disabled,
+  }));
+  check('sign out restores signup controls', !restored.retired && !restored.createDisabled, JSON.stringify(restored));
 
   const signedIn = await statusAfter(() => page.click('[data-passkey-signin]'));
   console.log('status:', signedIn);

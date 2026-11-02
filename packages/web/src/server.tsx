@@ -145,6 +145,7 @@ const AUTH_CSS = `
 .auth-status { margin-top: 1rem; padding: 0.6rem 0.8rem; border-radius: 0.5rem; background: #f5f5f4; font-size: 0.9rem; }
 .auth-status.ok { background: #ecfdf5; color: #065f46; }
 .auth-status.err { background: #fef2f2; color: #991b1b; }
+.auth-card.retired { opacity: 0.55; }
 .auth-session { margin-top: 1.5rem; border-top: 1px solid #e7e5e4; padding-top: 1rem; font-size: 0.9rem; color: var(--muted); }
 `;
 
@@ -169,13 +170,13 @@ export function renderAuthUi(opts: { authBase: string }): string {
     <label for="ap">Password</label>
     <input id="ap" data-password type="password" autocomplete="new-password" />
     <button type="button" data-create>Create account</button>
-    <button type="button" class="secondary" data-add-passkey hidden>Add a passkey</button>
   </section>
 
   <p class="auth-status" data-status hidden></p>
 
   <section class="auth-session" data-session-box hidden>
     <p>Signed in as <strong data-session-name></strong> (<span data-session-email></span>)</p>
+    <button type="button" class="secondary" data-add-passkey hidden>Add a passkey</button>
     <button type="button" class="secondary" data-signout>Sign out</button>
   </section>
 </main>
@@ -221,6 +222,18 @@ function showSession(u) {
   document.querySelector('[data-session-name]').textContent = u.name || '';
   document.querySelector('[data-session-email]').textContent = u.email || '';
   document.querySelector('[data-session-box]').hidden = false;
+  document.querySelector('[data-add-passkey]').hidden = false;
+  // Once a session exists, retire the signup controls and drop the typed
+  // secret from the DOM - the password must not linger in the page.
+  document.querySelector('[data-password]').value = '';
+  document.querySelector('[data-enroll]').classList.add('retired');
+  document.querySelectorAll('[data-enroll] input, [data-enroll] [data-create]').forEach(function (el) { el.disabled = true; });
+}
+function hideSession() {
+  document.querySelector('[data-session-box]').hidden = true;
+  document.querySelector('[data-add-passkey]').hidden = true;
+  document.querySelector('[data-enroll]').classList.remove('retired');
+  document.querySelectorAll('[data-enroll] input, [data-enroll] [data-create]').forEach(function (el) { el.disabled = false; });
 }
 document.querySelector('[data-create]').onclick = async function () {
   try {
@@ -231,7 +244,6 @@ document.querySelector('[data-create]').onclick = async function () {
     });
     if (r.status !== 200) return say('Could not create account: ' + (r.json.message || r.status), false);
     say('Account created. Now add a passkey.', true);
-    document.querySelector('[data-add-passkey]').hidden = false;
     showSession(r.json.user || {});
   } catch (e) { say('Error: ' + (e && e.message || e), false); }
 };
@@ -260,7 +272,7 @@ document.querySelector('[data-passkey-signin]').onclick = async function () {
 };
 document.querySelector('[data-signout]').onclick = async function () {
   await post('/sign-out');
-  document.querySelector('[data-session-box]').hidden = true;
+  hideSession();
   say('Signed out.', true);
 };
 `;
