@@ -5,7 +5,8 @@
   "compatibility_date": "2026-10-30",
   "workers_dev": true,
   "vars": {
-    "ALLOW_DEMO_SEED": "false"
+    "ALLOW_DEMO_SEED": "false",
+    "CANONICAL_ORIGIN": "https://2yolks.com"
   },
   "assets": {
     "directory": "./packages/web/dist",

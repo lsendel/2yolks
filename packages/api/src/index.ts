@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
-import { eq, and, ne } from 'drizzle-orm';
+import { eq, and, ne, isNotNull } from 'drizzle-orm';
 import {
   COUNTRIES,
   LOCALES,
@@ -19,16 +19,24 @@ type Bindings = {
   /** 'true' only in local dev (wrangler dev --var ALLOW_DEMO_SEED:true).
    * Synthetic demo-seed content must never be served in production. */
   ALLOW_DEMO_SEED?: string;
+  /** Pinned canonical origin for absolute URLs (hreflang, JSON-LD).
+   * Never derive from the request Host header. */
+  CANONICAL_ORIGIN?: string;
 };
 
 const DEMO_LICENSE = 'internal-demo';
 
 const app = new Hono<{ Bindings: Bindings }>();
 
-/** Published-row predicate. Demo-seed rows are excluded unless
- * ALLOW_DEMO_SEED=true (local dev only) - a production guard, not noindex. */
+/** Published-row predicate: requires a cleared source (license reviewed),
+ * and excludes synthetic demo-seed rows unless ALLOW_DEMO_SEED=true
+ * (local dev only). This is a production serving gate, not noindex. */
 function published(db: ReturnType<typeof createDb>, allowDemo: boolean) {
-  const conds = [eq(recipeLocales.status, 'published')];
+  const conds = [
+    eq(recipeLocales.status, 'published'),
+    // clearedAt NULL means the source rights review has not completed.
+    isNotNull(sources.clearedAt),
+  ];
   if (!allowDemo) conds.push(ne(sources.license, DEMO_LICENSE));
   return and(...conds);
 }
@@ -46,7 +54,11 @@ app.get('/api/v1/countries', (c) =>
 app.get('/api/v1/countries/:code/recipes', async (c) => {
   const country = getCountry(c.req.param('code'));
   if (!country) return c.json({ error: 'unknown country' }, 404);
-  const lang = c.req.query('lang') ?? defaultLocale(country.code);
+  const requested = c.req.query('lang');
+  const lang = requested ?? defaultLocale(country.code);
+  if (!lang || (requested && !(LOCALES[country.code] ?? []).includes(requested))) {
+    return c.json({ error: 'unsupported locale', country: country.code, locales: LOCALES[country.code] ?? [] }, 404);
+  }
   const db = createDb(c.env.DB);
   const rows = await db
     .select({
@@ -85,6 +97,8 @@ const countryHome = async (c: Context<{ Bindings: Bindings }>) => {
   const parsed = parsePath(c.req.path);
   if (!parsed) return c.notFound();
   const country = getCountry(parsed.country);
+  // Unscheduled markets (wave 0) are not launched: 404, never an empty 200.
+  if (!country || country.wave === 0) return c.notFound();
   const db = createDb(c.env.DB);
   const rows = await db
     .select({ slug: recipeLocales.slug, title: recipeLocales.title, id: recipeLocales.recipeId })
@@ -94,10 +108,13 @@ const countryHome = async (c: Context<{ Bindings: Bindings }>) => {
     .where(and(eq(recipeLocales.country, parsed.country), published(db, demoAllowed(c))));
   return c.html(
     renderCountryHome({
-      countryName: country?.name ?? parsed.country,
+      countryName: country.name,
       country: parsed.country,
       recipes: rows,
     }),
+    // Empty listings must not be indexed (thin-page gate).
+    rows.length === 0 ? 200 : 200,
+    rows.length === 0 ? { 'x-robots-tag': 'noindex' } : undefined,
   );
 };
 app.get('/:country', countryHome);
@@ -120,9 +137,10 @@ app.get('/:country/recipes/:idSlug', async (c) => {
       ),
     );
   const canonical = rows.find((r) => r.recipe_locales.slug === parsed.slug);
-  const target = canonical ?? rows[0];
   if (!canonical) {
-    // Slug changed after freeze: redirect to the canonical slug (301).
+    // Stale/wrong slug: 301 only when exactly one visible locale row exists
+    // for this recipe+country (no unordered guesses).
+    const target = rows.length === 1 ? rows[0] : undefined;
     if (!target) return c.notFound();
     return c.redirect(
       recipePath(parsed.country, parsed.id, target.recipe_locales.slug),
@@ -137,11 +155,20 @@ app.get('/:country/recipes/:idSlug', async (c) => {
     .innerJoin(recipes, eq(recipeLocales.recipeId, recipes.id))
     .innerJoin(sources, eq(recipes.sourceId, sources.id))
     .where(and(eq(recipeLocales.recipeId, parsed.id), published(db, demoAllowed(c))));
-  const origin = new URL(c.req.url).origin;
+  const origin = c.env.CANONICAL_ORIGIN ?? new URL(c.req.url).origin;
+  const defaultLang = defaultLocale(parsed.country);
   const alternates = alternatesRows.map((a) => ({
     hreflang: `${a.lang}-${a.country.toUpperCase()}`,
     href: `${origin}${recipePath(a.country, parsed.id ?? '', a.slug)}`,
   }));
+  // x-default points at the default-locale version when one exists.
+  const def = alternatesRows.find((a) => a.country === parsed.country && a.lang === defaultLang);
+  if (def) {
+    alternates.push({
+      hreflang: 'x-default',
+      href: `${origin}${recipePath(def.country, parsed.id ?? '', def.slug)}`,
+    });
+  }
 
   const page: RecipePage = {
     recipe: {
@@ -173,6 +200,8 @@ app.get('/:country/recipes/:idSlug', async (c) => {
   };
   return c.html(renderRecipe(page, alternates));
 });
+
+app.all('/api/*', (c) => c.json({ error: 'not found' }, 404));
 
 // Everything else falls through to static assets (JS/CSS/images), which 404
 // when no asset matches.

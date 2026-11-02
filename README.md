@@ -51,4 +51,13 @@ wrangler dev --local --var ALLOW_DEMO_SEED:true
 
 The demo seed is synthetic agent-authored test data (`internal-demo` license)
 for local development only. The worker never serves `internal-demo` content
-unless `ALLOW_DEMO_SEED=true`; production config keeps it false.
+unless `ALLOW_DEMO_SEED=true`; production config keeps it false. Published
+rows also require a cleared source (`sources.cleared_at` set) before the
+worker serves them - rights clearance is a serving gate, not just metadata.
+
+`CANONICAL_ORIGIN` pins the absolute URL origin (hreflang, JSON-LD) so
+responses never depend on the request Host header.
+
+Route-level checks (`npm run test:routes`) boot a real workerd runtime and
+assert routing, serving gates, redirect, hreflang/x-default, noindex, and
+XSS escaping behavior.

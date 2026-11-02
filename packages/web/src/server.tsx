@@ -1,4 +1,21 @@
 import { renderToString } from 'react-dom/server';
+
+/** Escape text interpolated into raw HTML head elements. */
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+/** JSON.stringify safe for inline <script>: escapes </script> breakouts. */
+export function safeJsonLd(value: object): string {
+  return JSON.stringify(value)
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    .replace(/&/g, '\\u0026');
+}
 import { Home, CountryHome, RecipeView, type HomeProps, type CountryHomeProps } from './App';
 import type { RecipePage } from '@2yolks/contracts';
 
@@ -12,15 +29,15 @@ interface ShellOptions {
 
 function shell(body: string, { title, alternates = [], jsonLd, noindex = false }: ShellOptions): string {
   const links = alternates
-    .map((a) => `<link rel="alternate" hreflang="${a.hreflang}" href="${a.href}" />`)
+    .map((a) => `<link rel="alternate" hreflang="${escapeHtml(a.hreflang)}" href="${escapeHtml(a.href)}" />`)
     .join('\n    ');
-  const ld = jsonLd ? `<script type="application/ld+json">${JSON.stringify(jsonLd)}</script>` : '';
+  const ld = jsonLd ? `<script type="application/ld+json">${safeJsonLd(jsonLd)}</script>` : '';
   return `<!doctype html>
 <html>
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>${title}</title>
+    <title>${escapeHtml(title)}</title>
     ${noindex ? '<meta name="robots" content="noindex, nofollow" />' : ''}
     ${links}
     ${ld}

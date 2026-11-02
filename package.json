@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "migrate:local": "wrangler d1 execute 2yolks --local --file packages/api/migrations/0001_init.sql",
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler deploy",
+    "test:routes": "node scripts/smoke.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5",
