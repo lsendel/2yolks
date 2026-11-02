@@ -113,14 +113,17 @@ export function defaultLocale(countryCode: string): string | undefined {
 }
 
 // ---------------------------------------------------------------------------
-// Slug table: country prefix + language segment.
-//   /us/en/<recipe-slug>       recipe page
-//   /us/en/                    country-language home
-//   /us/                       redirects to /us/en/
+// Slug table (per approved plan):
+//   /{country}/                          country market home (default locale)
+//   /{country}/recipes/{id}-{slug}       recipe page
+// The id is opaque and stable across locales; each locale adds its own
+// translated slug beside it. A slug freezes once its language enters a
+// sitemap; later changes are 301 redirects against the frozen map.
 // hreflang alternates are exact content equivalents of the same recipe only.
 // ---------------------------------------------------------------------------
 
 export const SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+export const ID_PATTERN = /^[a-z0-9]+$/;
 
 export function slugify(title: string): string {
   const slug = title
@@ -133,32 +136,33 @@ export function slugify(title: string): string {
   return slug;
 }
 
-export function countryLangPath(country: string, lang: string): string {
-  return `/${country.toLowerCase()}/${lang.toLowerCase()}/`;
+export function countryPath(country: string): string {
+  return `/${country.toLowerCase()}/`;
 }
 
-export function recipePath(country: string, lang: string, slug: string): string {
-  return `${countryLangPath(country, lang)}${slug}`;
+export function recipePath(country: string, id: string, slug: string): string {
+  return `${countryPath(country)}recipes/${id.toLowerCase()}-${slug}`;
 }
 
 export interface ParsedPath {
   country: string;
-  lang: string;
+  id?: string;
   slug?: string;
 }
 
-/** Parse /:country/:lang/ or /:country/:lang/:slug. Returns null when the
- * country or locale is not registered (caller renders 404). */
+/** Parse /{country}/ or /{country}/recipes/{id}-{slug}. Returns null when the
+ * country is not registered or the shape does not match. */
 export function parsePath(pathname: string): ParsedPath | null {
-  const m = /^\/([a-z]{2})\/([a-z]{2})(?:\/([a-z0-9-]+))?\/?$/.exec(pathname);
-  if (!m) return null;
-  const country = m[1];
-  const lang = m[2];
-  const slug = m[3];
-  if (!country || !lang) return null;
-  if (!getCountry(country)) return null;
-  if (!localesFor(country).includes(lang)) return null;
-  return { country, lang, slug };
+  const home = /^\/([a-z]{2})\/?$/.exec(pathname);
+  if (home) {
+    const country = home[1];
+    return country && getCountry(country) ? { country } : null;
+  }
+  const rec = /^\/([a-z]{2})\/recipes\/([a-z0-9]+)-([a-z0-9-]+)\/?$/.exec(pathname);
+  if (!rec) return null;
+  const [, country, id, slug] = rec;
+  if (!country || !id || !slug || !getCountry(country)) return null;
+  return { country, id, slug };
 }
 
 // ---------------------------------------------------------------------------

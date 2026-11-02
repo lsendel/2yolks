@@ -1,5 +1,5 @@
 import type { RecipePage } from '@2yolks/contracts';
-import { countryLangPath } from '@2yolks/contracts';
+import { countryPath, recipePath } from '@2yolks/contracts';
 
 export interface HomeProps {
   locales: { country: string; countryName: string; lang: string }[];
@@ -13,7 +13,7 @@ export function Home({ locales }: HomeProps) {
       <ul>
         {locales.map((l) => (
           <li key={`${l.country}-${l.lang}`}>
-            <a href={countryLangPath(l.country, l.lang)}>
+            <a href={countryPath(l.country)}>
               {l.countryName} ({l.lang})
             </a>
           </li>
@@ -26,18 +26,17 @@ export function Home({ locales }: HomeProps) {
 export interface CountryHomeProps {
   countryName: string;
   country: string;
-  lang: string;
-  recipes: { slug: string; title: string }[];
+  recipes: { id: string; slug: string; title: string }[];
 }
 
-export function CountryHome({ countryName, country, lang, recipes }: CountryHomeProps) {
+export function CountryHome({ countryName, country, recipes }: CountryHomeProps) {
   return (
     <main>
       <h1>{countryName}</h1>
       <ul>
         {recipes.map((r) => (
-          <li key={r.slug}>
-            <a href={`${countryLangPath(country, lang)}${r.slug}`}>{r.title}</a>
+          <li key={`${r.id}-${r.slug}`}>
+            <a href={recipePath(country, r.id, r.slug)}>{r.title}</a>
           </li>
         ))}
       </ul>

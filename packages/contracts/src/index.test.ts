@@ -5,6 +5,7 @@ import {
   waveCountries,
   defaultLocale,
   parsePath,
+  countryPath,
   recipePath,
   slugify,
 } from './index';
@@ -23,16 +24,23 @@ describe('country registry', () => {
 });
 
 describe('slug table', () => {
-  it('builds country/language recipe paths', () => {
-    expect(recipePath('mx', 'es', 'huevos-rancheros')).toBe('/mx/es/huevos-rancheros');
+  it('builds /{country}/recipes/{id}-{slug} paths with a stable id', () => {
+    expect(recipePath('mx', 'r1', 'huevos-rancheros')).toBe('/mx/recipes/r1-huevos-rancheros');
+    expect(countryPath('us')).toBe('/us/');
   });
-  it('parses country-language paths', () => {
-    expect(parsePath('/us/en/')).toEqual({ country: 'us', lang: 'en', slug: undefined });
-    expect(parsePath('/mx/es/flan')).toEqual({ country: 'mx', lang: 'es', slug: 'flan' });
+  it('parses country homes and recipe paths', () => {
+    expect(parsePath('/us/')).toEqual({ country: 'us', id: undefined, slug: undefined });
+    expect(parsePath('/mx')).toEqual({ country: 'mx', id: undefined, slug: undefined });
+    expect(parsePath('/mx/recipes/r1-huevos-rancheros')).toEqual({
+      country: 'mx',
+      id: 'r1',
+      slug: 'huevos-rancheros',
+    });
   });
-  it('rejects unregistered countries and locales', () => {
-    expect(parsePath('/zz/en/')).toBeNull();
-    expect(parsePath('/us/es/')).toBeNull();
+  it('rejects unregistered countries and malformed paths', () => {
+    expect(parsePath('/zz/')).toBeNull();
+    expect(parsePath('/us/recipes/')).toBeNull();
+    expect(parsePath('/us/other/x')).toBeNull();
   });
   it('slugifies titles with accents and punctuation', () => {
     expect(slugify('Huevos a la Mexicana!')).toBe('huevos-a-la-mexicana');

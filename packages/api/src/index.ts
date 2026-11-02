@@ -7,7 +7,7 @@ import {
   getCountry,
   defaultLocale,
   parsePath,
-  countryLangPath,
+  recipePath,
   type RecipePage,
 } from '@2yolks/contracts';
 import { renderHome, renderCountryHome, renderRecipe } from '@2yolks/web/server';
@@ -53,35 +53,27 @@ app.get('/api/v1/countries/:code/recipes', async (c) => {
 // --- SSR pages ----------------------------------------------------------
 
 app.get('/', (c) => {
-  const locales = COUNTRIES.filter((ct) => ct.wave === 1).flatMap((ct) =>
+  const markets = COUNTRIES.filter((ct) => ct.wave === 1).flatMap((ct) =>
     (LOCALES[ct.code] ?? []).map((lang) => ({
       country: ct.code,
       countryName: ct.name,
       lang,
     })),
   );
-  return c.html(renderHome({ locales }));
-});
-
-app.get('/:country', (c) => {
-  const country = getCountry(c.req.param('country'));
-  const lang = country && defaultLocale(country.code);
-  if (!country || !lang) return c.notFound();
-  return c.redirect(countryLangPath(country.code, lang), 302);
+  return c.html(renderHome({ locales: markets }));
 });
 
 const countryHome = async (c: Context<{ Bindings: Bindings }>) => {
-  const parsed = parsePath(`/${c.req.param('country')}/${c.req.param('lang')}/`);
+  const parsed = parsePath(c.req.path);
   if (!parsed) return c.notFound();
   const country = getCountry(parsed.country);
   const db = createDb(c.env.DB);
   const rows = await db
-    .select({ slug: recipeLocales.slug, title: recipeLocales.title })
+    .select({ slug: recipeLocales.slug, title: recipeLocales.title, id: recipeLocales.recipeId })
     .from(recipeLocales)
     .where(
       and(
         eq(recipeLocales.country, parsed.country),
-        eq(recipeLocales.lang, parsed.lang),
         eq(recipeLocales.status, 'published'),
       ),
     );
@@ -89,17 +81,16 @@ const countryHome = async (c: Context<{ Bindings: Bindings }>) => {
     renderCountryHome({
       countryName: country?.name ?? parsed.country,
       country: parsed.country,
-      lang: parsed.lang,
       recipes: rows,
     }),
   );
 };
-app.get('/:country/:lang', countryHome);
-app.get('/:country/:lang/', countryHome);
+app.get('/:country', countryHome);
+app.get('/:country/', countryHome);
 
-app.get('/:country/:lang/:slug', async (c) => {
+app.get('/:country/recipes/:idSlug', async (c) => {
   const parsed = parsePath(c.req.path);
-  if (!parsed?.slug) return c.notFound();
+  if (!parsed?.id || !parsed.slug) return c.notFound();
   const db = createDb(c.env.DB);
   const rows = await db
     .select()
@@ -109,57 +100,65 @@ app.get('/:country/:lang/:slug', async (c) => {
     .where(
       and(
         eq(recipeLocales.country, parsed.country),
-        eq(recipeLocales.lang, parsed.lang),
-        eq(recipeLocales.slug, parsed.slug),
+        eq(recipeLocales.recipeId, parsed.id),
         eq(recipeLocales.status, 'published'),
       ),
     );
-  const row = rows[0];
-  if (!row) return c.notFound();
+  if (rows.length === 0) return c.notFound();
+  const canonical = rows.find((r) => r.recipe_locales.slug === parsed.slug);
+  const target = canonical ?? rows[0];
+  if (!canonical) {
+    // Slug changed after freeze: redirect to the canonical slug (301).
+    if (!target) return c.notFound();
+    return c.redirect(
+      recipePath(parsed.country, parsed.id, target.recipe_locales.slug),
+      301,
+    );
+  }
 
   // hreflang alternates: exact content equivalents of this same recipe only.
   const alternatesRows = await db
     .select({ country: recipeLocales.country, lang: recipeLocales.lang, slug: recipeLocales.slug })
     .from(recipeLocales)
-    .where(and(eq(recipeLocales.recipeId, row.recipes.id), eq(recipeLocales.status, 'published')));
+    .where(and(eq(recipeLocales.recipeId, parsed.id), eq(recipeLocales.status, 'published')));
   const origin = new URL(c.req.url).origin;
   const alternates = alternatesRows.map((a) => ({
     hreflang: `${a.lang}-${a.country.toUpperCase()}`,
-    href: `${origin}${countryLangPath(a.country, a.lang)}${a.slug}`,
+    href: `${origin}${recipePath(a.country, parsed.id ?? '', a.slug)}`,
   }));
 
   const page: RecipePage = {
     recipe: {
-      id: row.recipes.id,
-      sourceId: row.recipes.sourceId,
-      originCountry: row.recipes.originCountry,
-      imageKey: row.recipes.imageKey,
-      createdAt: row.recipes.createdAt,
+      id: canonical.recipes.id,
+      sourceId: canonical.recipes.sourceId,
+      originCountry: canonical.recipes.originCountry,
+      imageKey: canonical.recipes.imageKey,
+      createdAt: canonical.recipes.createdAt,
     },
     locale: {
-      recipeId: row.recipe_locales.recipeId,
-      country: row.recipe_locales.country,
-      lang: row.recipe_locales.lang,
-      title: row.recipe_locales.title,
-      slug: row.recipe_locales.slug,
-      intro: row.recipe_locales.intro,
-      ingredientsJson: row.recipe_locales.ingredientsJson,
-      stepsJson: row.recipe_locales.stepsJson,
-      status: row.recipe_locales.status,
+      recipeId: canonical.recipe_locales.recipeId,
+      country: canonical.recipe_locales.country,
+      lang: canonical.recipe_locales.lang,
+      title: canonical.recipe_locales.title,
+      slug: canonical.recipe_locales.slug,
+      intro: canonical.recipe_locales.intro,
+      ingredientsJson: canonical.recipe_locales.ingredientsJson,
+      stepsJson: canonical.recipe_locales.stepsJson,
+      status: canonical.recipe_locales.status,
     },
     source: {
-      id: row.sources.id,
-      name: row.sources.name,
-      url: row.sources.url,
-      license: row.sources.license,
-      clearedAt: row.sources.clearedAt,
-      notes: row.sources.notes,
+      id: canonical.sources.id,
+      name: canonical.sources.name,
+      url: canonical.sources.url,
+      license: canonical.sources.license,
+      clearedAt: canonical.sources.clearedAt,
+      notes: canonical.sources.notes,
     },
   };
   return c.html(renderRecipe(page, alternates));
 });
 
-// Everything else falls through to static assets, then 404.
+// Everything else 404s (static assets are served by the assets binding).
 app.notFound((c) => c.text('Not found', 404));
 
 export default app;
