@@ -85,6 +85,13 @@ try {
   r = await get('/api/v1/submissions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
   check('submissions closed by default (503)', r.status === 503);
 
+  r = await get('/api/dev/auth/sign-up/email', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+  check('production: dev auth handler denied (404)', r.status === 404);
+  r = await get('/api/dev/auth-test');
+  check('production: dev auth test page denied (404)', r.status === 404);
+  r = await get('/api/dev/auth-spike');
+  check('production: dev auth spike denied (404)', r.status === 404);
+
   // dev mode: demo seed visible
   await stopServer(server);
   const PORT2 = PORT + 1;

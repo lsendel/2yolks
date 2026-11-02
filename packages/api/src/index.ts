@@ -15,6 +15,7 @@ import {
 } from '@2yolks/contracts';
 import { renderHome, renderCountryHome, renderRecipe } from '@2yolks/web/server';
 import { createDb, recipes, recipeLocales, sources } from './db';
+import { createAuth } from './auth';
 import { scrypt } from '@noble/hashes/scrypt.js';
 
 type Bindings = {
@@ -29,6 +30,8 @@ type Bindings = {
   /** Pinned canonical origin for absolute URLs (hreflang, JSON-LD).
    * Never derive from the request Host header. */
   CANONICAL_ORIGIN?: string;
+  /** Dev-only Better Auth secret for the local ceremony spike. */
+  BETTER_AUTH_SECRET?: string;
 };
 
 const DEMO_LICENSE = 'internal-demo';
@@ -116,11 +119,83 @@ app.get('/api/dev/auth-spike', async (c) => {
   if (!demoAllowed(c)) return c.notFound();
   try {
     const { createAuth } = await import('./auth');
-    const auth = createAuth(createDb(c.env.DB));
+    const base = new URL(c.req.url).origin + '/api/dev/auth';
+    const auth = createAuth(createDb(c.env.DB), base, c.env);
     return c.json({ ok: true, constructed: typeof auth.handler === 'function' });
   } catch (e) {
     return c.json({ ok: false, error: String(e) }, 500);
   }
+});
+
+
+const AUTH_TEST_PAGE = `<!doctype html><html><body>
+<h1>auth ceremony spike</h1>
+<button id="signup">signup</button>
+<button id="register">register passkey</button>
+<button id="authenticate">authenticate passkey</button>
+<pre id="log"></pre>
+<script>
+const B = '/api/dev/auth';
+const logEl = document.getElementById('log');
+const log = (m) => { logEl.textContent += m + "\\n"; };
+const b64uToBuf = (s) => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/") + "==".slice(0, (4 - (s.length % 4)) % 4)), (c) => c.charCodeAt(0)).buffer;
+const bufToB64u = (b) => btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\\+/g, "-").replace(/\\//g, "_").replace(/=+$/, "");
+const serCred = (cred) => ({
+  id: cred.id,
+  rawId: bufToB64u(cred.rawId),
+  type: cred.type,
+  response: {
+    clientDataJSON: bufToB64u(cred.response.clientDataJSON),
+    attestationObject: cred.response.attestationObject ? bufToB64u(cred.response.attestationObject) : undefined,
+    authenticatorData: cred.response.authenticatorData ? bufToB64u(cred.response.authenticatorData) : undefined,
+    signature: cred.response.signature ? bufToB64u(cred.response.signature) : undefined,
+    userHandle: cred.response.userHandle ? bufToB64u(cred.response.userHandle) : undefined,
+  },
+});
+const post = (p, body) => fetch(B + p, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body ?? {}) }).then(async (r) => ({ status: r.status, json: await r.json() }));
+document.getElementById("signup").onclick = async () => {
+  const t = Date.now();
+  const r = await post("/sign-up/email", { email: "spike-" + Date.now() + "@dev.local", password: "spike-spike-spike-1", name: "Spike" });
+  log("signup " + r.status + " " + (Date.now() - t) + "ms " + JSON.stringify(r.json).slice(0, 120));
+};
+document.getElementById("register").onclick = async () => { try {
+  const o = await fetch(B + "/passkey/generate-register-options").then(async (r) => ({ status: r.status, json: await r.json() }));
+  if (o.status !== 200) return log("reg options FAIL " + JSON.stringify(o.json).slice(0, 200));
+  const opts = o.json;
+  opts.challenge = b64uToBuf(opts.challenge);
+  opts.user.id = b64uToBuf(opts.user.id);
+  const cred = await navigator.credentials.create({ publicKey: opts });
+  const t = Date.now();
+  const v = await post("/passkey/verify-registration", { response: serCred(cred) });
+  log("register " + v.status + " verifyWall=" + (Date.now() - t) + "ms " + JSON.stringify(v.json).slice(0, 120));
+} catch (e) { log("register ERROR " + (e && e.message ? e.message : String(e))); }
+};
+document.getElementById("authenticate").onclick = async () => { try {
+  const o = await fetch(B + "/passkey/generate-authenticate-options").then(async (r) => ({ status: r.status, json: await r.json() }));
+  if (o.status !== 200) return log("auth options FAIL " + JSON.stringify(o.json).slice(0, 200));
+  const opts = o.json;
+  opts.challenge = b64uToBuf(opts.challenge);
+  if (opts.allowCredentials) opts.allowCredentials = opts.allowCredentials.map((d) => ({ ...d, id: b64uToBuf(d.id) }));
+  const cred = await navigator.credentials.get({ publicKey: opts });
+  const t = Date.now();
+  const v = await post("/passkey/verify-authentication", { response: serCred(cred) });
+  log("authenticate " + v.status + " verifyWall=" + (Date.now() - t) + "ms " + JSON.stringify(v.json).slice(0, 120));
+} catch (e) { log("authenticate ERROR " + (e && e.message ? e.message : String(e))); }
+};
+</script></body></html>`;
+
+// Dev-only Better Auth handler for the end-to-end passkey ceremony
+// qualification. Mounted ONLY behind ALLOW_DEMO_SEED; production denies.
+app.all('/api/dev/auth/*', (c) => {
+  if (!demoAllowed(c)) return c.notFound();
+  const base = new URL(c.req.url).origin + '/api/dev/auth';
+  const auth = createAuth(createDb(c.env.DB), base, c.env);
+  return auth.handler(c.req.raw);
+});
+
+app.get('/api/dev/auth-test', (c) => {
+  if (!demoAllowed(c)) return c.notFound();
+  return c.html(AUTH_TEST_PAGE);
 });
 
 app.get('/api/v1/countries', (c) =>

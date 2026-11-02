@@ -79,3 +79,28 @@ origin, a dev-only ceremony route that measures a real
 registration+assertion verification end to end in workerd (software
 authenticator fixture), and only then any activation decision. No auth
 code is activated anywhere; POST /api/v1/submissions stays 503-gated.
+
+## End-to-end passkey ceremony - QUALIFIED (dev-only, Nov 1, 2026)
+
+Real WebAuthn ceremonies executed against local workerd with a Chrome CDP
+virtual authenticator (scripts/auth-ceremony.check.mjs, rpID localhost,
+origin pinned to the dev origin; production pinning would use the canonical
+origin - no production route exists):
+- email sign-up 200 (adapter writes user + session rows to D1; verified in
+  sqlite: user/passkey tables hold the ceremony rows)
+- passkey registration 200, server verify wall 22-23 ms
+- passkey authentication 200, server verify wall 21 ms, session issued
+Challenge round-trip (better-auth-passkey cookie) exercised by the
+ceremonies themselves. Wall time is client-observed UX evidence, NOT
+Workers CPU billing measurement; the dominant op is ECDSA P-256 verify via
+WebCrypto, which Cloudflare documents as off-clock, and the microbenchmark
+(0.08 ms/verify) is consistent with a comfortable free-CPU margin.
+
+Production denial verified: with ALLOW_DEMO_SEED unset, /api/dev/auth/*,
+/api/dev/auth-test, /api/dev/auth-spike all 404 (asserted in smoke.mjs).
+Secret comes from BETTER_AUTH_SECRET env var; the literal fallback is
+labeled dev-only and never ships.
+
+NOT established: production CPU billing (needs a deployed measurement),
+Turnstile integration, account-recovery flows, multi-device UX. No
+production auth route, schema, or migration is activated.
