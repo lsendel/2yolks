@@ -51,11 +51,20 @@ try {
   r = await get('/api/nope');
   check('unknown api route JSON 404', r.status === 404 && JSON.parse(r.body).error === 'not found');
 
+  r = await get('/robots.txt');
+  check('robots.txt 200 with sitemap + api disallow', r.status === 200 && r.body.includes('Sitemap: https://2yolks.com/sitemap.xml') && r.body.includes('Disallow: /api/'));
+
+  r = await get('/sitemap.xml');
+  check('sitemap 200, demo rows excluded in production', r.status === 200 && r.body.includes('<urlset') && !r.body.includes('huevos-rancheros'));
+
+  r = await get('/api/v1/submissions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+  check('submissions closed by default (503)', r.status === 503);
+
   // dev mode: demo seed visible
   server.kill('SIGTERM');
   await new Promise((r2) => setTimeout(r2, 3000));
   const PORT2 = PORT + 1;
-  const dev = spawn('npx', ['wrangler', 'dev', '--port', String(PORT2), '--local', '--var', 'ALLOW_DEMO_SEED:true'], { stdio: 'ignore' });
+  const dev = spawn('npx', ['wrangler', 'dev', '--port', String(PORT2), '--local', '--var', 'ALLOW_DEMO_SEED:true', '--var', 'SUBMISSIONS_ENABLED:true'], { stdio: 'ignore' });
   await new Promise((r2) => setTimeout(r2, 12000));
   try {
     const get2 = async (path) => { const res = await fetch(`http://127.0.0.1:${PORT2}` + path, { redirect: 'manual' }); return { status: res.status, headers: res.headers, body: await res.text(), location: res.headers.get('location') }; };
@@ -75,6 +84,21 @@ try {
     r = await get2('/us/recipes/r2-evil-recipe');
     check('XSS: title escaped', r.status === 200 && !r.body.includes('</title><script>alert(1)</script>'));
     check('XSS: no live script breakout anywhere', !r.body.includes('<script>alert') && !r.body.includes('</title><script>'));
+
+    r = await get2('/sitemap.xml');
+    check('sitemap dev: r1 both locales + hreflang links', r.body.includes('/mx/recipes/r1-huevos-rancheros') && r.body.includes('/us/recipes/r1-ranch-eggs') && r.body.includes('hreflang="es-MX"') && r.body.includes('hreflang="en-US"'));
+
+    // submission draft path (enabled in this dev server)
+    const post = async (body) => { const res = await fetch(`http://127.0.0.1:${PORT2}/api/v1/submissions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }); return { status: res.status, json: await res.json() }; };
+    let pr = await post({ nope: true });
+    check('submission: malformed body rejected 400', pr.status === 400 && pr.json.error === 'validation failed');
+    pr = await post({ source: { name: 'Test cook', url: 'https://cook.example/r1', license: 'unknown' }, locales: [{ country: 'mx', lang: 'es', title: 'Salsa de Prueba', ingredients: ['1 tomate'], steps: ['Picar el tomate'] }] });
+    check('submission: valid draft created 201', pr.status === 201 && pr.json.status === 'draft' && /^[a-z0-9]{8}$/.test(pr.json.id), JSON.stringify(pr.json));
+    const draftId = pr.json.id;
+    r = await get2(`/mx/recipes/${draftId}-salsa-de-prueba`);
+    check('submission: draft never served (404, cleared_at gate)', r.status === 404);
+    pr = await post({ source: { name: 'x', url: 'http://insecure.example', license: 'unknown' }, locales: [{ country: 'mx', lang: 'es', title: 't', ingredients: ['a'], steps: ['b'] }] });
+    check('submission: insecure source url rejected', pr.status === 400);
   } finally {
     dev.kill('SIGTERM');
   }

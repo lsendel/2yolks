@@ -8,6 +8,9 @@ import {
   defaultLocale,
   parsePath,
   recipePath,
+  countryPath,
+  slugify,
+  validateRecipeSubmission,
   type RecipePage,
 } from '@2yolks/contracts';
 import { renderHome, renderCountryHome, renderRecipe } from '@2yolks/web/server';
@@ -19,6 +22,9 @@ type Bindings = {
   /** 'true' only in local dev (wrangler dev --var ALLOW_DEMO_SEED:true).
    * Synthetic demo-seed content must never be served in production. */
   ALLOW_DEMO_SEED?: string;
+  /** 'true' opens the submission draft endpoint. Stays false until auth
+   * (Better Auth + Turnstile per plan) qualifies on Workers Free CPU. */
+  SUBMISSIONS_ENABLED?: string;
   /** Pinned canonical origin for absolute URLs (hreflang, JSON-LD).
    * Never derive from the request Host header. */
   CANONICAL_ORIGIN?: string;
@@ -78,6 +84,73 @@ app.get('/api/v1/countries/:code/recipes', async (c) => {
       ),
     );
   return c.json({ country: country.code, lang, recipes: rows });
+});
+
+// --- Discovery --------------------------------------------------------------
+
+app.get('/robots.txt', (c) => {
+  const origin = c.env.CANONICAL_ORIGIN ?? new URL(c.req.url).origin;
+  return c.text(
+    `User-agent: *\nAllow: /\nDisallow: /api/\nSitemap: ${origin}/sitemap.xml\n`,
+    200,
+    { 'content-type': 'text/plain; charset=utf-8' },
+  );
+});
+
+function xmlEscape(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+app.get('/sitemap.xml', async (c) => {
+  const origin = c.env.CANONICAL_ORIGIN ?? new URL(c.req.url).origin;
+  const db = createDb(c.env.DB);
+  const rows = await db
+    .select({
+      recipeId: recipeLocales.recipeId,
+      country: recipeLocales.country,
+      lang: recipeLocales.lang,
+      slug: recipeLocales.slug,
+    })
+    .from(recipeLocales)
+    .innerJoin(recipes, eq(recipeLocales.recipeId, recipes.id))
+    .innerJoin(sources, eq(recipes.sourceId, sources.id))
+    .where(published(db, demoAllowed(c)));
+  const urls: string[] = [];
+  const byRecipe = new Map<string, typeof rows>();
+  for (const r of rows) {
+    const list = byRecipe.get(r.recipeId) ?? [];
+    list.push(r);
+    byRecipe.set(r.recipeId, list);
+  }
+  // Country homes only when they carry at least one published recipe
+  // (empty listings are noindex and stay out of the sitemap).
+  const countriesWithContent = new Set(rows.map((r) => r.country));
+  for (const code of countriesWithContent) {
+    urls.push(`  <url><loc>${xmlEscape(origin + countryPath(code))}</loc></url>`);
+  }
+  for (const list of byRecipe.values()) {
+    const links = list
+      .map(
+        (a) =>
+          `    <xhtml:link rel="alternate" hreflang="${xmlEscape(`${a.lang}-${a.country.toUpperCase()}`)}" href="${xmlEscape(origin + recipePath(a.country, a.recipeId, a.slug))}" />`,
+      )
+      .join('\n');
+    for (const r of list) {
+      urls.push(
+        `  <url>\n    <loc>${xmlEscape(origin + recipePath(r.country, r.recipeId, r.slug))}</loc>\n${links}\n  </url>`,
+      );
+    }
+  }
+  const xml =
+    `<?xml version="1.0" encoding="UTF-8"?>\n` +
+    `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">\n` +
+    urls.join('\n') +
+    `\n</urlset>\n`;
+  return c.text(xml, 200, { 'content-type': 'application/xml; charset=utf-8' });
 });
 
 // --- SSR pages ----------------------------------------------------------
@@ -199,6 +272,58 @@ app.get('/:country/recipes/:idSlug', async (c) => {
     },
   };
   return c.html(renderRecipe(page, alternates));
+});
+
+// --- Submission draft path -------------------------------------------------
+// Every ingestion path parses through validateRecipeSubmission (fail closed).
+// Drafts land with cleared_at NULL on their source, so the serving gates can
+// never publish them until a rights review clears the source.
+
+app.post('/api/v1/submissions', async (c) => {
+  if (c.env.SUBMISSIONS_ENABLED !== 'true') {
+    return c.json({ error: 'submissions closed', reason: 'auth gate not qualified yet' }, 503);
+  }
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: 'invalid JSON body' }, 400);
+  }
+  const result = validateRecipeSubmission(body);
+  if (!result.ok) return c.json({ error: 'validation failed', failures: result.errors }, 400);
+  const sub = result.value;
+  const db = createDb(c.env.DB);
+  const id = crypto.randomUUID().slice(0, 8).toLowerCase();
+  const sourceId = `src-${id}`;
+  await db.insert(sources).values({
+    id: sourceId,
+    name: sub.source.name,
+    url: sub.source.url,
+    license: sub.source.license,
+    clearedAt: null,
+    notes: 'submission draft - rights review pending',
+  });
+  await db.insert(recipes).values({
+    id,
+    sourceId,
+    originCountry: sub.originCountry ?? null,
+    imageKey: null,
+    createdAt: new Date().toISOString(),
+  });
+  await db.insert(recipeLocales).values(
+    sub.locales.map((l) => ({
+      recipeId: id,
+      country: l.country,
+      lang: l.lang,
+      title: l.title,
+      slug: l.slug ?? slugify(l.title),
+      intro: l.intro ?? null,
+      ingredientsJson: JSON.stringify(l.ingredients),
+      stepsJson: JSON.stringify(l.steps),
+      status: 'draft' as const,
+    })),
+  );
+  return c.json({ id, status: 'draft' }, 201);
 });
 
 app.all('/api/*', (c) => c.json({ error: 'not found' }, 404));
