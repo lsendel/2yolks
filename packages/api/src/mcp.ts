@@ -1098,15 +1098,13 @@ async function callRecipesCreateDraft(ctx: CallCtx, args: Record<string, unknown
     if (tokenErr) return { status: 400, data: { error: tokenErr } };
     storedIngredients.push(canon.entries);
   }
-  if (ctx.dryRun) {
-    return { status: 200, data: { dry_run: true, ok: true, locales: sub.locales.length } };
-  }
-  const id = newId();
   // Frozen-map reservation (migration 0005): a slug that served publicly for
-  // another recipe can never be claimed again.
+  // another recipe can never be claimed again. Runs before the dry-run return
+  // so a dry run reports the same 409 the confirmed call would. A new draft
+  // has no id yet, so every alias row found belongs to another recipe.
   for (const l of sub.locales) {
     const claimSlug = l.slug ?? slugify(l.title);
-    const holder = await slugReservedByOther(ctx, l.country, l.lang, claimSlug, id);
+    const holder = await slugReservedByOther(ctx, l.country, l.lang, claimSlug, '');
     if (holder) {
       return {
         status: 409,
@@ -1114,6 +1112,10 @@ async function callRecipesCreateDraft(ctx: CallCtx, args: Record<string, unknown
       };
     }
   }
+  if (ctx.dryRun) {
+    return { status: 200, data: { dry_run: true, ok: true, locales: sub.locales.length } };
+  }
+  const id = newId();
   const sourceId = `src-${id}`;
   const now = new Date().toISOString();
   const statements = [
@@ -1406,8 +1408,8 @@ async function callRecipesAddLocale(ctx: CallCtx, args: Record<string, unknown>)
   }
   const slug = str(l['slug'], 200) ?? slugify(title);
   if (!SLUG_PATTERN.test(slug)) return { status: 400, data: { error: 'invalid slug' } };
-  if (ctx.dryRun) return { status: 200, data: { dry_run: true, ok: true, id, locale: `${country}/${lang}` } };
   // Frozen-map reservation (migration 0005), same rule as create_draft.
+  // Checked before the dry-run return so a dry run reports the same 409.
   const aliasHolder = await slugReservedByOther(ctx, country, lang, slug, id);
   if (aliasHolder) {
     return {
@@ -1415,6 +1417,7 @@ async function callRecipesAddLocale(ctx: CallCtx, args: Record<string, unknown>)
       data: { error: 'slug is reserved by an earlier public URL of another recipe', country, lang, slug },
     };
   }
+  if (ctx.dryRun) return { status: 200, data: { dry_run: true, ok: true, id, locale: `${country}/${lang}` } };
   try {
     await ctx.db.batch([
       ctx.db

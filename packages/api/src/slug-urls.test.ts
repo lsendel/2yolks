@@ -270,6 +270,13 @@ describe('recipe_slug_aliases frozen map', () => {
     const rows = SQLITE.prepare(`SELECT country, lang, slug, recipe_id FROM recipe_slug_aliases`).all() as Record<string, unknown>[];
     expect(rows).toEqual([{ country: 'us', lang: 'en', slug: 'froz-test', recipe_id: id }]);
     // Another recipe can never claim the frozen slug.
+    // The dry run reports the same 409 as the confirmed call.
+    const dryBlocked = await toolCall(ADMIN_KEY, 'recipes.create_draft', {
+      ...RECIPE,
+      locales: [{ ...RECIPE.locales[0], slug: 'froz-test' }],
+    });
+    expect(dryBlocked.isError).toBe(true);
+    expect((dryBlocked.data as { error: string }).error).toMatch(/reserved by an earlier public URL/);
     const blocked = await toolCall(ADMIN_KEY, 'recipes.create_draft', {
       ...RECIPE,
       locales: [{ ...RECIPE.locales[0], slug: 'froz-test' }],
@@ -277,6 +284,7 @@ describe('recipe_slug_aliases frozen map', () => {
     });
     expect(blocked.isError).toBe(true);
     expect((blocked.data as { error: string }).error).toMatch(/reserved by an earlier public URL/);
+    
     // add_locale on a different recipe also cannot claim the frozen slug in
     // the same (country, lang) URL space. Recipe 2 is created with an mx
     // original so that a us/en add_locale is a fresh locale on that recipe.
@@ -312,6 +320,22 @@ describe('recipe_slug_aliases frozen map', () => {
     });
     expect(blockedAdd.isError).toBe(true);
     expect((blockedAdd.data as { error: string }).error).toMatch(/reserved by an earlier public URL/);
+    // Dry-run add_locale also reports the same 409.
+    const dryBlockedAdd = await toolCall(ADMIN_KEY, 'recipes.add_locale', {
+      id: id2,
+      locale: {
+        country: 'us',
+        lang: 'en',
+        title: 'Test Pancakes Two',
+        slug: 'froz-test',
+        ingredients: ['2 cups flour', '2 eggs', '1 cup milk', '1 tsp salt'],
+        steps: ['Mix.', 'Cook 2 minutes per side.', 'Serve.'],
+        translationOf: 'mx/es',
+        translationMethod: 'human',
+      },
+    });
+    expect(dryBlockedAdd.isError).toBe(true);
+    expect((dryBlockedAdd.data as { error: string }).error).toMatch(/reserved by an earlier public URL/);
     // The owning recipe is not blocked by its own frozen slug: it can
     // republish, and the alias stays reserved for it.
     const repub = await toolCall(ADMIN_KEY, 'recipes.publish', { id, confirmed: true });
