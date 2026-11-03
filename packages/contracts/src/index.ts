@@ -135,6 +135,10 @@ export interface UiStrings {
   print: string;
   home: string;
   tagline: string;
+  share: string;
+  copyLink: string;
+  linkCopied: string;
+  shareEmail: string;
 }
 
 const UI_STRINGS: Record<string, UiStrings> = {
@@ -147,6 +151,7 @@ const UI_STRINGS: Record<string, UiStrings> = {
     untestedNote: 'Not yet tested in a kitchen. Written from standard techniques; we have not cooked it.',
     about: 'About', howWeTest: 'How we test and label recipes', print: 'Print', home: 'Home',
     tagline: 'Recipes worth cracking two eggs for.',
+    share: 'Share', copyLink: 'Copy link', linkCopied: 'Link copied', shareEmail: 'Email',
   },
   es: {
     ingredients: 'Ingredientes', steps: 'Pasos', source: 'Fuente',
@@ -157,6 +162,7 @@ const UI_STRINGS: Record<string, UiStrings> = {
     untestedNote: 'A\u00fan no probada en cocina. Escrita con t\u00e9cnicas est\u00e1ndar; todav\u00eda no la hemos cocinado.',
     about: 'Acerca de', howWeTest: 'C\u00f3mo probamos y etiquetamos las recetas', print: 'Imprimir', home: 'Inicio',
     tagline: 'Recetas que valen dos huevos.',
+    share: 'Compartir', copyLink: 'Copiar enlace', linkCopied: 'Enlace copiado', shareEmail: 'Correo',
   },
 };
 
