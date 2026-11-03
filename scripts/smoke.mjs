@@ -100,7 +100,7 @@ try {
   r = await get('/api/dev/cpu-spike');
   check('dev cpu spike removed (404)', r.status === 404);
 
-  r = await get('/mx/recipes/r1-huevos-rancheros');
+  r = await get('/mx/recipes/huevos-rancheros');
   check('demo recipe hidden in production mode (404)', r.status === 404);
 
   r = await get('/api/v1/countries/mx/recipes');
@@ -128,33 +128,36 @@ try {
   await waitForHealth(PORT2, dev);
   try {
     const get2 = async (path) => { const res = await fetch(`http://127.0.0.1:${PORT2}` + path, { redirect: 'manual' }); return { status: res.status, headers: res.headers, body: await res.text(), location: res.headers.get('location') }; };
-    r = await get2('/mx/recipes/r1-huevos-rancheros');
+    r = await get2('/mx/recipes/huevos-rancheros');
     check('dev mode: recipe 200 with es chrome', r.status === 200 && r.body.includes('<h2>Ingredientes</h2>') && r.body.includes('Clásico'));
     check('share links: plain, no pinterest without image, canonical + og', r.body.includes('facebook.com/sharer') && r.body.includes('wa.me') && !r.body.includes('pinterest.com') && r.body.includes('og:url') && r.body.includes('rel="canonical"') && r.body.includes('Compartir'));
     check('dev mode: demo recipe page noindex meta', r.body.includes('noindex, nofollow'));
     check('hreflang exact equivalents + x-default', r.body.includes('hreflang="es-MX"') && r.body.includes('hreflang="en-US"') && r.body.includes('hreflang="x-default"'));
-    check('hreflang uses pinned canonical origin', r.body.includes('https://2yolks.com/us/recipes/r1-ranch-eggs'));
-    r = await get2('/mx/en/recipes/r1-ranch-eggs-translated');
+    check('hreflang uses pinned canonical origin', r.body.includes('https://2yolks.com/us/recipes/ranch-eggs'));
+    r = await get2('/mx/en/recipes/ranch-eggs-translated');
     check('route-loaded translated page shows machine-translation label (loader passes provenance)', r.status === 200 && r.body.includes('class="machine-note"') && r.body.includes('not reviewed by a native speaker'), r.body.slice(0, 80));
-    r = await get2('/mx/recipes/r1-huevos-rancheros');
+    r = await get2('/mx/recipes/huevos-rancheros');
     check('route-loaded original page has no machine label', r.status === 200 && !r.body.includes('class="machine-note"'));
-    r = await get2('/mx/recipes/r3-pan-de-prueba');
+    r = await get2('/mx/recipes/pan-de-prueba');
     check('units: toggle + metric default for mx, structured row rendered', r.status === 200 && r.body.includes('data-default-units="metric"') && r.body.includes('250 g harina') && r.body.includes('15 ml de aceite') && r.body.includes('180\u00b0C'));
-    r = await get2('/mx/recipes/r1-huevos-rancheros');
+    r = await get2('/mx/recipes/huevos-rancheros');
     check('interactive: scaler rendered with pre-rendered variants', r.body.includes('class="scaler"') && r.body.includes('class="line" data-v=') && r.body.includes('data-mult="0.5"'));
     check('interactive: ingredient checkboxes', r.body.includes('<input type="checkbox"'));
     check('interactive: cook mode overlay + data + client script', r.body.includes('data-cook-mode') && r.body.includes('id="cook-data"') && r.body.includes('wakeLock'));
     check('interactive: es cook-mode chrome', r.body.includes('Modo cocina') && r.body.includes('Ir a la receta'));
 
-    r = await get2('/mx/recipes/r1-stale-slug');
-    check('stale slug 301 to canonical', r.status === 301 && r.location === '/mx/recipes/r1-huevos-rancheros');
+    r = await get2('/mx/recipes/r1-huevos-rancheros');
+    check('legacy URL 301 directly to clean canonical', r.status === 301 && r.location === '/mx/recipes/huevos-rancheros');
 
-    r = await get2('/us/recipes/r2-evil-recipe');
+    r = await get2('/mx/recipes/r1-stale-slug');
+    check('stale slug 301 to canonical', r.status === 301 && r.location === '/mx/recipes/huevos-rancheros');
+
+    r = await get2('/us/recipes/evil-recipe');
     check('XSS: title escaped', r.status === 200 && !r.body.includes('</title><script>alert(1)</script>'));
     check('XSS: no live script breakout anywhere', !r.body.includes('<script>alert') && !r.body.includes('</title><script>'));
 
     r = await get2('/sitemap.xml');
-    check('sitemap dev: r1 both locales + hreflang links', r.body.includes('/mx/recipes/r1-huevos-rancheros') && r.body.includes('/us/recipes/r1-ranch-eggs') && r.body.includes('hreflang="es-MX"') && r.body.includes('hreflang="en-US"'));
+    check('sitemap dev: r1 both locales + hreflang links', r.body.includes('/mx/recipes/huevos-rancheros') && r.body.includes('/us/recipes/ranch-eggs') && r.body.includes('hreflang="es-MX"') && r.body.includes('hreflang="en-US"'));
 
     // submission draft path (enabled in this dev server)
     const post = async (body) => { const res = await fetch(`http://127.0.0.1:${PORT2}/api/v1/submissions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }); return { status: res.status, json: await res.json() }; };

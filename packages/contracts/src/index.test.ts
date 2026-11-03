@@ -29,18 +29,33 @@ describe('country registry', () => {
 });
 
 describe('slug table', () => {
-  it('builds /{country}/recipes/{id}-{slug} paths with a stable id', () => {
-    expect(recipePath('mx', 'r1', 'huevos-rancheros')).toBe('/mx/recipes/r1-huevos-rancheros');
+  it('builds clean /{country}/recipes/{slug} paths', () => {
+    expect(recipePath('mx', 'huevos-rancheros')).toBe('/mx/recipes/huevos-rancheros');
     expect(countryPath('us')).toBe('/us/');
   });
   it('parses country homes and recipe paths', () => {
     expect(parsePath('/us/')).toEqual({ country: 'us', id: undefined, slug: undefined });
     expect(parsePath('/mx')).toEqual({ country: 'mx', id: undefined, slug: undefined });
+    // Legacy {id}-{slug} shape: full segment is the slug reading, and the
+    // legacy id/slug split is carried alongside for the fallback lookup.
     expect(parsePath('/mx/recipes/r1-huevos-rancheros')).toEqual({
       country: 'mx',
       id: 'r1',
-      slug: 'huevos-rancheros',
+      slug: 'r1-huevos-rancheros',
+      legacySlug: 'huevos-rancheros',
     });
+  });
+  it('parses clean slug-only recipe paths without inventing an id', () => {
+    expect(parsePath('/us/recipes/pancakes')).toEqual({ country: 'us', slug: 'pancakes' });
+    expect(parsePath('/us/recipes/sweet-potato-casserole')).toEqual({
+      country: 'us',
+      id: 'sweet',
+      slug: 'sweet-potato-casserole',
+      legacySlug: 'potato-casserole',
+    });
+    expect(parsePath('/us/es/recipes/pancakes')).toEqual({ country: 'us', lang: 'es', slug: 'pancakes' });
+    // Default locale must not use the lang-prefixed shape.
+    expect(parsePath('/us/en/recipes/pancakes')).toBeNull();
   });
   it('rejects unregistered countries and malformed paths', () => {
     expect(parsePath('/zz/')).toBeNull();
@@ -133,15 +148,17 @@ describe('scalingIsSafe', () => {
 
 import { recipePathFor as _rpf, parsePath as _pp, LOCALES as _LOC } from './index';
 describe('locale-aware recipe paths', () => {
-  it('default locale keeps the legacy URL', () => {
-    expect(_rpf('mx', 'es', 'abc123', 'pozole')).toBe('/mx/recipes/abc123-pozole');
-    expect(_rpf('us', 'en', 'abc123', 'soup')).toBe('/us/recipes/abc123-soup');
-    expect(_pp('/mx/recipes/abc123-pozole')).toEqual({ country: 'mx', id: 'abc123', slug: 'pozole' });
+  it('default locale keeps the unprefixed clean URL', () => {
+    expect(_rpf('mx', 'es', 'pozole')).toBe('/mx/recipes/pozole');
+    expect(_rpf('us', 'en', 'soup')).toBe('/us/recipes/soup');
+    expect(_pp('/mx/recipes/pozole')).toEqual({ country: 'mx', slug: 'pozole' });
+    // Legacy id-slug shape still parses, carrying both readings.
+    expect(_pp('/mx/recipes/abc123-pozole')).toEqual({ country: 'mx', id: 'abc123', slug: 'abc123-pozole', legacySlug: 'pozole' });
   });
   it('non-default locale gets a prefix only when registered; unregistered/default prefixes do not parse', () => {
-    expect(_rpf('mx', 'en', 'abc123', 'pozole')).toBe('/mx/en/recipes/abc123-pozole');
-    expect(_pp('/mx/en/recipes/abc123-pozole')).toEqual({ country: 'mx', lang: 'en', id: 'abc123', slug: 'pozole' });
-    expect(_pp('/mx/fr/recipes/abc123-pozole')).toEqual({ country: 'mx', lang: 'fr', id: 'abc123', slug: 'pozole' });
+    expect(_rpf('mx', 'en', 'pozole')).toBe('/mx/en/recipes/pozole');
+    expect(_pp('/mx/en/recipes/abc123-pozole')).toEqual({ country: 'mx', lang: 'en', id: 'abc123', slug: 'abc123-pozole', legacySlug: 'pozole' });
+    expect(_pp('/mx/fr/recipes/abc123-pozole')).toEqual({ country: 'mx', lang: 'fr', id: 'abc123', slug: 'abc123-pozole', legacySlug: 'pozole' });
     expect(_pp('/mx/de/recipes/abc123-pozole')).toBeNull(); // unregistered
     expect(_pp('/mx/es/recipes/abc123-pozole')).toBeNull(); // default locale: no duplicate URL
     expect(_LOC.us).toEqual(['en', 'es', 'fr']);
