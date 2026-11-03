@@ -120,6 +120,27 @@ export function renderTemps(text: string, system: UnitSystem): string {
   });
 }
 
+/** Step-duration tokens in free text: {d:15m} means 15 minutes. Rendered
+ * locale-neutral ("15 min") and translation-invariant; the cook-mode timer
+ * keys off the rendered minutes instead of guessing at prose. */
+const DUR_TOKEN = /\{d:(\d{1,4})m\}/g;
+export const MAX_STEP_MINUTES = 1440;
+export function renderDurations(text: string): string {
+  return text.replace(DUR_TOKEN, (_m, n: string) => `${Number(n)} min`);
+}
+
+/** Authoring validation: a malformed or out-of-range {d:...} token is an
+ * authoring error, same as an unknown ingredient ref. */
+export function invalidDurationTokens(text: string): string[] {
+  const out: string[] = [];
+  for (const m of text.matchAll(/\{d:([^}]*)\}/g)) {
+    const body = m[1]!;
+    const n = /^\d{1,4}m$/.test(body) ? Number(body.slice(0, -1)) : NaN;
+    if (!Number.isInteger(n) || n < 1 || n > MAX_STEP_MINUTES) out.push(m[0]);
+  }
+  return out;
+}
+
 /** Tokens that point at no ingredient are an authoring error. */
 export function unknownRefs(text: string, ingredients: StructuredIngredient[]): string[] {
   const refs = new Set(ingredients.map((i) => i.ref));
@@ -139,10 +160,10 @@ export function unknownRefs(text: string, ingredients: StructuredIngredient[]): 
 export interface TranslationCheck { ok: boolean; problems: string[] }
 
 function numbersIn(s: string): string[] {
-  return (s.replace(/\{[it]:[^}]+\}/g, '').match(/\d+(?:[.,]\d+)?/g) ?? []).map((n) => n.replace(',', '.')).sort();
+  return (s.replace(/\{[itd]:[^}]+\}/g, '').match(/\d+(?:[.,]\d+)?/g) ?? []).map((n) => n.replace(',', '.')).sort();
 }
 function tokensIn(s: string): string[] {
-  return (s.match(/\{[it]:[^}]+\}/g) ?? []).sort();
+  return (s.match(/\{[itd]:[^}]+\}/g) ?? []).sort();
 }
 
 export function checkTranslation(source: { steps: string[] }, translated: { steps: string[] }): TranslationCheck {
@@ -153,7 +174,7 @@ export function checkTranslation(source: { steps: string[] }, translated: { step
   }
   source.steps.forEach((s, i) => {
     const t = translated.steps[i]!;
-    if (JSON.stringify(tokensIn(s)) !== JSON.stringify(tokensIn(t))) problems.push(`step ${i + 1}: amount/temperature tokens changed`);
+    if (JSON.stringify(tokensIn(s)) !== JSON.stringify(tokensIn(t))) problems.push(`step ${i + 1}: amount/temperature/duration tokens changed`);
     if (JSON.stringify(numbersIn(s)) !== JSON.stringify(numbersIn(t))) problems.push(`step ${i + 1}: numbers changed (times, counts)`);
   });
   return { ok: problems.length === 0, problems };

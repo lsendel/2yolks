@@ -54,3 +54,10 @@ describe('structured rows keep localized wording', () => {
     expect(renderIngredient({ ref: 'm', qty: 800, name: 'maíz', unit: 'g' } as any, 'es', 'metric')).toBe('800 g de maíz');
   });
 });
+
+describe('step duration rendering', () => {
+  it('renders {d:} tokens alongside temps and amount tokens', async () => {
+    expect(renderStep('Bake at {t:350F} for {d:45m}.', [], 'en', 'us')).toBe('Bake at 350°F for 45 min.');
+    expect(renderStep('Bake at {t:350F} for {d:45m}.', [], 'fr', 'metric')).toBe('Bake at 177°C for 45 min.');
+  });
+});

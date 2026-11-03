@@ -2,7 +2,7 @@
 // (system x multiplier) can be rendered on the server and tested; the browser
 // only swaps pre-rendered text. No model is involved.
 import { parseIngredient, formatQty } from './index';
-import { convertQuantity, unitInfo, renderTemps, type IngredientEntry, type UnitSystem, type StructuredIngredient } from './units';
+import { convertQuantity, unitInfo, renderTemps, renderDurations, type IngredientEntry, type UnitSystem, type StructuredIngredient } from './units';
 
 export const SCALE_MULTIPLIERS = [0.5, 1, 2, 3] as const;
 export const UNIT_SYSTEMS: UnitSystem[] = ['metric', 'us'];
@@ -122,11 +122,11 @@ export function renderStep(step: string, entries: IngredientEntry[], lang: strin
     const full = renderIngredient({ ...e, name: '', note: undefined }, lang, system, mult);
     return full.trim();
   });
-  return renderTemps(withIng, system);
+  return renderDurations(renderTemps(withIng, system));
 }
 
 export function hasStepTokens(steps: string[]): boolean {
-  return steps.some((s) => /\{[ti]:/.test(s));
+  return steps.some((s) => /\{[tid]:/.test(s));
 }
 
 export type Variants = Record<UnitSystem, Record<string, string>>;

@@ -24,7 +24,10 @@ import {
   checkStructuredTranslation,
   checkTranslation,
   ingredientText,
+  invalidDurationTokens,
   isStructured,
+  parseCategoryField,
+  parseTimeFields,
   unitInfo,
   unknownRefs,
 } from '@2yolks/contracts';
@@ -32,6 +35,9 @@ import type { IngredientEntry, StructuredIngredient } from '@2yolks/contracts';
 
 export type McpBindings = {
   DB: D1Database;
+  /** R2 bucket for rights-tracked recipe images (migration 0004). Unset =
+   * recipes.set_image answers 503 and /img/recipe/* 404s. */
+  IMAGES?: R2Bucket;
   ADMIN_MCP_API_KEY?: string;
   MCP_READ_KEY?: string;
   MCP_NAMED_KEYS?: string;
@@ -209,7 +215,7 @@ const TOOLS: ToolDef[] = [
   {
     name: 'recipes.create_draft',
     description:
-      'Create a recipe draft (source + locales). Same validation as public submissions: ingredients may be strings or structured {ref, qty, qtyEnd?, unit?, name, note?} objects, exactly one original locale per submission, translations carry translationOf/translationMethod and pass the QA gate at creation. The source is created uncleared, so the recipe cannot be served or published until sources.clear_rights. Executes only with confirmed: true; otherwise validates as a dry run.',
+      'Create a recipe draft (source + locales). Same validation as public submissions: ingredients may be strings or structured {ref, qty, qtyEnd?, unit?, name, note?} objects, exactly one original locale per submission, translations carry translationOf/translationMethod and pass the QA gate at creation. Optional recipe-level fields (migration 0004): prepMinutes/cookMinutes/restMinutes/totalMinutes (integers, total stored explicitly, never summed), baseServings (numeric base yield), category (dish-type slug, see contracts RECIPE_CATEGORY_SLUGS). Steps may carry {d:Nm} duration tokens (1-1440 minutes) that render localized and drive the cook-mode timer. The source is created uncleared, so the recipe cannot be served or published until sources.clear_rights. Executes only with confirmed: true; otherwise validates as a dry run.',
     role: 'editor',
     inputSchema: {
       type: 'object',
@@ -224,7 +230,7 @@ const TOOLS: ToolDef[] = [
   {
     name: 'recipes.update_draft',
     description:
-      'Update title/intro/ingredients/steps of draft locales. Args: id, locales: [{country, lang, ...fields}]. Published locales are not editable; unpublish first. Translation provenance is fixed at creation; any edit to a translation clears its review stamp.',
+      'Update title/intro/ingredients/steps of draft locales. Args: id, locales: [{country, lang, ...fields}]. Published locales are not editable; unpublish first. Translation provenance is fixed at creation; any edit to a translation clears its review stamp. Also updates recipe-level fields independently of locale state: prepMinutes/cookMinutes/restMinutes/totalMinutes, baseServings, category (null clears a field).',
     role: 'editor',
     inputSchema: {
       type: 'object',
@@ -306,6 +312,26 @@ const TOOLS: ToolDef[] = [
       type: 'object',
       properties: { id: { type: 'string' }, confirmed: { type: 'boolean' }, notes: { type: 'string' } },
       required: ['id', 'confirmed'],
+    },
+  },
+  {
+    name: 'recipes.set_image',
+    description:
+      'Attach a rights-tracked image to a recipe: hero (default) or one step (kind + stepIndex). Binary upload only via imageBase64 - jpeg/png/webp, max ~3MB, type and dimensions verified server-side; no SVG, no URL fetching. Rights metadata required: sourceName, sourceUrl (https://), license, and style (photo|illustration|graphic) as the honest-imagery label. A new hero replaces the current hero (nothing is deleted; latest wins) and updates recipes.image_key. Served at /img/recipe/<image_id> only while the recipe has a published, rights-cleared locale. Executes only with confirmed: true; otherwise validates as a dry run.',
+    role: 'admin',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string' },
+        kind: { type: 'string' },
+        stepIndex: { type: 'number' },
+        imageBase64: { type: 'string' },
+        sourceName: { type: 'string' },
+        sourceUrl: { type: 'string' },
+        license: { type: 'string' },
+        style: { type: 'string' },
+      },
+      required: ['id', 'imageBase64', 'sourceName', 'sourceUrl', 'license', 'style'],
     },
   },
   {
@@ -448,6 +474,10 @@ function validateStepTokens(steps: string[], entries: IngredientEntry[]): string
     if (missing.length) {
       return `steps reference unknown ingredient refs: ${[...new Set(missing)].join(', ')}`;
     }
+    const badDurations = invalidDurationTokens(step);
+    if (badDurations.length) {
+      return `steps carry invalid duration tokens: ${[...new Set(badDurations)].join(', ')} (use {d:Nm} with 1-1440 minutes)`;
+    }
   }
   return null;
 }
@@ -484,6 +514,198 @@ function readProvenance(l: Record<string, unknown>): { of?: string; method?: str
   };
 }
 
+// --- Image validation (recipes.set_image) -------------------------------------
+// Bytes arrive base64 inside the JSON-RPC call; there is deliberately no
+// URL-fetch mode, so the worker never makes a server-side request to a
+// caller-supplied address (no SSRF). The image type is detected from magic
+// bytes and dimensions are parsed from headers - caller-asserted mime is
+// never trusted, and types we cannot verify (SVG, avif, gif, ...) are
+// rejected rather than passed through.
+const MAX_IMAGE_BASE64 = 4_200_000; // ~3.1 MB decoded
+const MAX_IMAGE_BYTES = 3 * 1024 * 1024;
+const MAX_IMAGE_DIM = 8000;
+const IMAGE_STYLES = new Set(['photo', 'illustration', 'graphic']);
+
+function decodeBase64(b64: string): Uint8Array | null {
+  const clean = b64.replace(/\s+/g, '');
+  if (clean.length === 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(clean) || clean.length % 4 !== 0) return null;
+  try {
+    const bin = atob(clean);
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  } catch {
+    return null;
+  }
+}
+
+type ImageInfo = { mime: string; ext: string; width: number; height: number };
+
+function sniffImage(b: Uint8Array): ImageInfo | null {
+  // PNG: signature + IHDR width/height (big-endian) at bytes 16-24.
+  if (b.length > 24 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47 && b[4] === 0x0d && b[5] === 0x0a && b[6] === 0x1a && b[7] === 0x0a) {
+    const width = ((b[16]! << 24) | (b[17]! << 16) | (b[18]! << 8) | b[19]!) >>> 0;
+    const height = ((b[20]! << 24) | (b[21]! << 16) | (b[22]! << 8) | b[23]!) >>> 0;
+    return width > 0 && height > 0 ? { mime: 'image/png', ext: 'png', width, height } : null;
+  }
+  // JPEG: FFD8FF, then scan segments for a start-of-frame marker.
+  if (b.length > 4 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) {
+    let i = 2;
+    while (i + 9 < b.length) {
+      if (b[i] !== 0xff) return null;
+      const marker = b[i + 1]!;
+      if (marker === 0xd8 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) {
+        i += 2;
+        continue;
+      }
+      const len = (b[i + 2]! << 8) | b[i + 3]!;
+      if (len < 2) return null;
+      const isSof = marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc;
+      if (isSof) {
+        const height = (b[i + 5]! << 8) | b[i + 6]!;
+        const width = (b[i + 7]! << 8) | b[i + 8]!;
+        return width > 0 && height > 0 ? { mime: 'image/jpeg', ext: 'jpg', width, height } : null;
+      }
+      i += 2 + len;
+    }
+    return null;
+  }
+  // WebP: RIFF....WEBP with VP8 / VP8L / VP8X dimension encodings.
+  if (
+    b.length > 30 &&
+    b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 &&
+    b[8] === 0x57 && b[9] === 0x45 && b[10] === 0x42 && b[11] === 0x50
+  ) {
+    const fourcc = String.fromCharCode(b[12]!, b[13]!, b[14]!, b[15]!);
+    if (fourcc === 'VP8 ') {
+      const width = (b[26]! | (b[27]! << 8)) & 0x3fff;
+      const height = (b[28]! | (b[29]! << 8)) & 0x3fff;
+      return width > 0 && height > 0 ? { mime: 'image/webp', ext: 'webp', width, height } : null;
+    }
+    if (fourcc === 'VP8L') {
+      const bits = (b[21]! | (b[22]! << 8) | (b[23]! << 16) | (b[24]! << 24)) >>> 0;
+      const width = (bits & 0x3fff) + 1;
+      const height = ((bits >>> 14) & 0x3fff) + 1;
+      return width > 0 && height > 0 ? { mime: 'image/webp', ext: 'webp', width, height } : null;
+    }
+    if (fourcc === 'VP8X') {
+      const width = (b[24]! | (b[25]! << 8) | (b[26]! << 16)) + 1;
+      const height = (b[27]! | (b[28]! << 8) | (b[29]! << 16)) + 1;
+      return width > 0 && height > 0 ? { mime: 'image/webp', ext: 'webp', width, height } : null;
+    }
+    return null;
+  }
+  return null;
+}
+
+async function callRecipesSetImage(ctx: CallCtx, args: Record<string, unknown>): Promise<CallResult> {
+  const id = str(args['id'], 64);
+  if (!id) return { status: 400, data: { error: 'id required' } };
+  const kind = args['kind'] === undefined ? 'hero' : args['kind'];
+  if (kind !== 'hero' && kind !== 'step') return { status: 400, data: { error: "kind must be 'hero' or 'step'" } };
+  if (!ctx.images) return { status: 503, data: { error: 'image storage is not configured on this worker' } };
+  const recipe = await ctx.db.prepare('SELECT id FROM recipes WHERE id = ?').bind(id).first();
+  if (!recipe) return { status: 404, data: { error: 'recipe not found', id } };
+
+  let stepIndex: number | null = null;
+  if (kind === 'step') {
+    const v = args['stepIndex'] ?? args['step_index'];
+    if (typeof v !== 'number' || !Number.isInteger(v) || v < 0 || v > 199) {
+      return { status: 400, data: { error: 'stepIndex must be an integer 0-199 for step images' } };
+    }
+    const rows = await ctx.db.prepare('SELECT steps_json FROM recipe_locales WHERE recipe_id = ?').bind(id).all<{ steps_json: string }>();
+    const maxSteps = Math.max(
+      0,
+      ...rows.results.map((r) => {
+        try {
+          const parsed: unknown = JSON.parse(r.steps_json);
+          return Array.isArray(parsed) ? parsed.length : 0;
+        } catch {
+          return 0;
+        }
+      }),
+    );
+    if (v >= maxSteps) {
+      return { status: 400, data: { error: 'stepIndex out of range for this recipe', stepIndex: v, steps: maxSteps } };
+    }
+    stepIndex = v;
+  }
+
+  const b64 = args['imageBase64'] ?? args['image_base64'];
+  if (typeof b64 !== 'string' || b64.length === 0) return { status: 400, data: { error: 'imageBase64 (base64 image bytes) required' } };
+  if (b64.length > MAX_IMAGE_BASE64) return { status: 400, data: { error: 'image too large', max_base64_chars: MAX_IMAGE_BASE64 } };
+  const bytes = decodeBase64(b64);
+  if (!bytes || bytes.length === 0) return { status: 400, data: { error: 'imageBase64 is not valid base64' } };
+  if (bytes.length > MAX_IMAGE_BYTES) return { status: 400, data: { error: 'image too large', max_bytes: MAX_IMAGE_BYTES } };
+  const info = sniffImage(bytes);
+  if (!info) {
+    return { status: 400, data: { error: 'unsupported or unreadable image: jpeg/png/webp with readable dimensions required; SVG and other unverifiable types are rejected' } };
+  }
+  if (info.width > MAX_IMAGE_DIM || info.height > MAX_IMAGE_DIM) {
+    return { status: 400, data: { error: 'image dimensions too large', max_dim: MAX_IMAGE_DIM, width: info.width, height: info.height } };
+  }
+
+  // Rights metadata is mandatory, mirroring the text-source model. The
+  // honesty label (style) is part of the record, not decoration.
+  const sourceName = str(args['sourceName'] ?? args['source_name'], 200);
+  const sourceUrl = str(args['sourceUrl'] ?? args['source_url'], 2000);
+  const license = str(args['license'], 100);
+  const style = str(args['style'], 20);
+  if (!sourceName || !sourceUrl || !(sourceUrl.startsWith('https://') || sourceUrl.startsWith('internal:')) || !license) {
+    return { status: 400, data: { error: 'image rights metadata required: sourceName, sourceUrl (https://), license' } };
+  }
+  if (!style || !IMAGE_STYLES.has(style)) {
+    return { status: 400, data: { error: "style must be 'photo', 'illustration' or 'graphic'" } };
+  }
+
+  if (ctx.dryRun) {
+    return {
+      status: 200,
+      data: { dry_run: true, ok: true, kind, step_index: stepIndex, mime: info.mime, bytes: bytes.length, width: info.width, height: info.height, style },
+    };
+  }
+
+  const imageId = newId();
+  const r2Key = `recipes/${id}/${imageId}.${info.ext}`;
+  // Bytes first, then the row + audit in one batch: a failed write never
+  // leaves a served row pointing at missing bytes. A leftover object after a
+  // failed batch is unreferenced and never served.
+  await ctx.images.put(r2Key, bytes, { httpMetadata: { contentType: info.mime } });
+  const stmts = [
+    ctx.db
+      .prepare(
+        'INSERT INTO recipe_images (id, recipe_id, kind, step_index, r2_key, mime, bytes, width, height, style, source_name, source_url, license) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      )
+      .bind(imageId, id, kind, stepIndex, r2Key, info.mime, bytes.length, info.width, info.height, style, sourceName, sourceUrl, license),
+    // A new hero becomes the recipe's current hero; older rows stay (nothing
+    // is deleted) and the latest hero wins at render.
+    ...(kind === 'hero' ? [ctx.db.prepare('UPDATE recipes SET image_key = ? WHERE id = ?').bind(r2Key, id)] : []),
+    auditStmt(ctx, 'recipes.set_image', imageId, { recipe_id: id, kind, step_index: stepIndex, bytes: bytes.length, style }),
+  ];
+  try {
+    await ctx.db.batch(stmts);
+  } catch {
+    return { status: 500, data: { error: 'image write failed after upload; the bytes are unreferenced and nothing was recorded - safe to retry' } };
+  }
+  return {
+    status: 201,
+    data: {
+      image_id: imageId,
+      recipe_id: id,
+      kind,
+      step_index: stepIndex,
+      r2_key: r2Key,
+      mime: info.mime,
+      bytes: bytes.length,
+      width: info.width,
+      height: info.height,
+      style,
+      url_path: `/img/recipe/${imageId}`,
+      note: 'served publicly only while the recipe has a published, rights-cleared locale',
+    },
+  };
+}
+
 // --- Helpers ----------------------------------------------------------------
 
 function rpcError(id: unknown, code: number, message: string) {
@@ -517,7 +739,7 @@ function limitArg(v: unknown): number {
 // --- Tool handlers ------------------------------------------------------------
 // Each returns { status, data }; data is an error body when status >= 400.
 
-type CallCtx = { db: D1Database; role: Role; actor: string; declaredCaller?: string | null; dryRun?: boolean; translationReviewEnabled?: boolean };
+type CallCtx = { db: D1Database; role: Role; actor: string; declaredCaller?: string | null; dryRun?: boolean; translationReviewEnabled?: boolean; images?: R2Bucket };
 type CallResult = { status: number; data: unknown };
 
 async function callRecipesList(db: D1Database, args: Record<string, unknown>): Promise<CallResult> {
@@ -556,7 +778,13 @@ async function callRecipesGet(db: D1Database, args: Record<string, unknown>): Pr
     .prepare('SELECT * FROM sources WHERE id = ?')
     .bind((recipe as Record<string, unknown>)['source_id'] as string)
     .first();
-  return { status: 200, data: { recipe, locales: locales.results, source } };
+  const images = await db
+    .prepare(
+      'SELECT id, kind, step_index, mime, bytes, width, height, style, source_name, source_url, license, created_at FROM recipe_images WHERE recipe_id = ? ORDER BY created_at',
+    )
+    .bind(id)
+    .all();
+  return { status: 200, data: { recipe, locales: locales.results, source, images: images.results } };
 }
 
 async function callSourcesList(db: D1Database): Promise<CallResult> {
@@ -585,6 +813,10 @@ async function callRecipesCreateDraft(ctx: CallCtx, args: Record<string, unknown
   const result = validateRecipeSubmission(args);
   if (!result.ok) return { status: 400, data: { error: 'validation failed', failures: result.errors } };
   const sub = result.value;
+  const times = parseTimeFields(args);
+  if (!times.ok) return { status: 400, data: { error: times.error } };
+  const category = parseCategoryField(args);
+  if (!category.ok) return { status: 400, data: { error: category.error } };
   // Canonicalize structured ingredients for storage and verify step tokens.
   const storedIngredients: IngredientEntry[][] = [];
   for (const l of sub.locales) {
@@ -605,8 +837,21 @@ async function callRecipesCreateDraft(ctx: CallCtx, args: Record<string, unknown
       .prepare('INSERT INTO sources (id, name, url, license, cleared_at, notes) VALUES (?, ?, ?, ?, NULL, ?)')
       .bind(sourceId, sub.source.name, sub.source.url, sub.source.license, 'mcp draft - rights review pending'),
     ctx.db
-      .prepare('INSERT INTO recipes (id, source_id, origin_country, image_key, created_at) VALUES (?, ?, ?, NULL, ?)')
-      .bind(id, sourceId, sub.originCountry ?? null, now),
+      .prepare(
+        'INSERT INTO recipes (id, source_id, origin_country, image_key, created_at, prep_minutes, cook_minutes, rest_minutes, total_minutes, base_servings, category) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)',
+      )
+      .bind(
+        id,
+        sourceId,
+        sub.originCountry ?? null,
+        now,
+        times.values.prepMinutes ?? null,
+        times.values.cookMinutes ?? null,
+        times.values.restMinutes ?? null,
+        times.values.totalMinutes ?? null,
+        times.values.baseServings ?? null,
+        category.present ? category.value : null,
+      ),
     ...sub.locales.map((l, i) =>
       ctx.db
         .prepare(
@@ -644,16 +889,36 @@ async function callRecipesCreateDraft(ctx: CallCtx, args: Record<string, unknown
     }
     throw e;
   }
-  return { status: 201, data: { id, source_id: sourceId, status: 'draft', locales: sub.locales.length } };
+  return {
+    status: 201,
+    data: {
+      id,
+      source_id: sourceId,
+      status: 'draft',
+      locales: sub.locales.length,
+      ...(times.warnings.length ? { warnings: times.warnings } : {}),
+    },
+  };
 }
 
 async function callRecipesUpdateDraft(ctx: CallCtx, args: Record<string, unknown>): Promise<CallResult> {
   const id = str(args['id'], 64);
   const locales = args['locales'];
-  if (!id || !Array.isArray(locales) || locales.length === 0) {
-    return { status: 400, data: { error: 'id and non-empty locales array required' } };
+  if (!id) return { status: 400, data: { error: 'id required' } };
+  const hasLocaleUpdates = Array.isArray(locales) && locales.length > 0;
+  if (!hasLocaleUpdates) {
+    // A call without locale edits is valid only when it carries recipe-level
+    // fields (times/servings/category), which update independently of locale
+    // draft state.
+    const timesProbe = parseTimeFields(args);
+    const catProbe = parseCategoryField(args);
+    const hasRecipeFields =
+      (timesProbe.ok && Object.keys(timesProbe.values).length > 0) || (catProbe.ok && catProbe.present);
+    if (!hasRecipeFields) {
+      return { status: 400, data: { error: 'id and a non-empty locales array or recipe-level fields (times, baseServings, category) required' } };
+    }
   }
-  if (locales.length > MAX_LOCALES) return { status: 400, data: { error: `at most ${MAX_LOCALES} locales per call` } };
+  if (Array.isArray(locales) && locales.length > MAX_LOCALES) return { status: 400, data: { error: `at most ${MAX_LOCALES} locales per call` } };
   const existingRows = await ctx.db
     .prepare('SELECT country, lang, status, ingredients_json, steps_json, translation_of FROM recipe_locales WHERE recipe_id = ?')
     .bind(id)
@@ -662,7 +927,7 @@ async function callRecipesUpdateDraft(ctx: CallCtx, args: Record<string, unknown
   // applies partially.
   type Planned = { key: string; stmt: D1PreparedStatement };
   const planned: Planned[] = [];
-  for (const entry of locales as unknown[]) {
+  for (const entry of (hasLocaleUpdates ? (locales as unknown[]) : [])) {
     if (typeof entry !== 'object' || entry === null) continue;
     const l = entry as Record<string, unknown>;
     const reject = rejectCallerReviewFields(l);
@@ -744,13 +1009,52 @@ async function callRecipesUpdateDraft(ctx: CallCtx, args: Record<string, unknown
         .bind(...params, id, country, lang),
     });
   }
-  const updated = planned.map((pl) => pl.key);
-  if (ctx.dryRun) return { status: 200, data: { dry_run: true, ok: true, id, updated } };
-  if (planned.length) {
-    // Content mutation and audit row commit in one atomic batch.
-    await ctx.db.batch([...planned.map((pl) => pl.stmt), auditStmt(ctx, 'recipes.update_draft', id, { updated })]);
+  // Top-level structured timing/yield fields (migration 0004) live on the
+  // recipe, not the locale: translation-invariant, edited independently of
+  // locale draft state. A field set to null clears it.
+  const times = parseTimeFields(args);
+  if (!times.ok) return { status: 400, data: { error: times.error } };
+  const category = parseCategoryField(args);
+  if (!category.ok) return { status: 400, data: { error: category.error } };
+  const timeSets: string[] = [];
+  const timeParams: unknown[] = [];
+  const TIME_COLS: Record<string, string> = {
+    prepMinutes: 'prep_minutes',
+    cookMinutes: 'cook_minutes',
+    restMinutes: 'rest_minutes',
+    totalMinutes: 'total_minutes',
+    baseServings: 'base_servings',
+  };
+  for (const [field, col] of Object.entries(TIME_COLS)) {
+    if (field in times.values) {
+      timeSets.push(`${col} = ?`);
+      timeParams.push(times.values[field as keyof typeof times.values] ?? null);
+    }
   }
-  return { status: 200, data: { id, updated } };
+  if (category.present) {
+    timeSets.push('category = ?');
+    timeParams.push(category.value);
+  }
+  const recipeFields = [...Object.keys(times.values), ...(category.present ? ['category'] : [])];
+  const updated = planned.map((pl) => pl.key);
+  if (ctx.dryRun) {
+    return {
+      status: 200,
+      data: { dry_run: true, ok: true, id, updated, recipe_fields: recipeFields, ...(times.warnings.length ? { warnings: times.warnings } : {}) },
+    };
+  }
+  const stmts = [...planned.map((pl) => pl.stmt)];
+  if (timeSets.length) {
+    stmts.push(ctx.db.prepare(`UPDATE recipes SET ${timeSets.join(', ')} WHERE id = ?`).bind(...timeParams, id));
+  }
+  if (stmts.length) {
+    // Content mutation and audit row commit in one atomic batch.
+    await ctx.db.batch([...stmts, auditStmt(ctx, 'recipes.update_draft', id, { updated, recipe_fields: recipeFields })]);
+  }
+  return {
+    status: 200,
+    data: { id, updated, recipe_fields: recipeFields, ...(times.warnings.length ? { warnings: times.warnings } : {}) },
+  };
 }
 
 async function callRecipesAddLocale(ctx: CallCtx, args: Record<string, unknown>): Promise<CallResult> {
@@ -1271,6 +1575,8 @@ async function dispatch(ctx: CallCtx, name: string, args: Record<string, unknown
       return callSourcesUpdate(ctx, args);
     case 'sources.clear_rights':
       return callSourcesClearRights(ctx, args);
+    case 'recipes.set_image':
+      return callRecipesSetImage(ctx, args);
     case 'blog.list':
       return callBlogList(ctx.db, args);
     case 'blog.get':
@@ -1325,6 +1631,7 @@ async function handleRpc(c: Context<{ Bindings: McpBindings }>) {
     actor: auth.actor,
     declaredCaller: auth.declared,
     translationReviewEnabled: Boolean(c.env.MCP_TRANSLATION_REVIEW),
+    images: c.env.IMAGES,
   };
 
   // Write semantics are identical on both wire shapes: an explicit

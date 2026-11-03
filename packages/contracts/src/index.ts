@@ -233,6 +233,110 @@ export interface RecipeSubmission {
   source: { name: string; url: string; license: string };
   originCountry?: string;
   locales: RecipeLocaleInput[];
+  /** Optional structured timing/yield (see parseTimeFields). */
+  prepMinutes?: number | null;
+  cookMinutes?: number | null;
+  restMinutes?: number | null;
+  totalMinutes?: number | null;
+  baseServings?: number | null;
+  category?: RecipeCategorySlug | null;
+}
+
+// ---------------------------------------------------------------------------
+// Structured timing/yield fields (migration 0004). Shared by every ingestion
+// path (submissions, MCP create/update). Values are nullable; explicit null
+// clears on update. Numbers are validated, never guessed.
+// ---------------------------------------------------------------------------
+
+export const MAX_RECIPE_MINUTES = 10080; // one week; caps marinating/curing
+
+export interface RecipeTimeFields {
+  prepMinutes: number | null;
+  cookMinutes: number | null;
+  restMinutes: number | null;
+  totalMinutes: number | null;
+  baseServings: number | null;
+}
+
+const TIME_KEYS: Record<string, keyof RecipeTimeFields> = {
+  prepMinutes: 'prepMinutes', prep_minutes: 'prepMinutes',
+  cookMinutes: 'cookMinutes', cook_minutes: 'cookMinutes',
+  restMinutes: 'restMinutes', rest_minutes: 'restMinutes',
+  totalMinutes: 'totalMinutes', total_minutes: 'totalMinutes',
+  baseServings: 'baseServings', base_servings: 'baseServings',
+};
+
+export type TimeFieldsParse =
+  | { ok: true; values: Partial<RecipeTimeFields>; warnings: string[] }
+  | { ok: false; error: string };
+
+/** Reads the optional timing/yield keys out of a submission or MCP argument
+ * object. A key set to null means "clear" (update paths); an absent key is
+ * left untouched. */
+export function parseTimeFields(input: Record<string, unknown>): TimeFieldsParse {
+  const values: Partial<RecipeTimeFields> = {};
+  const warnings: string[] = [];
+  for (const [rawKey, field] of Object.entries(TIME_KEYS)) {
+    if (!(rawKey in input) || field in values) continue;
+    const v = input[rawKey];
+    if (v === undefined) continue;
+    if (v === null) {
+      values[field] = null;
+      continue;
+    }
+    if (field === 'baseServings') {
+      if (typeof v !== 'number' || !Number.isFinite(v) || v <= 0 || v > 1000) {
+        return { ok: false, error: `${rawKey} must be a number in (0, 1000]` };
+      }
+      values[field] = v;
+      continue;
+    }
+    if (typeof v !== 'number' || !Number.isInteger(v) || v < 0 || v > MAX_RECIPE_MINUTES) {
+      return { ok: false, error: `${rawKey} must be an integer in [0, ${MAX_RECIPE_MINUTES}] minutes` };
+    }
+    if (field === 'totalMinutes' && v === 0) {
+      return { ok: false, error: 'totalMinutes must be at least 1 when provided' };
+    }
+    values[field] = v;
+  }
+  const total = values.totalMinutes;
+  if (typeof total === 'number') {
+    const active = (values.prepMinutes ?? 0) + (values.cookMinutes ?? 0);
+    if (active > total) {
+      warnings.push('totalMinutes is less than prep+cook; only consistent if they overlap');
+    }
+  }
+  return { ok: true, values, warnings };
+}
+
+// ---------------------------------------------------------------------------
+// Locale-invariant dish-type categories (migration 0004). The slug list is
+// the contract; localized display labels live in the web UI keyed by these
+// slugs. Categories are dish types only - never health, diet, or quality
+// classifications. NULL means uncategorized (listed under "All").
+// ---------------------------------------------------------------------------
+
+export const RECIPE_CATEGORY_SLUGS = ['soups-stews', 'dumplings', 'tacos-tortillas'] as const;
+export type RecipeCategorySlug = (typeof RECIPE_CATEGORY_SLUGS)[number];
+
+export function isRecipeCategorySlug(v: unknown): v is RecipeCategorySlug {
+  return typeof v === 'string' && (RECIPE_CATEGORY_SLUGS as readonly string[]).includes(v);
+}
+
+export type CategoryFieldParse =
+  | { ok: true; present: boolean; value: RecipeCategorySlug | null }
+  | { ok: false; error: string };
+
+/** Reads the optional category key out of a submission or MCP argument
+ * object. null clears; an unknown slug is rejected, never coerced. */
+export function parseCategoryField(input: Record<string, unknown>): CategoryFieldParse {
+  if (!('category' in input) || input['category'] === undefined) return { ok: true, present: false, value: null };
+  const v = input['category'];
+  if (v === null) return { ok: true, present: true, value: null };
+  if (!isRecipeCategorySlug(v)) {
+    return { ok: false, error: `category must be one of: ${RECIPE_CATEGORY_SLUGS.join(', ')}` };
+  }
+  return { ok: true, present: true, value: v };
 }
 
 export interface ValidationFailure {
@@ -273,6 +377,12 @@ export function validateRecipeSubmission(input: unknown): ValidationResult {
     if (typeof sub['originCountry'] !== 'string' || !getCountry(sub['originCountry'] as string))
       fail('originCountry', 'unknown country code');
   }
+
+  const times = parseTimeFields(sub);
+  if (!times.ok) fail('times', times.error);
+
+  const category = parseCategoryField(sub);
+  if (!category.ok) fail('category', category.error);
 
   // locales
   const locs = sub['locales'];
@@ -525,7 +635,25 @@ export interface Recipe {
   createdAt: string;
   testedAt?: string | null;
   testedBy?: string | null;
+  /** Structured timing/yield (migration 0004). All nullable: an absent value
+   * means "not recorded", never zero. totalMinutes is stored explicitly and
+   * is never prep+cook arithmetic - prep and cook can overlap and resting
+   * time sits outside both. Translation-invariant: stored once per recipe,
+   * shared by every locale. */
+  prepMinutes?: number | null;
+  cookMinutes?: number | null;
+  restMinutes?: number | null;
+  totalMinutes?: number | null;
+  /** Numeric base yield the serving scaler multiplies from (1x). */
+  baseServings?: number | null;
+  /** Dish-type category slug (migration 0004); null = uncategorized. */
+  category?: RecipeCategorySlug | null;
 }
+
+/** Honest imagery classes: a real photo (depicts an actual dish, provenance
+ * required), a generated illustration (labeled, never presented as the
+ * cooked result), or a title graphic (text only, no food depiction). */
+export type RecipeImageStyle = 'photo' | 'illustration' | 'graphic';
 
 export interface RecipeLocale {
   recipeId: string;
@@ -550,6 +678,10 @@ export interface RecipePage {
   recipe: Recipe;
   locale: RecipeLocale;
   source: Source;
+  /** Rights-tracked hero image (recipe_images, migration 0004), already
+   * resolved to an absolute serving URL. null when none is set; renderers
+   * fall back to the title graphic or no image. */
+  heroImage?: { url: string; style: RecipeImageStyle } | null;
 }
 export * from './units';
 export * from './render';

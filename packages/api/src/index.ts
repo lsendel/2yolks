@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
-import { eq, and, ne, isNotNull } from 'drizzle-orm';
+import { eq, and, ne, isNotNull, desc } from 'drizzle-orm';
 import {
   COUNTRIES,
   LOCALES,
@@ -16,12 +16,14 @@ import {
 } from '@2yolks/contracts';
 import { renderHome, renderCountryHome, renderRecipe, renderAbout, renderPrivacy, renderHowWeTest, renderNotFound } from '@2yolks/web/server';
 import { isUntested } from '@2yolks/contracts';
-import { createDb, recipes, recipeLocales, sources } from './db';
+import { createDb, recipes, recipeLocales, recipeImages, sources } from './db';
 import { mcpApp } from './mcp';
 
 type Bindings = {
   DB: D1Database;
   ASSETS: Fetcher;
+  /** R2 bucket for rights-tracked recipe images (migration 0004). */
+  IMAGES?: R2Bucket;
   /** 'true' only in local dev (wrangler dev --var ALLOW_DEMO_SEED:true).
    * Synthetic demo-seed content must never be served in production. */
   ALLOW_DEMO_SEED?: string;
@@ -178,6 +180,42 @@ app.get('/sitemap.xml', async (c) => {
   return c.text(xml, 200, { 'content-type': 'application/xml; charset=utf-8' });
 });
 
+// --- Recipe images (migration 0004) ------------------------------------------
+// Registered before the /:country catch-alls so they cannot shadow it.
+// Serves rights-tracked R2 images by their recipe_images row id. Same public
+// visibility rule as the recipe page itself: only while the recipe has at
+// least one published, rights-cleared locale. No arbitrary R2 keys: only rows
+// recorded through recipes.set_image are served. Plain 404s (never the
+// HTML/ASSETS not-found path): this is a binary endpoint.
+app.get('/img/recipe/:imageId', async (c) => {
+  const images = c.env.IMAGES;
+  if (!images) return c.text('not found', 404);
+  const db = createDb(c.env.DB);
+  const rows = await db
+    .select({ r2Key: recipeImages.r2Key, mime: recipeImages.mime, recipeId: recipeImages.recipeId })
+    .from(recipeImages)
+    .where(eq(recipeImages.id, c.req.param('imageId')))
+    .limit(1);
+  const img = rows[0];
+  if (!img) return c.text('not found', 404);
+  const visible = await db
+    .select({ slug: recipeLocales.slug })
+    .from(recipeLocales)
+    .innerJoin(recipes, eq(recipeLocales.recipeId, recipes.id))
+    .innerJoin(sources, eq(recipes.sourceId, sources.id))
+    .where(and(eq(recipeLocales.recipeId, img.recipeId), published(db, demoAllowed(c))))
+    .limit(1);
+  if (visible.length === 0) return c.text('not found', 404);
+  const obj = await images.get(img.r2Key);
+  if (!obj) return c.text('not found', 404);
+  return new Response(obj.body, {
+    headers: {
+      'content-type': img.mime,
+      'cache-control': 'public, max-age=31536000, immutable',
+    },
+  });
+});
+
 // --- SSR pages ----------------------------------------------------------
 
 app.get('/', async (c) => {
@@ -280,6 +318,14 @@ const recipeRoute = async (c: Context<{ Bindings: Bindings }>) => {
     });
   }
 
+  // Latest rights-tracked hero image, if any (migration 0004). The page
+  // renderer falls back to the title graphic when this is null.
+  const heroRows = await db
+    .select({ id: recipeImages.id, style: recipeImages.style })
+    .from(recipeImages)
+    .where(and(eq(recipeImages.recipeId, parsed.id), eq(recipeImages.kind, 'hero')))
+    .orderBy(desc(recipeImages.createdAt))
+    .limit(1);
   const page: RecipePage = {
     recipe: {
       id: canonical.recipes.id,
@@ -289,7 +335,14 @@ const recipeRoute = async (c: Context<{ Bindings: Bindings }>) => {
       createdAt: canonical.recipes.createdAt,
       testedAt: canonical.recipes.testedAt,
       testedBy: canonical.recipes.testedBy,
+      prepMinutes: canonical.recipes.prepMinutes,
+      cookMinutes: canonical.recipes.cookMinutes,
+      restMinutes: canonical.recipes.restMinutes,
+      totalMinutes: canonical.recipes.totalMinutes,
+      baseServings: canonical.recipes.baseServings,
+      category: (canonical.recipes.category ?? null) as RecipePage['recipe']['category'],
     },
+    heroImage: heroRows[0] ? { url: `${origin}/img/recipe/${heroRows[0].id}`, style: heroRows[0].style } : null,
     locale: {
       recipeId: canonical.recipe_locales.recipeId,
       country: canonical.recipe_locales.country,

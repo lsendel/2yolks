@@ -85,16 +85,35 @@ function makeD1(sqlite: DatabaseSync): D1Database {
 
 function migratedD1(): D1Database {
   const sqlite = new DatabaseSync(':memory:');
-  for (const file of ['0001_init.sql', '0002_mcp_blog.sql', '0003_quality_translation.sql']) {
+  for (const file of ['0001_init.sql', '0002_mcp_blog.sql', '0003_quality_translation.sql', '0004_recipe_times_images.sql']) {
     const sql = readFileSync(new URL(`../migrations/${file}`, import.meta.url), 'utf8');
     sqlite.exec(sql);
   }
   return makeD1(sqlite);
 }
 
-function env(db: D1Database, extra: Record<string, string> = {}) {
+function makeR2() {
+  const objects = new Map<string, { bytes: Uint8Array; contentType?: string }>();
+  return {
+    objects,
+    async put(key: string, value: Uint8Array, opts?: { httpMetadata?: { contentType?: string } }) {
+      objects.set(key, { bytes: value, contentType: opts?.httpMetadata?.contentType });
+      return { key };
+    },
+    async get(key: string) {
+      const o = objects.get(key);
+      if (!o) return null;
+      return { body: new Response(o.bytes.slice().buffer as ArrayBuffer).body, httpMetadata: { contentType: o.contentType } };
+    },
+  };
+}
+
+let R2 = makeR2();
+
+function env(db: D1Database, extra: Record<string, unknown> = {}) {
   return {
     DB: db,
+    IMAGES: R2,
     ADMIN_MCP_API_KEY: ADMIN_KEY,
     MCP_READ_KEY: READ_KEY,
     MCP_NAMED_KEYS: JSON.stringify([{ name: 'harvester-1', key: EDITOR_KEY, role: 'editor' }]),
@@ -154,6 +173,7 @@ const RECIPE = {
 describe('admin MCP', () => {
   beforeEach(() => {
     DB = migratedD1();
+    R2 = makeR2();
   });
 
   it('fails closed with 503 when no keys are configured', async () => {
@@ -797,5 +817,178 @@ describe('MCP structured ingredients and translation provenance (contracts, migr
     const pub = await toolCall(ADMIN_KEY, 'recipes.publish', { id, country: 'mx', lang: 'es', confirmed: true });
     expect(pub.isError).toBe(true);
     expect(JSON.stringify(pub.data)).toContain('not reviewed');
+  });
+});
+
+// 1x1 PNG and 1x1 GIF fixtures (real magic bytes; the sniffer verifies type
+// and dimensions from headers, never the caller's claim).
+const PNG_1X1 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+const GIF_1X1 = 'R0lGODdhAQABAIAAAP///////ywAAAAAAQABAAACAkQBADs=';
+const IMAGE_META = { sourceName: '2yolks test', sourceUrl: 'https://example.com/img', license: 'CC0-1.0', style: 'graphic' };
+
+describe('structured times, servings and category (migration 0004)', () => {
+  beforeEach(() => {
+    DB = migratedD1();
+    R2 = makeR2();
+  });
+
+  it('stores valid time fields, servings and category on create and returns them on get', async () => {
+    const created = await toolCall(EDITOR_KEY, 'recipes.create_draft', {
+      ...RECIPE,
+      confirmed: true,
+      prepMinutes: 10,
+      cookMinutes: 20,
+      restMinutes: 5,
+      totalMinutes: 35,
+      baseServings: 4,
+      category: 'soups-stews',
+    });
+    expect(created.isError).toBe(false);
+    const id = created.data?.['id'] as string;
+    const got = await toolCall(READ_KEY, 'recipes.get', { id });
+    const recipe = got.data?.['recipe'] as Record<string, unknown>;
+    expect(recipe['prep_minutes']).toBe(10);
+    expect(recipe['cook_minutes']).toBe(20);
+    expect(recipe['rest_minutes']).toBe(5);
+    expect(recipe['total_minutes']).toBe(35);
+    expect(recipe['base_servings']).toBe(4);
+    expect(recipe['category']).toBe('soups-stews');
+    expect(got.data?.['images']).toEqual([]);
+  });
+
+  it('rejects invalid times and unknown category slugs', async () => {
+    const badTime = await toolCall(EDITOR_KEY, 'recipes.create_draft', { ...RECIPE, prepMinutes: -5 });
+    expect(badTime.isError).toBe(true);
+    const nonInt = await toolCall(EDITOR_KEY, 'recipes.create_draft', { ...RECIPE, cookMinutes: 1.5 });
+    expect(nonInt.isError).toBe(true);
+    const zeroTotal = await toolCall(EDITOR_KEY, 'recipes.create_draft', { ...RECIPE, totalMinutes: 0 });
+    expect(zeroTotal.isError).toBe(true);
+    const badCat = await toolCall(EDITOR_KEY, 'recipes.create_draft', { ...RECIPE, category: 'vegan' });
+    expect(badCat.isError).toBe(true);
+    expect(JSON.stringify(badCat.data)).toMatch(/soups-stews/);
+  });
+
+  it('updates and clears recipe-level fields via update_draft, with an overlap warning', async () => {
+    const created = await toolCall(EDITOR_KEY, 'recipes.create_draft', { ...RECIPE, confirmed: true });
+    const id = created.data?.['id'] as string;
+    const upd = await toolCall(EDITOR_KEY, 'recipes.update_draft', {
+      id,
+      confirmed: true,
+      prepMinutes: 30,
+      cookMinutes: 40,
+      totalMinutes: 50,
+      category: 'dumplings',
+    });
+    expect(upd.isError).toBe(false);
+    expect(upd.data?.['recipe_fields']).toEqual(expect.arrayContaining(['prepMinutes', 'cookMinutes', 'totalMinutes', 'category']));
+    expect((upd.data?.['warnings'] as string[])[0]).toMatch(/overlap/);
+    const got = await toolCall(READ_KEY, 'recipes.get', { id });
+    const recipe = got.data?.['recipe'] as Record<string, unknown>;
+    expect(recipe['prep_minutes']).toBe(30);
+    expect(recipe['category']).toBe('dumplings');
+    const cleared = await toolCall(EDITOR_KEY, 'recipes.update_draft', { id, confirmed: true, prepMinutes: null, category: null });
+    expect(cleared.isError).toBe(false);
+    const got2 = await toolCall(READ_KEY, 'recipes.get', { id });
+    const recipe2 = got2.data?.['recipe'] as Record<string, unknown>;
+    expect(recipe2['prep_minutes']).toBeNull();
+    expect(recipe2['category']).toBeNull();
+  });
+
+  it('accepts {d:} duration tokens in steps and rejects malformed ones', async () => {
+    const ok = await toolCall(EDITOR_KEY, 'recipes.create_draft', {
+      ...RECIPE,
+      locales: [{ ...RECIPE.locales[0], steps: ['Mix.', 'Cook {d:2m} per side.', 'Rest {d:5m}. Serve.'] }],
+      confirmed: true,
+    });
+    expect(ok.isError).toBe(false);
+    const bad = await toolCall(EDITOR_KEY, 'recipes.create_draft', {
+      ...RECIPE,
+      locales: [{ ...RECIPE.locales[0], steps: ['Cook {d:0m}.'] }],
+    });
+    expect(bad.isError).toBe(true);
+    expect(JSON.stringify(bad.data)).toMatch(/duration tokens/);
+    const noUnit = await toolCall(EDITOR_KEY, 'recipes.create_draft', {
+      ...RECIPE,
+      locales: [{ ...RECIPE.locales[0], steps: ['Cook {d:15}.'] }],
+    });
+    expect(noUnit.isError).toBe(true);
+  });
+});
+
+describe('recipes.set_image (migration 0004)', () => {
+  beforeEach(() => {
+    DB = migratedD1();
+    R2 = makeR2();
+  });
+
+  async function draftId(): Promise<string> {
+    const created = await toolCall(EDITOR_KEY, 'recipes.create_draft', { ...RECIPE, confirmed: true });
+    return created.data?.['id'] as string;
+  }
+
+  it('requires the admin role', async () => {
+    const id = await draftId();
+    const denied = await toolCall(EDITOR_KEY, 'recipes.set_image', { id, imageBase64: PNG_1X1, ...IMAGE_META, confirmed: true });
+    expect(denied.isError).toBe(true);
+    expect((denied.data as { error: string }).error).toBe('insufficient role');
+  });
+
+  it('uploads a verified hero image, records rights metadata, and serves it only once published', async () => {
+    const id = await draftId();
+    // dry run first: validates, stores nothing
+    const dry = await toolCall(ADMIN_KEY, 'recipes.set_image', { id, imageBase64: PNG_1X1, ...IMAGE_META });
+    expect(dry.data?.['dry_run']).toBe(true);
+    expect(R2.objects.size).toBe(0);
+
+    const set = await toolCall(ADMIN_KEY, 'recipes.set_image', { id, imageBase64: PNG_1X1, ...IMAGE_META, confirmed: true });
+    expect(set.isError).toBe(false);
+    const imageId = set.data?.['image_id'] as string;
+    expect(set.data?.['mime']).toBe('image/png');
+    expect(set.data?.['width']).toBe(1);
+    expect(R2.objects.size).toBe(1);
+
+    const got = await toolCall(READ_KEY, 'recipes.get', { id });
+    const images = got.data?.['images'] as Record<string, unknown>[];
+    expect(images.length).toBe(1);
+    expect(images[0]?.['style']).toBe('graphic');
+    expect(images[0]?.['source_name']).toBe('2yolks test');
+    expect((got.data?.['recipe'] as Record<string, unknown>)['image_key']).toBe(`recipes/${id}/${imageId}.png`);
+
+    // draft recipe: image not publicly served
+    const draftRes = await app.request(`https://2yolks.com/img/recipe/${imageId}`, {}, env(DB));
+    expect(draftRes.status).toBe(404);
+
+    // publish, then it is served with the sniffed content type
+    const list = await toolCall(READ_KEY, 'recipes.get', { id });
+    const sourceId = (list.data?.['source'] as Record<string, unknown>)['id'] as string;
+    await toolCall(ADMIN_KEY, 'sources.clear_rights', { id: sourceId, confirmed: true, notes: 'CC0 verified' });
+    await toolCall(ADMIN_KEY, 'recipes.publish', { id, confirmed: true });
+    const served = await app.request(`https://2yolks.com/img/recipe/${imageId}`, {}, env(DB));
+    expect(served.status).toBe(200);
+    expect(served.headers.get('content-type')).toBe('image/png');
+    expect(served.headers.get('cache-control')).toContain('immutable');
+    const body = new Uint8Array(await served.arrayBuffer());
+    expect(body.length).toBeGreaterThan(0);
+  });
+
+  it('rejects non-image bytes, missing rights metadata and bad step indexes', async () => {
+    const id = await draftId();
+    const gif = await toolCall(ADMIN_KEY, 'recipes.set_image', { id, imageBase64: GIF_1X1, ...IMAGE_META, confirmed: true });
+    expect(gif.isError).toBe(true);
+    expect(JSON.stringify(gif.data)).toMatch(/unsupported or unreadable/);
+    const noRights = await toolCall(ADMIN_KEY, 'recipes.set_image', { id, imageBase64: PNG_1X1, confirmed: true });
+    expect(noRights.isError).toBe(true);
+    expect(JSON.stringify(noRights.data)).toMatch(/rights metadata/);
+    const badStyle = await toolCall(ADMIN_KEY, 'recipes.set_image', { id, imageBase64: PNG_1X1, ...IMAGE_META, style: 'tasty', confirmed: true });
+    expect(badStyle.isError).toBe(true);
+    const oob = await toolCall(ADMIN_KEY, 'recipes.set_image', { id, kind: 'step', stepIndex: 9, imageBase64: PNG_1X1, ...IMAGE_META, confirmed: true });
+    expect(oob.isError).toBe(true);
+    expect(JSON.stringify(oob.data)).toMatch(/out of range/);
+    const step = await toolCall(ADMIN_KEY, 'recipes.set_image', { id, kind: 'step', stepIndex: 1, imageBase64: PNG_1X1, ...IMAGE_META, confirmed: true });
+    expect(step.isError).toBe(false);
+    expect(step.data?.['step_index']).toBe(1);
+    // step images do not touch the hero pointer
+    const got = await toolCall(READ_KEY, 'recipes.get', { id });
+    expect((got.data?.['recipe'] as Record<string, unknown>)['image_key']).toBeNull();
   });
 });

@@ -15,7 +15,7 @@ Agent content API, same conventions as the directory MCP (`lsendel/directory`).
 
 - `viewer`: recipes.list/get, sources.list, blog.list/get
 - `editor`: + recipes.create_draft, recipes.update_draft, recipes.add_locale, blog.create_draft, blog.update_draft
-- `admin`: + recipes.publish/unpublish, sources.update, sources.clear_rights, blog.publish/unpublish, translations.mark_reviewed
+- `admin`: + recipes.publish/unpublish, recipes.set_image, sources.update, sources.clear_rights, blog.publish/unpublish, translations.mark_reviewed
 
 ## Wire shapes
 
@@ -49,6 +49,41 @@ Both shapes are accepted and behave identically:
 - The translation QA floor (step numbers/tokens, structured quantity equality, allergen terms) runs at creation and again in `translations.mark_reviewed`, which compares the draft against its stored source row (source must be published first) and stamps `translation_reviewed_at`/`_by` server-side from the authenticated key. Caller content can never set review fields. `translation_reviewer_kind` stays NULL: possessing a key proves neither a human nor an agent reviewer.
 - `translations.mark_reviewed` answers 403 unless the deployment sets `MCP_TRANSLATION_REVIEW`; publishing a translated locale without the review stamp fails with 409. Translation review/publishing stays disabled until the owner sets that policy.
 - `tested_at`/`tested_by` are not writable through the MCP.
+
+## Structured timing, servings and category (migration 0004)
+
+- Recipe-level (translation-invariant, shared by every locale):
+  `prepMinutes` / `cookMinutes` / `restMinutes` / `totalMinutes` (integer
+  minutes, 0-10080; `totalMinutes` >= 1), `baseServings` (numeric base yield
+  the 1x scaler multiplies from), and `category` (dish-type slug; see
+  `RECIPE_CATEGORY_SLUGS` in contracts; unknown slugs are rejected).
+- Accepted by `recipes.create_draft` and `recipes.update_draft`; null clears
+  a field on update. `totalMinutes` is stored explicitly and never computed
+  as prep+cook: the two can overlap and resting time sits outside both. A
+  total below prep+cook warns but does not reject.
+- Steps may carry `{d:Nm}` duration tokens (1-1440 minutes). They render
+  locale-neutral ("15 min") in every language and drive the cook-mode timer
+  deterministically; malformed tokens are rejected at write time, and the
+  translation QA gate compares them like amount/temperature tokens.
+- NULL means "not recorded" - never zero; older recipes keep NULL until a
+  guarded backfill from explicit source values.
+
+## Images (migration 0004)
+
+- `recipes.set_image` (admin, `confirmed: true`): attaches a rights-tracked
+  image to a recipe. `kind` is `hero` (default) or `step` (with `stepIndex`).
+  Binary upload only via `imageBase64`: jpeg/png/webp, max ~3 MB, type and
+  dimensions verified server-side from magic bytes and headers - no SVG, and
+  no URL-fetch mode, so the worker never makes a server-side request to a
+  caller-supplied address.
+- Rights metadata is mandatory: `sourceName`, `sourceUrl` (https://),
+  `license`, plus `style` (`photo` | `illustration` | `graphic`) as the
+  honest-imagery label. A new hero replaces the current hero (nothing is
+  deleted; the latest hero wins) and updates `recipes.image_key`.
+- Images are served at `/img/recipe/<image_id>` (long-cache) only while the
+  recipe has at least one published, rights-cleared locale - the same public
+  visibility rule as the recipe page. `recipes.get` returns a recipe's image
+  rows.
 
 ## Rules
 

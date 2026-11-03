@@ -79,3 +79,26 @@ describe('temperature conversion never rounds below the exact value', () => {
     expect(_f2c(350)).toBe(177);
   });
 });
+
+describe('step duration tokens ({d:Nm})', () => {
+  it('renders locale-neutral minutes and validates range', async () => {
+    const { renderDurations, invalidDurationTokens } = await import('./units');
+    expect(renderDurations('Simmer {d:15m}, covered.')).toBe('Simmer 15 min, covered.');
+    expect(invalidDurationTokens('Cook {d:15m}')).toEqual([]);
+    expect(invalidDurationTokens('Cook {d:0m}')).toEqual(['{d:0m}']);
+    expect(invalidDurationTokens('Cook {d:15}')).toEqual(['{d:15}']);
+    expect(invalidDurationTokens('Cook {d:2000m}')).toEqual(['{d:2000m}']);
+    expect(invalidDurationTokens('Cook {d:abc}')).toEqual(['{d:abc}']);
+  });
+
+  it('translation gate flags a changed or dropped duration token', () => {
+    const src = { steps: ['Simmer {d:15m}.'] };
+    const same = { steps: ['Mijoter {d:15m}.'] };
+    const changed = { steps: ['Mijoter {d:20m}.'] };
+    const dropped = { steps: ['Mijoter 15 minutes.'] };
+    expect(checkTranslation(src, same).ok).toBe(true);
+    expect(checkTranslation(src, changed).ok).toBe(false);
+    // dropping the token leaves a bare number, caught by the numbers check
+    expect(checkTranslation(src, dropped).ok).toBe(false);
+  });
+});
