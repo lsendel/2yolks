@@ -62,9 +62,25 @@ const demoAllowed = (c: Context<{ Bindings: Bindings }>) => c.env.ALLOW_DEMO_SEE
 
 app.get('/api/health', (c) => c.json({ ok: true }));
 
-app.get('/api/v1/countries', (c) =>
-  c.json({ countries: COUNTRIES, locales: LOCALES }),
-);
+// Additive: `countries` and `locales` keep their full-catalogue shape.
+// `published` lists, per country, the locales that currently have at least
+// one published recipe, so clients can tell supported from available.
+app.get('/api/v1/countries', async (c) => {
+  const db = createDb(c.env.DB);
+  const rows = await db
+    .select({ country: recipeLocales.country, lang: recipeLocales.lang })
+    .from(recipeLocales)
+    .innerJoin(recipes, eq(recipeLocales.recipeId, recipes.id))
+    .innerJoin(sources, eq(recipes.sourceId, sources.id))
+    .where(published(db, demoAllowed(c)));
+  const pub: Record<string, string[]> = {};
+  for (const r of rows) {
+    const list = (pub[r.country] ??= []);
+    if (!list.includes(r.lang)) list.push(r.lang);
+  }
+  for (const list of Object.values(pub)) list.sort();
+  return c.json({ countries: COUNTRIES, locales: LOCALES, published: pub });
+});
 
 app.get('/api/v1/countries/:code/recipes', async (c) => {
   const country = getCountry(c.req.param('code'));
