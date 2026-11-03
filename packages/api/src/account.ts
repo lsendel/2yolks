@@ -4,11 +4,12 @@
 // for review; an admin publishes through the MCP after rights clearance.
 import { Hono } from 'hono';
 import type { Context } from 'hono';
+import { bodyLimit } from 'hono/body-limit';
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
-import { eq, and, desc } from 'drizzle-orm';
+import { eq, and, ne, desc } from 'drizzle-orm';
 import { LOCALES, getCountry, localizedCountryName, slugify, validateRecipeSubmission } from '@2yolks/contracts';
 import { renderAccountPage, escapeHtml as esc } from '@2yolks/web/server';
-import { createDb, recipes, recipeLocales, recipeSlugAliases, sources, users } from './db';
+import { createDb, recipes, recipeLocales, sources, users } from './db';
 import { sendMail, type MailEnv } from './email';
 import { parseRecipeText, parseJsonLdRecipe, type ParsedRecipe } from './parse';
 import { safeFetchText, SsrfError } from './ssrf';
@@ -31,7 +32,8 @@ const SESSION_DAYS = 30;
 const CODE_TTL_MS = 10 * 60_000;
 const MAX_ATTEMPTS = 5;
 const CODES_PER_EMAIL_10MIN = 3;
-const CODES_PER_DAY = 80; // keeps headroom under the Resend free 100/day cap
+const CODES_PER_DAY = 80; // login codes: headroom under the Resend free 100/day cap
+const MAIL_PER_DAY = 95; // all mail incl. review notices; hard ceiling below 100/day
 const MAX_DRAFTS_PER_USER = 50;
 
 export const accountApp = new Hono<{ Bindings: AccountBindings; Variables: { user: { id: string; email: string; displayName: string | null } } }>();
@@ -72,6 +74,32 @@ accountApp.use('*', async (c, next) => {
   await next();
 });
 
+/** Atomically reserve one outbound email against the daily budget (single conditional INSERT). */
+async function reserveMail(db: D1Database, kind: 'code' | 'notice', cap: number): Promise<boolean> {
+  const now = Date.now();
+  const r = await db.prepare(
+    'INSERT INTO mail_log (id, kind, created_at) SELECT ?, ?, ? WHERE (SELECT count(*) FROM mail_log WHERE created_at > ?) < ?',
+  ).bind(newId() + newId(), kind, now, now - 86_400_000, cap).run();
+  return r.meta.changes === 1;
+}
+
+/** Drop expired sign-in artifacts only (codes, sessions, old mail counters). Never touches recipes or users. */
+async function cleanupExpired(db: D1Database, now: number): Promise<void> {
+  try {
+    await db.batch([
+      db.prepare('DELETE FROM auth_codes WHERE expires_at < ?').bind(now - 86_400_000),
+      db.prepare('DELETE FROM sessions WHERE expires_at < ?').bind(now),
+      db.prepare('DELETE FROM mail_log WHERE created_at < ?').bind(now - 2 * 86_400_000),
+    ]);
+  } catch { /* housekeeping must never block sign-in */ }
+}
+
+// Cap request bodies before anything is parsed or buffered (streaming-safe).
+accountApp.use('*', bodyLimit({
+  maxSize: 256 * 1024,
+  onError: (c) => c.html(renderAccountPage('Too large', '<div class="err" role="alert">That request is too large.</div>'), 413),
+}));
+
 async function limited(rl: RateLimiter | undefined, c: Ctx, scope: string): Promise<boolean> {
   if (!rl) return false;
   const ip = c.req.header('cf-connecting-ip') ?? 'unknown';
@@ -89,7 +117,6 @@ async function currentUser(c: Ctx) {
 }
 
 accountApp.use('*', async (c, next) => {
-  importOn = c.env.IMPORT_ENABLED === 'true';
   const u = await currentUser(c);
   if (u) c.set('user', u);
   await next();
@@ -112,7 +139,7 @@ accountApp.get('/', async (c) => {
   const db = createDb(c.env.DB);
   const rows = await db.select({ id: recipes.id, submittedAt: recipes.submittedAt, title: recipeLocales.title, status: recipeLocales.status })
     .from(recipes).innerJoin(recipeLocales, eq(recipeLocales.recipeId, recipes.id))
-    .where(eq(recipes.ownerUserId, user.id)).orderBy(desc(recipes.createdAt));
+    .where(and(eq(recipes.ownerUserId, user.id), ne(recipeLocales.status, 'rejected'))).orderBy(desc(recipes.createdAt));
   const items = rows.map((r) => {
     const label = r.status === 'published' ? 'Published' : r.submittedAt ? 'Submitted for review' : 'Private draft';
     const edit = r.submittedAt || r.status === 'published' ? '' : `<a href="/account/recipes/${esc(r.id)}/edit">Edit</a>`;
@@ -131,17 +158,21 @@ accountApp.post('/code', async (c) => {
   if (!email) return page(c, 'Sign in', signInForm(banner('err', 'Enter a valid email address.')), 400);
   if (!c.env.RESEND_API_KEY) return page(c, 'Sign in', signInForm(banner('err', 'Sign-in email is not switched on yet.')), 503);
   const now = Date.now();
-  const recent = await c.env.DB.prepare('SELECT count(*) AS n FROM auth_codes WHERE email = ? AND created_at > ?').bind(email, now - CODE_TTL_MS).first<{ n: number }>();
-  if ((recent?.n ?? 0) >= CODES_PER_EMAIL_10MIN) return page(c, 'Slow down', signInForm(banner('err', 'Too many codes requested for this email. Try again in a few minutes.')), 429);
-  const day = await c.env.DB.prepare('SELECT count(*) AS n FROM auth_codes WHERE created_at > ?').bind(now - 86_400_000).first<{ n: number }>();
-  if ((day?.n ?? 0) >= CODES_PER_DAY) return page(c, 'Busy', signInForm(banner('err', 'Sign-in is busy right now. Please try again tomorrow.')), 503);
+  await cleanupExpired(c.env.DB, now);
+  if (!(await reserveMail(c.env.DB, 'code', CODES_PER_DAY))) return page(c, 'Busy', signInForm(banner('err', 'Sign-in is busy right now. Please try again tomorrow.')), 503);
   const code = randomCode();
   const id = newId();
-  await c.env.DB.prepare('INSERT INTO auth_codes (id,email,code_hash,expires_at,attempts,used,created_at) VALUES (?,?,?,?,0,0,?)')
-    .bind(id, email, await sha256Hex(`${email}:${code}`), now + CODE_TTL_MS, now).run();
+  // One atomic statement: the per-email budget check and the insert cannot interleave.
+  const ins = await c.env.DB.prepare(
+    'INSERT INTO auth_codes (id,email,code_hash,expires_at,attempts,used,created_at) SELECT ?,?,?,?,0,0,? WHERE (SELECT count(*) FROM auth_codes WHERE email = ? AND created_at > ?) < ?',
+  ).bind(id, email, await sha256Hex(`${email}:${code}`), now + CODE_TTL_MS, now, email, now - CODE_TTL_MS, CODES_PER_EMAIL_10MIN).run();
+  if (ins.meta.changes !== 1) return page(c, 'Slow down', signInForm(banner('err', 'Too many codes requested for this email. Try again in a few minutes.')), 429);
+  // Only the newest code stays valid, so guesses cannot be spread over several live codes.
+  await c.env.DB.prepare('UPDATE auth_codes SET used = 1 WHERE email = ? AND id <> ? AND used = 0').bind(email, id).run();
   const sent = await sendMail(c.env, { to: email, subject: `Your 2yolks code: ${code}`, text: `Your 2yolks sign-in code is ${code}.\n\nIt expires in 10 minutes. If you did not ask for it, ignore this email.\n` });
   if (!sent) {
-    await c.env.DB.prepare('DELETE FROM auth_codes WHERE id = ?').bind(id).run();
+    // No refund: delivery state is ambiguous, so the budget slot and per-email slot stay used. Invalidate the code.
+    await c.env.DB.prepare('UPDATE auth_codes SET used = 1 WHERE id = ?').bind(id).run();
     return page(c, 'Sign in', signInForm(banner('err', 'We could not send the email. Please try again later.')), 503);
   }
   return page(c, 'Check your email', codeForm(email));
@@ -154,20 +185,24 @@ accountApp.post('/verify', async (c) => {
   const code = str(form['code'], 12).trim();
   if (!email || !/^\d{6}$/.test(code)) return page(c, 'Check your email', codeForm(email ?? '', banner('err', 'Enter the 6-digit code.')), 400);
   const now = Date.now();
-  const row = await c.env.DB.prepare('SELECT id, code_hash AS hash, attempts FROM auth_codes WHERE email = ? AND used = 0 AND expires_at > ? ORDER BY created_at DESC LIMIT 1')
-    .bind(email, now).first<{ id: string; hash: string; attempts: number }>();
-  if (!row || row.attempts >= MAX_ATTEMPTS) return page(c, 'Sign in', signInForm(banner('err', 'That code expired or was used up. Request a new one.')), 400);
-  await c.env.DB.prepare('UPDATE auth_codes SET attempts = attempts + 1 WHERE id = ?').bind(row.id).run();
+  const row = await c.env.DB.prepare('SELECT id, code_hash AS hash FROM auth_codes WHERE email = ? AND used = 0 AND expires_at > ? AND attempts < ? ORDER BY created_at DESC LIMIT 1')
+    .bind(email, now, MAX_ATTEMPTS).first<{ id: string; hash: string }>();
+  if (!row) return page(c, 'Sign in', signInForm(banner('err', 'That code expired or was used up. Request a new one.')), 400);
+  // Claim one attempt atomically; concurrent guesses cannot exceed the cap.
+  const claim = await c.env.DB.prepare('UPDATE auth_codes SET attempts = attempts + 1 WHERE id = ? AND used = 0 AND attempts < ? AND expires_at > ?').bind(row.id, MAX_ATTEMPTS, now).run();
+  if (claim.meta.changes !== 1) return page(c, 'Sign in', signInForm(banner('err', 'That code expired or was used up. Request a new one.')), 400);
   const given = await sha256Hex(`${email}:${code}`);
   let diff = given.length ^ row.hash.length;
   for (let i = 0; i < given.length; i++) diff |= given.charCodeAt(i) ^ (row.hash.charCodeAt(i) || 0);
   if (diff !== 0) return page(c, 'Check your email', codeForm(email, banner('err', 'That code is not right.')), 400);
-  await c.env.DB.prepare('UPDATE auth_codes SET used = 1 WHERE id = ?').bind(row.id).run();
+  // Single-use: exactly one concurrent correct submission can flip used 0 -> 1.
+  const use = await c.env.DB.prepare('UPDATE auth_codes SET used = 1 WHERE id = ? AND used = 0').bind(row.id).run();
+  if (use.meta.changes !== 1) return page(c, 'Sign in', signInForm(banner('err', 'That code was already used. Request a new one.')), 400);
   let user = await c.env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email).first<{ id: string }>();
   if (!user) {
-    const id = newId();
-    await c.env.DB.prepare('INSERT INTO users (id,email,display_name,created_at) VALUES (?,?,NULL,?)').bind(id, email, new Date().toISOString()).run();
-    user = { id };
+    await c.env.DB.prepare('INSERT OR IGNORE INTO users (id,email,display_name,created_at) VALUES (?,?,NULL,?)').bind(newId(), email, new Date().toISOString()).run();
+    user = await c.env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email).first<{ id: string }>();
+    if (!user) return page(c, 'Sign in', signInForm(banner('err', 'Something went wrong. Please try again.')), 503);
   }
   const token = randomToken();
   await c.env.DB.prepare('INSERT INTO sessions (id,user_id,expires_at,created_at) VALUES (?,?,?,?)')
@@ -213,8 +248,7 @@ function localeOptions(selected: string): string {
   })).join('');
 }
 
-let importOn = false;
-function renderForm(s: FormState, errors: string[] = [], note = ''): string {
+function renderForm(s: FormState, errors: string[] = [], note = '', importOn = false): string {
   const errBox = errors.length ? banner('err', `<strong>Fix these first:</strong><ul>${errors.map((e) => `<li>${esc(e)}</li>`).join('')}</ul>`) : '';
   const entry = s.id ? '' : `<div class="panel"><h2>Start faster</h2>
 <form method="post" action="/account/recipes/paste"><label>Paste a recipe<small>Plain text with a title line, then "Ingredients" and "Instructions". You review everything before saving.</small><textarea name="text" maxlength="60000"></textarea></label><button class="quiet" type="submit">Fill the form from this text</button></form>
@@ -274,34 +308,36 @@ async function loadOwned(c: Ctx, id: string) {
   const db = createDb(c.env.DB);
   const rows = await db.select({ r: recipes, l: recipeLocales, s: sources })
     .from(recipes).innerJoin(recipeLocales, eq(recipeLocales.recipeId, recipes.id)).innerJoin(sources, eq(sources.id, recipes.sourceId))
-    .where(and(eq(recipes.id, id), eq(recipes.ownerUserId, user.id))).limit(1);
+    .where(and(eq(recipes.id, id), eq(recipes.ownerUserId, user.id), ne(recipeLocales.status, 'rejected'))).limit(1);
   return rows[0] ?? null;
 }
 
-accountApp.get('/recipes/new', (c) => page(c, 'Add a recipe', renderForm(blank(c.get('user')))));
+const rf = (c: Ctx, s: FormState, errors: string[] = [], note = '') => renderForm(s, errors, note, c.env.IMPORT_ENABLED === 'true');
+
+accountApp.get('/recipes/new', (c) => page(c, 'Add a recipe', rf(c, blank(c.get('user')))));
 
 accountApp.post('/recipes/paste', async (c) => {
   const form = await c.req.parseBody();
   const p = parseRecipeText(str(form['text'], 60000));
   const warn = p.warnings.length ? banner('err', p.warnings.map(esc).join('<br>')) : banner('ok', 'Filled from your text. Check every line, then save.');
-  return page(c, 'Add a recipe', renderForm(fromParsed(blank(c.get('user')), p), [], warn));
+  return page(c, 'Add a recipe', rf(c, fromParsed(blank(c.get('user')), p), [], warn));
 });
 
 accountApp.post('/recipes/import', async (c) => {
   const user = c.get('user');
-  if (c.env.IMPORT_ENABLED !== 'true') return page(c, 'Add a recipe', renderForm(blank(user), ['Link import is not switched on yet. Paste the recipe text instead.']), 404);
-  if (await limited(c.env.RL_SUBMIT, c, 'import')) return page(c, 'Slow down', renderForm(blank(user), ['Too many imports. Please wait a minute.']), 429);
+  if (c.env.IMPORT_ENABLED !== 'true') return page(c, 'Add a recipe', rf(c, blank(user), ['Link import is not switched on yet. Paste the recipe text instead.']), 404);
+  if (await limited(c.env.RL_SUBMIT, c, 'import')) return page(c, 'Slow down', rf(c, blank(user), ['Too many imports. Please wait a minute.']), 429);
   const form = await c.req.parseBody();
   const url = str(form['url'], 2000).trim();
   try {
     const { url: finalUrl, text } = await safeFetchText(url);
     const p = parseJsonLdRecipe(text);
-    if (!p) return page(c, 'Add a recipe', renderForm(blank(user), ['That page has no recipe data we can read. Paste the text instead.']), 400);
+    if (!p) return page(c, 'Add a recipe', rf(c, blank(user), ['That page has no recipe data we can read. Paste the text instead.']), 400);
     const s = { ...fromParsed(blank(user), p), sourceKind: 'adapted' as const, sourceUrl: finalUrl };
-    return page(c, 'Add a recipe', renderForm(s, [], banner('ok', `Filled from ${esc(new URL(finalUrl).hostname)}. It is saved as "adapted" with a link back. Only keep it if you have the right to share it.`)));
+    return page(c, 'Add a recipe', rf(c, s, [], banner('ok', `Filled from ${esc(new URL(finalUrl).hostname)}. It is saved as "adapted" with a link back. Only keep it if you have the right to share it.`)));
   } catch (e) {
     const msg = e instanceof SsrfError ? e.message : 'We could not read that link.';
-    return page(c, 'Add a recipe', renderForm(blank(user), [msg]), 400);
+    return page(c, 'Add a recipe', rf(c, blank(user), [msg]), 400);
   }
 });
 
@@ -314,18 +350,18 @@ accountApp.get('/recipes/:id/edit', async (c) => {
   const s: FormState = {
     id: row.r.id, title: row.l.title, intro: row.l.intro ?? '', ingredients: ing, steps: (JSON.parse(row.l.stepsJson) as string[]).join('\n'),
     locale: `${row.l.country}:${row.l.lang}`, prep: row.r.prepMinutes?.toString() ?? '', cook: row.r.cookMinutes?.toString() ?? '', servings: row.r.baseServings?.toString() ?? '',
-    displayName: user.displayName ?? '', sourceKind: row.s.license === 'user-adapted' ? 'adapted' : 'original', sourceUrl: row.s.license === 'user-adapted' ? row.s.url : '',
+    displayName: row.r.authorName ?? user.displayName ?? '', sourceKind: row.s.license === 'user-adapted' ? 'adapted' : 'original', sourceUrl: row.s.license === 'user-adapted' ? row.s.url : '',
     attest: !!row.r.attestedAt,
   };
   const saved = c.req.query('saved') ? banner('ok', 'Saved as a private draft.') : '';
   const submit = `<form method="post" action="/account/recipes/${esc(row.r.id)}/submit"><div class="panel"><h2>Send in for review</h2><p class="hint">We check the recipe and its rights before anything is published. Publishing is never automatic.${row.r.attestedAt ? '' : ' Tick the permission box above and save first.'}</p><button type="submit"${row.r.attestedAt ? '' : ' disabled'}>Send in for review</button></div></form>
-<form method="post" action="/account/recipes/${esc(row.r.id)}/delete"><button class="quiet" type="submit">Delete this draft</button></form>`;
-  return page(c, 'Edit draft', renderForm(s, [], saved) + submit);
+<form method="post" action="/account/recipes/${esc(row.r.id)}/delete"><button class="quiet" type="submit">Remove this draft</button></form>`;
+  return page(c, 'Edit draft', rf(c, s, [], saved) + submit);
 });
 
 accountApp.post('/recipes/save', async (c) => {
   const user = c.get('user');
-  if (await limited(c.env.RL_SUBMIT, c, 'save')) return page(c, 'Slow down', renderForm(blank(user), ['Too many saves. Please wait a minute.']), 429);
+  if (await limited(c.env.RL_SUBMIT, c, 'save')) return page(c, 'Slow down', rf(c, blank(user), ['Too many saves. Please wait a minute.']), 429);
   const form = await c.req.parseBody();
   const s = parseForm(form, user);
   const errors: string[] = [];
@@ -336,45 +372,53 @@ accountApp.post('/recipes/save', async (c) => {
   const origin = c.env.CANONICAL_ORIGIN ?? new URL(c.req.url).origin;
   const result = errors.length ? null : validateRecipeSubmission(buildSubmission(s, origin));
   if (result && !result.ok) for (const f of result.errors) errors.push(`${f.path ? f.path.replace(/^locales\[0\]\./, '') + ': ' : ''}${f.message}`);
-  if (errors.length || !result || !result.ok) return page(c, 'Add a recipe', renderForm(s, errors), 400);
+  if (errors.length || !result || !result.ok) return page(c, 'Add a recipe', rf(c, s, errors), 400);
 
-  const db = createDb(c.env.DB);
   const sub = result.value;
   const loc = sub.locales[0]!;
+  const D = c.env.DB;
   let id = s.id;
   if (id) {
     const owned = await loadOwned(c, id);
     if (!owned) return page(c, 'Not found', banner('err', 'Draft not found.'), 404);
     if (owned.r.submittedAt || owned.l.status === 'published') return page(c, 'Submitted', banner('err', 'This recipe was already sent in for review.'), 409);
   } else {
-    const count = await c.env.DB.prepare('SELECT count(*) AS n FROM recipes WHERE owner_user_id = ?').bind(user.id).first<{ n: number }>();
-    if ((count?.n ?? 0) >= MAX_DRAFTS_PER_USER) return page(c, 'Add a recipe', renderForm(s, [`You can keep up to ${MAX_DRAFTS_PER_USER} drafts. Delete one first.`]), 400);
+    const count = await D.prepare('SELECT count(*) AS n FROM recipes WHERE owner_user_id = ?').bind(user.id).first<{ n: number }>();
+    if ((count?.n ?? 0) >= MAX_DRAFTS_PER_USER) return page(c, 'Add a recipe', rf(c, s, [`You can keep up to ${MAX_DRAFTS_PER_USER} drafts. Remove one first.`]), 400);
     id = newId();
   }
-  const slug = `${slugify(loc.title) || 'recipe'}-${id}`.slice(0, 120);
+  // Unique suffix is reserved first; the readable part is truncated, never the id. Titles that cannot slugify fall back to 'recipe'.
+  const base = (() => { try { return slugify(loc.title).slice(0, 100).replace(/-+$/, ''); } catch { return ''; } })() || 'recipe';
+  const slug = `${base}-${id}`;
   const now = new Date().toISOString();
-  await c.env.DB.prepare('UPDATE users SET display_name = ? WHERE id = ?').bind(s.displayName, user.id).run();
-  const recipeFields = {
-    originCountry: sub.originCountry ?? null,
-    prepMinutes: (sub as unknown as Record<string, number | undefined>)['prepMinutes'] ?? null,
-    cookMinutes: (sub as unknown as Record<string, number | undefined>)['cookMinutes'] ?? null,
-    baseServings: (sub as unknown as Record<string, number | undefined>)['baseServings'] ?? null,
-    attestedAt: s.attest ? now : null,
-  };
+  const x = sub as unknown as Record<string, number | undefined>;
+  const prep = x['prepMinutes'] ?? null, cook = x['cookMinutes'] ?? null, serv = x['baseServings'] ?? null;
+  const ing = JSON.stringify(loc.ingredients), stp = JSON.stringify(loc.steps);
   if (s.id) {
-    const owned = (await loadOwned(c, id))!;
-    await db.update(sources).set({ name: sub.source.name, url: sub.source.url, license: sub.source.license }).where(eq(sources.id, owned.r.sourceId));
-    await db.update(recipes).set(recipeFields).where(and(eq(recipes.id, id), eq(recipes.ownerUserId, user.id)));
-    await db.delete(recipeLocales).where(eq(recipeLocales.recipeId, id));
+    // One transaction (D1 batch). Every statement re-checks "owned, not submitted, not published"
+    // so a concurrent submit cannot be overwritten; nothing is deleted, rows are updated in place.
+    const open = "EXISTS (SELECT 1 FROM recipes r WHERE r.id = ? AND r.owner_user_id = ? AND r.submitted_at IS NULL) AND NOT EXISTS (SELECT 1 FROM recipe_locales q WHERE q.recipe_id = ? AND q.status = 'published')";
+    const guard = [id, user.id, id];
+    const res = await D.batch([
+      D.prepare(`UPDATE sources SET name = ?, url = ?, license = ? WHERE id = (SELECT source_id FROM recipes WHERE id = ?) AND ${open}`).bind(sub.source.name, sub.source.url, sub.source.license, id, ...guard),
+      D.prepare(`UPDATE recipe_locales SET country = ?, lang = ?, title = ?, slug = ?, intro = ?, ingredients_json = ?, steps_json = ? WHERE recipe_id = ? AND ${open}`).bind(loc.country, loc.lang, loc.title, slug, loc.intro ?? null, ing, stp, id, ...guard),
+      D.prepare(`UPDATE recipes SET origin_country = ?, prep_minutes = ?, cook_minutes = ?, base_servings = ?, attested_at = ?, author_name = ? WHERE id = ? AND owner_user_id = ? AND submitted_at IS NULL`).bind(sub.originCountry ?? null, prep, cook, serv, s.attest ? now : null, s.displayName, id, user.id),
+      D.prepare('UPDATE users SET display_name = ? WHERE id = ?').bind(s.displayName, user.id),
+    ]);
+    if (res[1]!.meta.changes !== 1) return page(c, 'Submitted', banner('err', 'This recipe was already sent in for review, so your changes were not saved.'), 409);
   } else {
     const sourceId = `src-${id}`;
-    await db.insert(sources).values({ id: sourceId, name: sub.source.name, url: sub.source.url, license: sub.source.license, clearedAt: null, notes: 'user submission - rights review pending' });
-    await db.insert(recipes).values({ id, sourceId, imageKey: null, createdAt: now, ownerUserId: user.id, ...recipeFields });
+    // The draft-count cap is checked inside the inserts themselves (same transaction), so
+    // concurrent creates cannot overshoot it. Nothing is written when the cap is hit.
+    const room = '(SELECT count(*) FROM recipes WHERE owner_user_id = ?) < ?';
+    const res = await D.batch([
+      D.prepare(`INSERT INTO sources (id,name,url,license,cleared_at,notes) SELECT ?,?,?,?,NULL,? WHERE ${room}`).bind(sourceId, sub.source.name, sub.source.url, sub.source.license, 'user submission - rights review pending', user.id, MAX_DRAFTS_PER_USER),
+      D.prepare(`INSERT INTO recipes (id,source_id,origin_country,image_key,created_at,prep_minutes,cook_minutes,base_servings,owner_user_id,attested_at,author_name) SELECT ?,?,?,NULL,?,?,?,?,?,?,? WHERE ${room}`).bind(id, sourceId, sub.originCountry ?? null, now, prep, cook, serv, user.id, s.attest ? now : null, s.displayName, user.id, MAX_DRAFTS_PER_USER),
+      D.prepare("INSERT INTO recipe_locales (recipe_id,country,lang,title,slug,intro,ingredients_json,steps_json,status) SELECT ?,?,?,?,?,?,?,?,'draft' WHERE EXISTS (SELECT 1 FROM recipes WHERE id = ?)").bind(id, loc.country, loc.lang, loc.title, slug, loc.intro ?? null, ing, stp, id),
+      D.prepare('UPDATE users SET display_name = ? WHERE id = ?').bind(s.displayName, user.id),
+    ]);
+    if (res[1]!.meta.changes !== 1) return page(c, 'Add a recipe', renderForm(s, [`You can keep up to ${MAX_DRAFTS_PER_USER} drafts. Remove one first.`]), 400);
   }
-  await db.insert(recipeLocales).values({
-    recipeId: id, country: loc.country, lang: loc.lang, title: loc.title, slug, intro: loc.intro ?? null,
-    ingredientsJson: JSON.stringify(loc.ingredients), stepsJson: JSON.stringify(loc.steps), status: 'draft',
-  });
   return c.redirect(`/account/recipes/${id}/edit?saved=1`, 303);
 });
 
@@ -386,26 +430,27 @@ accountApp.post('/recipes/:id/submit', async (c) => {
   if (row.r.submittedAt || row.l.status === 'published') return page(c, 'Submitted', banner('ok', 'Already sent in for review.'), 409);
   if (!row.r.attestedAt) return page(c, 'Permission needed', banner('err', 'Tick the permission box on the draft and save before sending it in.'), 409);
   const now = new Date().toISOString();
-  await createDb(c.env.DB).update(recipes).set({ submittedAt: now }).where(and(eq(recipes.id, row.r.id), eq(recipes.ownerUserId, user.id)));
-  if (c.env.REVIEW_NOTIFY_TO) {
+  const flip = await c.env.DB.prepare('UPDATE recipes SET submitted_at = ? WHERE id = ? AND owner_user_id = ? AND submitted_at IS NULL AND attested_at IS NOT NULL').bind(now, row.r.id, user.id).run();
+  if (flip.meta.changes !== 1) return page(c, 'Submitted', banner('ok', 'Already sent in for review.'), 409);
+  // The admin queue (MCP recipes.list submitted:true) is the source of truth; the email is an extra,
+  // counted against the same daily mail budget as login codes.
+  if (c.env.REVIEW_NOTIFY_TO && (await reserveMail(c.env.DB, 'notice', MAIL_PER_DAY))) {
     await sendMail(c.env, {
       to: c.env.REVIEW_NOTIFY_TO,
       subject: `2yolks recipe submitted for review: ${row.l.title}`.slice(0, 180),
-      text: `A recipe was sent in for review.\n\nTitle: ${row.l.title}\nRecipe id: ${row.r.id}\nAuthor shown as: ${user.displayName ?? ''}\nSubmitter: ${user.email}\nSource: ${row.s.name} (${row.s.url}), license label ${row.s.license}\nAuthor confirmed rights at: ${row.r.attestedAt}\n\nIt stays a private draft until you clear the source and publish it with the admin tools.\n`,
+      text: `A recipe was sent in for review.\n\nTitle: ${row.l.title}\nRecipe id: ${row.r.id}\nAuthor shown as: ${user.displayName ?? ''}\nSubmitter: ${user.email}\nSource: ${row.s.name} (${row.s.url}), license label ${row.s.license}\nAuthor confirmed rights at: ${row.r.attestedAt}\n\nIt stays a private draft until you clear the source and publish it with the admin tools. Queue: MCP recipes.list with submitted:true.\n`,
     }).catch(() => false);
   }
   return page(c, 'Sent in', `<h1>Thanks, it is with us</h1><p class="lead">We will review "${esc(row.l.title)}" and its rights before anything goes live. Nothing is published automatically.</p><p><a class="btn" href="/account">Back to your recipes</a></p>`);
 });
 
+// "Remove" never deletes data: the locale is marked rejected (hidden from the owner's list), rows stay for review/audit.
 accountApp.post('/recipes/:id/delete', async (c) => {
   const user = c.get('user');
-  const row = await loadOwned(c, c.req.param('id'));
-  if (!row) return page(c, 'Not found', banner('err', 'Draft not found.'), 404);
-  if (row.l.status === 'published') return page(c, 'Published', banner('err', 'Published recipes cannot be deleted here. Contact us.'), 409);
-  const db = createDb(c.env.DB);
-  await db.delete(recipeSlugAliases).where(eq(recipeSlugAliases.recipeId, row.r.id));
-  await db.delete(recipeLocales).where(eq(recipeLocales.recipeId, row.r.id));
-  await db.delete(recipes).where(and(eq(recipes.id, row.r.id), eq(recipes.ownerUserId, user.id)));
-  await db.delete(sources).where(eq(sources.id, row.r.sourceId));
+  const id = c.req.param('id');
+  const r = await c.env.DB.prepare(
+    "UPDATE recipe_locales SET status = 'rejected' WHERE recipe_id = ? AND status = 'draft' AND EXISTS (SELECT 1 FROM recipes r WHERE r.id = ? AND r.owner_user_id = ? AND r.submitted_at IS NULL)",
+  ).bind(id, id, user.id).run();
+  if (r.meta.changes !== 1) return page(c, 'Not found', banner('err', 'Draft not found, or it was already sent in for review.'), 404);
   return c.redirect('/account', 303);
 });

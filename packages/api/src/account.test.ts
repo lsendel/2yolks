@@ -89,10 +89,11 @@ describe('email-code auth', () => {
     const rl = { limit: async () => ({ success: false }) };
     expect((await post('/account/code', { email: 'q@example.com' }, { e: { RL_AUTH: rl } })).status).toBe(429);
   });
-  it('removes the code row when the email send fails', async () => {
+  it('invalidates the code on send failure and does not refund the mail budget', async () => {
     globalThis.fetch = (async () => new Response('no', { status: 500 })) as typeof fetch;
     expect((await post('/account/code', { email: 'a@example.com' })).status).toBe(503);
-    expect((await DB.prepare('SELECT count(*) AS n FROM auth_codes').first<{ n: number }>())!.n).toBe(0);
+    expect((await DB.prepare('SELECT used FROM auth_codes').first<{ used: number }>())!.used).toBe(1);
+    expect((await DB.prepare('SELECT count(*) AS n FROM mail_log').first<{ n: number }>())!.n).toBe(1);
   });
   it('blocks cross-origin and origin-less POSTs (CSRF)', async () => {
     expect((await post('/account/code', { email: 'a@example.com' }, { origin: 'https://evil.example' })).status).toBe(403);
@@ -105,6 +106,76 @@ describe('email-code auth', () => {
     expect((await get('/account/recipes/new')).status).toBe(303);
     expect((await post('/account/recipes/save', recipeForm())).status).toBe(303);
     expect((await post('/account/recipes/import', { url: 'https://example.com' })).status).toBe(303);
+  });
+});
+
+describe('atomicity under concurrency', () => {
+  it('10 concurrent uses of one code create exactly one session', async () => {
+    await post('/account/code', { email: 'race@example.com' });
+    const code = lastCode();
+    const rs = await Promise.all(Array.from({ length: 10 }, () => post('/account/verify', { email: 'race@example.com', code })));
+    expect(rs.filter((r) => r.status === 303)).toHaveLength(1);
+    expect((await DB.prepare('SELECT count(*) AS n FROM sessions').first<{ n: number }>())!.n).toBe(1);
+  });
+  it('concurrent wrong guesses are capped at 5 and burn the code', async () => {
+    await post('/account/code', { email: 'g@example.com' });
+    const good = lastCode();
+    const wrong = good === '000000' ? '111111' : '000000';
+    await Promise.all(Array.from({ length: 12 }, () => post('/account/verify', { email: 'g@example.com', code: wrong })));
+    expect((await DB.prepare('SELECT attempts FROM auth_codes').first<{ attempts: number }>())!.attempts).toBe(5);
+    expect((await post('/account/verify', { email: 'g@example.com', code: good })).status).toBe(400);
+  });
+  it('10 concurrent code requests for one email send at most 3', async () => {
+    await Promise.all(Array.from({ length: 10 }, () => post('/account/code', { email: 'burst@example.com' })));
+    expect(sent.length).toBe(3);
+  });
+  it('daily mail budget holds under concurrency and covers review notices', async () => {
+    const now = Date.now();
+    for (let i = 0; i < 79; i++) await DB.prepare("INSERT INTO mail_log (id,kind,created_at) VALUES (?,'code',?)").bind(`seed${i}`, now).run();
+    await Promise.all(Array.from({ length: 10 }, (_, i) => post('/account/code', { email: `u${i}@example.com` })));
+    expect(sent.length).toBe(1);
+    expect((await DB.prepare('SELECT count(*) AS n FROM mail_log').first<{ n: number }>())!.n).toBe(80);
+  });
+  it('review notices stop at the overall cap but the submit still flags the draft', async () => {
+    const cookie = await signIn();
+    const sv = await post('/account/recipes/save', recipeForm(), { cookie });
+    const id = /recipes\/([a-z0-9]+)\/edit/.exec(sv.headers.get('location')!)![1]!;
+    const now = Date.now();
+    for (let i = 0; i < 100; i++) await DB.prepare("INSERT OR IGNORE INTO mail_log (id,kind,created_at) VALUES (?,'code',?)").bind(`s${i}`, now).run();
+    const before = sent.length;
+    expect((await post(`/account/recipes/${id}/submit`, {}, { cookie })).status).toBe(200);
+    expect(sent.length).toBe(before);
+    expect((await DB.prepare('SELECT submitted_at FROM recipes').first<{ submitted_at: string | null }>())!.submitted_at).toBeTruthy();
+  });
+  it('a failing save leaves the existing locale untouched (no delete-then-insert window)', async () => {
+    const cookie = await signIn();
+    const sv = await post('/account/recipes/save', recipeForm(), { cookie });
+    const id = /recipes\/([a-z0-9]+)\/edit/.exec(sv.headers.get('location')!)![1]!;
+    await DB.exec("CREATE TRIGGER boom BEFORE UPDATE ON recipe_locales BEGIN SELECT RAISE(ABORT, 'boom'); END");
+    const res = await post('/account/recipes/save', { ...recipeForm({ title: 'Changed' }), id }, { cookie });
+    expect(res.status).toBe(500);
+    const row = await DB.prepare('SELECT count(*) AS n, min(title) AS t FROM recipe_locales').first<{ n: number; t: string }>();
+    expect(row!.n).toBe(1); expect(row!.t).toBe('Abuela Soup');
+    const src = await DB.prepare('SELECT name FROM sources').first<{ name: string }>();
+    expect(src!.name).toBe('Ana');
+  });
+  it('concurrent save and submit: a saved edit after submit is refused, content stays as submitted', async () => {
+    const cookie = await signIn();
+    const sv = await post('/account/recipes/save', recipeForm(), { cookie });
+    const id = /recipes\/([a-z0-9]+)\/edit/.exec(sv.headers.get('location')!)![1]!;
+    const [a, b] = await Promise.all([
+      post(`/account/recipes/${id}/submit`, {}, { cookie }),
+      post('/account/recipes/save', { ...recipeForm({ title: 'Edited late' }), id }, { cookie }),
+    ]);
+    const sub = await DB.prepare('SELECT submitted_at FROM recipes').first<{ submitted_at: string | null }>();
+    expect(sub!.submitted_at).toBeTruthy();
+    const t = (await DB.prepare('SELECT title FROM recipe_locales').first<{ title: string }>())!.title;
+    // Either the edit landed before the submit (200/303 and title changed) or it was refused (409) and title is unchanged.
+    expect(b.status === 409 ? t === 'Abuela Soup' : t === 'Edited late').toBe(true);
+    const late = await post('/account/recipes/save', { ...recipeForm({ title: 'Too late' }), id }, { cookie });
+    expect(late.status).toBe(409);
+    expect((await DB.prepare('SELECT title FROM recipe_locales').first<{ title: string }>())!.title).toBe(t);
+    expect(a.status).toBe(200);
   });
 });
 
@@ -171,12 +242,15 @@ describe('private drafts', () => {
     const row = await DB.prepare('SELECT l.status AS st, s.cleared_at AS c FROM recipe_locales l JOIN recipes r ON r.id=l.recipe_id JOIN sources s ON s.id=r.source_id').first<Record<string, unknown>>();
     expect(row!['st']).toBe('draft'); expect(row!['c']).toBeNull();
   });
-  it('deletes a draft and its rows', async () => {
+  it('removing a draft hides it but deletes nothing', async () => {
     const cookie = await signIn();
     const res = await post('/account/recipes/save', recipeForm(), { cookie });
     const id = /recipes\/([a-z0-9]+)\/edit/.exec(res.headers.get('location')!)![1]!;
     expect((await post(`/account/recipes/${id}/delete`, {}, { cookie })).status).toBe(303);
-    for (const t of ['recipes', 'recipe_locales', 'sources']) expect((await DB.prepare(`SELECT count(*) AS n FROM ${t}`).first<{ n: number }>())!.n).toBe(0);
+    for (const t of ['recipes', 'recipe_locales', 'sources']) expect((await DB.prepare(`SELECT count(*) AS n FROM ${t}`).first<{ n: number }>())!.n).toBe(1);
+    expect((await DB.prepare('SELECT status FROM recipe_locales').first<{ status: string }>())!.status).toBe('rejected');
+    expect(await (await get('/account', cookie)).text()).not.toContain('Abuela');
+    expect((await get(`/account/recipes/${id}/edit`, cookie)).status).toBe(404);
   });
   it('does not touch recipes without an owner (existing/MCP rows)', async () => {
     await DB.prepare("INSERT INTO sources (id,name,url,license,cleared_at) VALUES ('s1','n','https://x.example','CC0','2026-01-01')").run();
@@ -217,6 +291,145 @@ describe('review queue handoff', () => {
     const txt = await res.text();
     expect(txt).toContain(id);
     expect(txt).toContain('submitted_at');
+  });
+});
+
+describe('old codes and failed saves (reviewer repros, inverted)', () => {
+  it('an older code is dead once a newer one is issued or used', async () => {
+    await post('/account/code', { email: 'old@example.com' }); const first = lastCode();
+    await new Promise((r) => setTimeout(r, 5));
+    await post('/account/code', { email: 'old@example.com' }); const second = lastCode();
+    expect((await post('/account/verify', { email: 'old@example.com', code: first })).status).toBe(400);
+    expect((await post('/account/verify', { email: 'old@example.com', code: second })).status).toBe(303);
+    expect((await post('/account/verify', { email: 'old@example.com', code: first })).status).toBe(400);
+  });
+  it('replay across 10 concurrent uses for an existing account yields one session', async () => {
+    await signIn('a@example.com');
+    await post('/account/code', { email: 'a@example.com' });
+    const code = lastCode();
+    const rs = await Promise.all(Array.from({ length: 10 }, () => post('/account/verify', { email: 'a@example.com', code })));
+    expect(rs.filter((r) => r.status === 303)).toHaveLength(1);
+  });
+});
+
+describe('private user drafts are invisible to MCP keys', () => {
+  const ADMIN = 'test-admin-key-0000000000', VIEW = 'test-read-key-00000000000', EDIT = 'test-editor-key-000000000';
+  const mcp = async (token: string, name: string, args: unknown) => (await app.request(`${ORIGIN}/api/admin/mcp`, {
+    method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }),
+  }, env({ ADMIN_MCP_API_KEY: ADMIN, MCP_READ_KEY: VIEW, MCP_NAMED_KEYS: JSON.stringify([{ name: 'ed', key: EDIT, role: 'editor' }]) }))).text();
+  async function seed(submit: boolean) {
+    const cookie = await signIn(`p${Math.random().toString(36).slice(2, 7)}@example.com`);
+    const sv = await post('/account/recipes/save', recipeForm({ title: 'Secret Stew' }), { cookie });
+    const id = /recipes\/([a-z0-9]+)\/edit/.exec(sv.headers.get('location')!)![1]!;
+    if (submit) await post(`/account/recipes/${id}/submit`, {}, { cookie });
+    const sourceId = (await DB.prepare('SELECT source_id AS s FROM recipes WHERE id = ?').bind(id).first<{ s: string }>())!.s;
+    return { id, sourceId };
+  }
+  it('unsubmitted draft: hidden from viewer, editor AND admin on list/get/sources/writes', async () => {
+    const { id, sourceId } = await seed(false);
+    for (const key of [VIEW, EDIT, ADMIN]) {
+      expect(await mcp(key, 'recipes.list', {})).not.toContain('Secret Stew');
+      expect(await mcp(key, 'recipes.list', { status: 'draft' })).not.toContain(id);
+      expect(await mcp(key, 'sources.list', {})).not.toContain(sourceId);
+      expect(await mcp(key, 'recipes.get', { id })).toContain('not found');
+    }
+    expect(await mcp(EDIT, 'recipes.update_draft', { id, title: 'x' })).toContain('not found');
+    expect(await mcp(ADMIN, 'recipes.publish', { id })).toContain('not found');
+    expect(await mcp(ADMIN, 'sources.clear_rights', { id: sourceId })).toContain('not found');
+    expect(await mcp(ADMIN, 'sources.update', { id: sourceId, name: 'x' })).toContain('not found');
+    expect((await DB.prepare('SELECT title FROM recipe_locales').first<{ title: string }>())!.title).toBe('Secret Stew');
+  });
+  it('submitted draft: admin review queue only; viewer/editor still blind', async () => {
+    const { id } = await seed(true);
+    expect(await mcp(ADMIN, 'recipes.list', { submitted: true })).toContain(id);
+    expect(await mcp(ADMIN, 'recipes.get', { id })).toContain('Secret Stew');
+    for (const key of [VIEW, EDIT]) {
+      expect(await mcp(key, 'recipes.list', { submitted: true })).not.toContain(id);
+      expect(await mcp(key, 'recipes.get', { id })).toContain('not found');
+    }
+  });
+  it('slug-collision errors do not reveal a private recipe id', async () => {
+    const { id } = await seed(false);
+    const slug = (await DB.prepare('SELECT slug FROM recipe_locales').first<{ slug: string }>())!.slug;
+    const body = { source: { name: 'n', url: 'https://example.com', license: 'CC0' }, locales: [{ country: 'us', lang: 'en', title: 'Whatever', slug, ingredients: ['a'], steps: ['b'] }] };
+    expect(await mcp(EDIT, 'recipes.create_draft', body)).not.toContain(id);
+  });
+  it('once an admin publishes a user recipe it is normal public content again', async () => {
+    const { id, sourceId } = await seed(true);
+    await DB.prepare("UPDATE sources SET cleared_at = '2026-01-01' WHERE id = ?").bind(sourceId).run();
+    await DB.prepare("UPDATE recipe_locales SET status = 'published' WHERE recipe_id = ?").bind(id).run();
+    expect(await mcp(VIEW, 'recipes.list', {})).toContain(id);
+  });
+});
+
+describe('housekeeping', () => {
+  it('cleans expired sign-in artifacts and never touches recipes or users', async () => {
+    const cookie = await signIn();
+    await post('/account/recipes/save', recipeForm(), { cookie });
+    await DB.prepare('UPDATE auth_codes SET expires_at = 1').run();
+    await DB.prepare('UPDATE sessions SET expires_at = 1').run();
+    await DB.prepare('UPDATE mail_log SET created_at = 1').run();
+    await post('/account/code', { email: 'fresh@example.com' });
+    expect((await DB.prepare('SELECT count(*) AS n FROM sessions').first<{ n: number }>())!.n).toBe(0);
+    expect((await DB.prepare('SELECT count(*) AS n FROM auth_codes').first<{ n: number }>())!.n).toBe(1);
+    expect((await DB.prepare('SELECT count(*) AS n FROM recipes').first<{ n: number }>())!.n).toBe(1);
+    expect((await DB.prepare('SELECT count(*) AS n FROM users').first<{ n: number }>())!.n).toBe(1);
+  });
+});
+
+describe('limits and credit', () => {
+  it('concurrent creates cannot exceed the 50-draft cap, and nothing partial is left', async () => {
+    const cookie = await signIn();
+    const uid = (await DB.prepare('SELECT id FROM users').first<{ id: string }>())!.id;
+    for (let i = 0; i < 48; i++) {
+      await DB.prepare("INSERT INTO sources (id,name,url,license) VALUES (?, 'n','https://x.example','user-original')").bind(`ss${i}`).run();
+      await DB.prepare("INSERT INTO recipes (id,source_id,created_at,owner_user_id) VALUES (?,?,'t',?)").bind(`rr${i}`, `ss${i}`, uid).run();
+    }
+    const rs = await Promise.all(Array.from({ length: 6 }, (_, i) => post('/account/recipes/save', recipeForm({ title: `Race ${i}` }), { cookie })));
+    expect(rs.filter((r) => r.status === 303)).toHaveLength(2);
+    expect(rs.filter((r) => r.status === 400)).toHaveLength(4);
+    expect((await DB.prepare('SELECT count(*) AS n FROM recipes').first<{ n: number }>())!.n).toBe(50);
+    expect((await DB.prepare("SELECT count(*) AS n FROM sources WHERE id LIKE 'src-%'").first<{ n: number }>())!.n).toBe(2);
+    expect((await DB.prepare('SELECT count(*) AS n FROM recipe_locales').first<{ n: number }>())!.n).toBe(2);
+  });
+  it('keeps each recipe\'s own author credit when another recipe uses a different name', async () => {
+    const cookie = await signIn();
+    const a = await post('/account/recipes/save', recipeForm({ title: 'First', display_name: 'Ana' }), { cookie });
+    const idA = /recipes\/([a-z0-9]+)\/edit/.exec(a.headers.get('location')!)![1]!;
+    await post('/account/recipes/save', recipeForm({ title: 'Second', display_name: 'Someone Else' }), { cookie });
+    const t = await (await get(`/account/recipes/${idA}/edit`, cookie)).text();
+    expect(t).toContain('value="Ana"'); expect(t).not.toContain('value="Someone Else"');
+  });
+  it('rejects oversized bodies with 413 before parsing', async () => {
+    const cookie = await signIn();
+    const res = await post('/account/recipes/paste', { text: 'x'.repeat(300_000) }, { cookie });
+    expect(res.status).toBe(413);
+    const chunked = await app.request(`${ORIGIN}/account/code`, { method: 'POST', headers: { origin: ORIGIN, 'content-type': 'application/x-www-form-urlencoded' }, body: 'email=' + 'a'.repeat(400_000) }, env());
+    expect(chunked.status).toBe(413);
+  });
+});
+
+describe('odd titles', () => {
+  it('emoji-only and very long titles save with unique slugs', async () => {
+    const cookie = await signIn();
+    const a = await post('/account/recipes/save', recipeForm({ title: '🍳🍳🍳' }), { cookie });
+    expect(a.status).toBe(303);
+    const long = 'a-'.repeat(65) + 'x';
+    const b = await post('/account/recipes/save', recipeForm({ title: long }), { cookie });
+    const c2 = await post('/account/recipes/save', recipeForm({ title: long }), { cookie });
+    expect([b.status, c2.status]).toEqual([303, 303]);
+    const rows = await DB.prepare('SELECT slug FROM recipe_locales').all<{ slug: string }>();
+    expect(rows.results).toHaveLength(3);
+    expect(new Set(rows.results.map((r) => r.slug)).size).toBe(3);
+    for (const r of rows.results) expect(r.slug).toMatch(/^[a-z0-9]+(-[a-z0-9]+)*$/);
+  });
+});
+
+describe('privacy page', () => {
+  it('describes the account cookie and Resend instead of claiming no cookies', async () => {
+    const t = await (await get('/privacy')).text();
+    expect(t).toContain('__Host-2y_sid'); expect(t).toContain('Resend'); expect(t).not.toContain('2yolks sets no cookies');
   });
 });
 

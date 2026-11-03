@@ -29,6 +29,7 @@ export const recipes = sqliteTable('recipes', {
   ownerUserId: text('owner_user_id'),
   submittedAt: text('submitted_at'),
   attestedAt: text('attested_at'),
+  authorName: text('author_name'),
 });
 
 export const users = sqliteTable('users', {

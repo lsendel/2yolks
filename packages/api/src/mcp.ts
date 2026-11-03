@@ -1015,7 +1015,36 @@ function limitArg(v: unknown): number {
 type CallCtx = { db: D1Database; role: Role; actor: string; declaredCaller?: string | null; dryRun?: boolean; translationReviewEnabled?: boolean; images?: R2Bucket };
 type CallResult = { status: number; data: unknown };
 
-async function callRecipesList(db: D1Database, args: Record<string, unknown>): Promise<CallResult> {
+
+// --- Private user drafts ------------------------------------------------------
+// Recipes created through public accounts (recipes.owner_user_id) are private
+// until an admin publishes them. Non-admin keys (viewer/editor) never see them.
+// Admin sees only SUBMITTED ones (the review queue), never unsubmitted drafts.
+// Same rule everywhere: a recipe is private when it has an owner, none of its
+// locales is published, and (role is not admin OR it was not submitted).
+function privateRecipeSql(alias: string, role: Role): string {
+  return `(${alias}.owner_user_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM recipe_locales pq WHERE pq.recipe_id = ${alias}.id AND pq.status = 'published') AND (${role === 'admin' ? '0' : '1'} = 1 OR ${alias}.submitted_at IS NULL))`;
+}
+
+const RECIPE_ID_TOOLS = new Set(['recipes.get', 'recipes.update_draft', 'recipes.add_locale', 'translations.mark_reviewed', 'recipes.publish', 'recipes.unpublish', 'recipes.set_image']);
+const SOURCE_ID_TOOLS = new Set(['sources.update', 'sources.clear_rights']);
+
+/** True when the call targets a private user recipe/source the caller may not touch. Answered as plain not-found. */
+async function targetsPrivateUserDraft(ctx: CallCtx, name: string, args: Record<string, unknown>): Promise<boolean> {
+  const id = str(args['id'], 64);
+  if (!id) return false;
+  if (RECIPE_ID_TOOLS.has(name)) {
+    const row = await ctx.db.prepare(`SELECT 1 AS x FROM recipes r WHERE r.id = ? AND ${privateRecipeSql('r', ctx.role)}`).bind(id).first();
+    return !!row;
+  }
+  if (SOURCE_ID_TOOLS.has(name)) {
+    const row = await ctx.db.prepare(`SELECT 1 AS x FROM recipes r WHERE r.source_id = ? AND ${privateRecipeSql('r', ctx.role)} LIMIT 1`).bind(id).first();
+    return !!row;
+  }
+  return false;
+}
+
+async function callRecipesList(db: D1Database, role: Role, args: Record<string, unknown>): Promise<CallResult> {
   const conds: string[] = [];
   const params: unknown[] = [];
   for (const col of ['country', 'lang', 'status'] as const) {
@@ -1026,6 +1055,7 @@ async function callRecipesList(db: D1Database, args: Record<string, unknown>): P
     }
   }
   if (args['submitted'] === true) conds.push('r.submitted_at IS NOT NULL');
+  conds.push(`NOT ${privateRecipeSql('r', role)}`);
   const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
   const rows = await db
     .prepare(
@@ -1048,6 +1078,7 @@ async function callRecipesGet(db: D1Database, args: Record<string, unknown>): Pr
   if (!id) return { status: 400, data: { error: 'id required' } };
   const recipe = await db.prepare('SELECT * FROM recipes WHERE id = ?').bind(id).first();
   if (!recipe) return { status: 404, data: { error: 'recipe not found', id } };
+  delete (recipe as Record<string, unknown>)['owner_user_id']; // account identity never leaves the account tables
   const locales = await db.prepare('SELECT * FROM recipe_locales WHERE recipe_id = ?').bind(id).all();
   const source = await db
     .prepare('SELECT * FROM sources WHERE id = ?')
@@ -1062,9 +1093,9 @@ async function callRecipesGet(db: D1Database, args: Record<string, unknown>): Pr
   return { status: 200, data: { recipe, locales: locales.results, source, images: images.results } };
 }
 
-async function callSourcesList(db: D1Database): Promise<CallResult> {
+async function callSourcesList(db: D1Database, role: Role): Promise<CallResult> {
   const rows = await db
-    .prepare('SELECT id, name, url, license, cleared_at, notes FROM sources ORDER BY id')
+    .prepare(`SELECT id, name, url, license, cleared_at, notes FROM sources s WHERE NOT EXISTS (SELECT 1 FROM recipes r WHERE r.source_id = s.id AND ${privateRecipeSql('r', role)}) ORDER BY id`)
     .all();
   return { status: 200, data: { sources: rows.results } };
 }
@@ -1170,7 +1201,7 @@ async function callRecipesCreateDraft(ctx: CallCtx, args: Record<string, unknown
       const first = sub.locales[0];
       const existing = first
         ? await ctx.db
-            .prepare('SELECT recipe_id FROM recipe_locales WHERE country = ? AND lang = ? AND slug = ?')
+            .prepare(`SELECT rl.recipe_id FROM recipe_locales rl JOIN recipes r ON r.id = rl.recipe_id WHERE rl.country = ? AND rl.lang = ? AND rl.slug = ? AND NOT ${privateRecipeSql('r', ctx.role)}`)
             .bind(first.country, first.lang, first.slug ?? slugify(first.title))
             .first<{ recipe_id: string }>()
         : null;
@@ -1856,6 +1887,7 @@ async function callTool(ctx: CallCtx, name: string, args: Record<string, unknown
   // only: a client that saw a transport timeout cannot tell committed from
   // uncommitted and must re-check state (recipes.get/list) before retrying.
   try {
+    if (await targetsPrivateUserDraft(ctx, name, args)) return { status: 404, data: { error: 'not found' } };
     return await dispatch(ctx, name, args);
   } catch {
     return {
@@ -1871,11 +1903,11 @@ async function callTool(ctx: CallCtx, name: string, args: Record<string, unknown
 async function dispatch(ctx: CallCtx, name: string, args: Record<string, unknown>): Promise<CallResult> {
   switch (name) {
     case 'recipes.list':
-      return callRecipesList(ctx.db, args);
+      return callRecipesList(ctx.db, ctx.role, args);
     case 'recipes.get':
       return callRecipesGet(ctx.db, args);
     case 'sources.list':
-      return callSourcesList(ctx.db);
+      return callSourcesList(ctx.db, ctx.role);
     case 'recipes.create_draft':
       return callRecipesCreateDraft(ctx, args);
     case 'recipes.update_draft':
