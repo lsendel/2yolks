@@ -277,6 +277,41 @@ describe('recipe_slug_aliases frozen map', () => {
     });
     expect(blocked.isError).toBe(true);
     expect((blocked.data as { error: string }).error).toMatch(/reserved by an earlier public URL/);
+    // add_locale on a different recipe also cannot claim the frozen slug in
+    // the same (country, lang) URL space. Recipe 2 is created with an mx
+    // original so that a us/en add_locale is a fresh locale on that recipe.
+    const created2 = await toolCall(ADMIN_KEY, 'recipes.create_draft', {
+      ...RECIPE,
+      originCountry: 'mx',
+      locales: [
+        {
+          country: 'mx',
+          lang: 'es',
+          title: 'Panqueques de Prueba',
+          slug: 'panqueques-de-prueba',
+          ingredients: ['2 tazas de harina', '2 huevos', '1 taza de leche', '1 pizca de sal'],
+          steps: ['Mezclar.', 'Cocinar 2 minutos por lado.', 'Servir.'],
+        },
+      ],
+      confirmed: true,
+    });
+    const id2 = (created2.data as { id: string }).id;
+    const blockedAdd = await toolCall(ADMIN_KEY, 'recipes.add_locale', {
+      id: id2,
+      confirmed: true,
+      locale: {
+        country: 'us',
+        lang: 'en',
+        title: 'Test Pancakes Two',
+        slug: 'froz-test',
+        ingredients: ['2 cups flour', '2 eggs', '1 cup milk', '1 tsp salt'],
+        steps: ['Mix.', 'Cook 2 minutes per side.', 'Serve.'],
+        translationOf: 'mx/es',
+        translationMethod: 'human',
+      },
+    });
+    expect(blockedAdd.isError).toBe(true);
+    expect((blockedAdd.data as { error: string }).error).toMatch(/reserved by an earlier public URL/);
     // The owning recipe is not blocked by its own frozen slug: it can
     // republish, and the alias stays reserved for it.
     const repub = await toolCall(ADMIN_KEY, 'recipes.publish', { id, confirmed: true });
