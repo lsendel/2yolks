@@ -1,7 +1,7 @@
 import { renderToString } from 'react-dom/server';
 
 /** Escape text interpolated into raw HTML head elements. */
-function escapeHtml(text: string): string {
+export function escapeHtml(text: string): string {
   return text
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -309,4 +309,33 @@ export function renderRecipe(
     // Synthetic/dev-only sources must never be indexed as real recipes.
     noindex: page.source.license === 'internal-demo',
   });
+}
+
+const ACCOUNT_CSS = `
+.acct { max-width: 44rem; margin: 2rem auto; padding: 1.75rem 1.5rem 2rem; border-radius: 1.1rem; }
+.acct h1 { font-family: var(--font-display); margin: 0 0 0.5rem; }
+.acct .lead { color: var(--muted); margin: 0 0 1.5rem; }
+.acct form { display: grid; gap: 0.9rem; margin: 0 0 1.75rem; }
+.acct label { display: grid; gap: 0.3rem; font-weight: 600; font-size: 0.95rem; }
+.acct label small, .acct .hint { font-weight: 400; color: var(--muted); }
+.acct input[type=text], .acct input[type=email], .acct input[type=url], .acct input[type=number], .acct select, .acct textarea { font: inherit; padding: 0.6rem 0.75rem; border: 1px solid var(--line); border-radius: 0.6rem; background: var(--card); color: var(--ink); width: 100%; box-sizing: border-box; }
+.acct textarea { min-height: 9rem; }
+.acct .row { display: grid; grid-template-columns: 1fr 1fr; gap: 0.9rem; }
+.acct .check { display: flex; gap: 0.6rem; align-items: flex-start; font-weight: 400; }
+.acct .check input { margin-top: 0.25rem; }
+.acct button, .acct .btn { background: var(--brand); color: #fff; border: 0; border-radius: 999px; padding: 0.7rem 1.4rem; font: inherit; font-weight: 700; cursor: pointer; text-decoration: none; justify-self: start; }
+.acct button.quiet { background: var(--card); color: var(--ink); border: 1px solid var(--line); }
+.acct .panel { border: 1px solid var(--line); background: var(--card); border-radius: 0.9rem; padding: 1rem 1.1rem; margin: 0 0 1.25rem; }
+.acct .panel h2 { margin: 0 0 0.5rem; font-size: 1.05rem; }
+.acct .err { border-left: 4px solid #b3261e; background: #fdecea; padding: 0.7rem 1rem; border-radius: 0.4rem; margin: 0 0 1rem; }
+.acct .ok { border-left: 4px solid #2e7d32; background: #edf7ee; padding: 0.7rem 1rem; border-radius: 0.4rem; margin: 0 0 1rem; }
+.acct ul.mine { list-style: none; padding: 0; margin: 0; }
+.acct ul.mine li { display: flex; justify-content: space-between; gap: 1rem; align-items: center; padding: 0.7rem 0; border-bottom: 1px solid var(--line); }
+.acct .badge { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+@media (max-width: 640px) { .acct .row { grid-template-columns: 1fr; } .acct { margin: 1rem 0.75rem; padding: 1.25rem 1rem 1.5rem; } }
+`;
+
+/** Private, never-indexed page in the After hours shell (account + submissions). */
+export function renderAccountPage(title: string, bodyHtml: string): string {
+  return shell(`<style>${ACCOUNT_CSS}</style><main id="main" class="acct">${bodyHtml}</main>`, { title: `${title} - 2yolks`, noindex: true });
 }

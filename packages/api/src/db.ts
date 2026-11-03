@@ -26,6 +26,17 @@ export const recipes = sqliteTable('recipes', {
   totalMinutes: integer('total_minutes'),
   baseServings: real('base_servings'),
   category: text('category'),
+  ownerUserId: text('owner_user_id'),
+  submittedAt: text('submitted_at'),
+  attestedAt: text('attested_at'),
+  authorName: text('author_name'),
+});
+
+export const users = sqliteTable('users', {
+  id: text('id').primaryKey(),
+  email: text('email').notNull().unique(),
+  displayName: text('display_name'),
+  createdAt: text('created_at').notNull(),
 });
 
 export const recipeImages = sqliteTable(
@@ -94,5 +105,5 @@ export const recipeSlugAliases = sqliteTable(
 );
 
 export function createDb(d1: D1Database) {
-  return drizzle(d1, { schema: { sources, recipes, recipeLocales, recipeImages, recipeSlugAliases } });
+  return drizzle(d1, { schema: { users, sources, recipes, recipeLocales, recipeImages, recipeSlugAliases } });
 }
