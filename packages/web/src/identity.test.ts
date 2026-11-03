@@ -1,5 +1,5 @@
 import {describe,it,expect} from 'vitest';
-import {renderHome,renderRecipe} from './server';
+import {renderHome,renderRecipe,isoDuration} from './server';
 import {discoveryRecipes} from './App';
 const rows=[{id:'r1',country:'us',lang:'en',slug:'a',title:'First recipe',category:'soups-stews',untested:true,totalMinutes:70},{id:'r1',country:'us',lang:'fr',slug:'b',title:'Première recette',category:'soups-stews',untested:true,totalMinutes:70},{id:'r2',country:'mx',lang:'en',slug:'c',title:'Second recipe',category:'dumplings',untested:true}];
 describe('After hours discovery',()=>{
@@ -19,5 +19,45 @@ describe('After hours discovery',()=>{
  it('shows known total only, never invents prep/cook or zero values',()=>{
   const html=renderHome({recipes:rows,locales:[]});
   expect(html).toContain('1 h 10 min');expect(html).not.toContain('>0 min<');
+ });
+ it('includes rich homepage SEO metadata, WebSite/ItemList JSON-LD, and instant search without empty eyebrows',()=>{
+  const uncat=[...rows,{id:'r3',country:'us',lang:'en',slug:'d',title:'Uncategorized Dish',category:null,untested:true}];
+  const html=renderHome({recipes:uncat,locales:[],lang:'en',activeCategory:'dumplings'});
+  expect(html).toContain('<link rel="canonical" href="https://2yolks.com/" />');
+  expect(html).toContain('property="og:image" content="https://2yolks.com/img/identity/after-hours.webp"');
+  expect(html).toContain('name="twitter:card" content="summary_large_image"');
+  expect(html).toContain('"@type":"WebSite"');
+  expect(html).toContain('"@type":"ItemList"');
+  expect(html).toContain('data-recipe-search');
+  const fullHtml=renderHome({recipes:uncat,locales:[],lang:'en'});
+  expect(fullHtml).not.toContain('<span class="eyebrow"></span>');
+ });
+ it('formats ISO 8601 durations and renders rich Recipe + BreadcrumbList JSON-LD, viral share card, and related recipes',()=>{
+  expect(isoDuration(70)).toBe('PT1H10M');
+  expect(isoDuration(25)).toBe('PT25M');
+  expect(isoDuration(120)).toBe('PT2H');
+  expect(isoDuration(null)).toBeUndefined();
+  const html=renderRecipe(
+   {
+    recipe:{id:'9214e255',sourceId:'s1',originCountry:'us',imageKey:null,createdAt:'2026-11-01',prepMinutes:15,cookMinutes:90,restMinutes:10,totalMinutes:115,baseServings:8,category:'soups-stews'},
+    locale:{recipeId:'9214e255',country:'us',lang:'en',title:'Sweet Potato Casserole',slug:'sweet-potato-casserole',intro:'A rich holiday bake.',ingredientsJson:'["2 lb sweet potatoes"]',stepsJson:'["Bake 45 minutes."]',status:'published'},
+    source:{id:'s1',name:'2yolks',url:'/about',license:'CC0-1.0',clearedAt:'2026-11-01',notes:null},
+   },
+   [{hreflang:'en-US',href:'https://2yolks.com/us/recipes/sweet-potato-casserole'}],
+   {countryName:'United States',related:[{id:'r2',country:'mx',lang:'en',slug:'c',title:'Second recipe',category:'dumplings',totalMinutes:30}]},
+  );
+  expect(html).toContain('"prepTime":"PT15M"');
+  expect(html).toContain('"cookTime":"PT1H30M"');
+  expect(html).toContain('"totalTime":"PT1H55M"');
+  expect(html).toContain('"recipeYield":"8 servings"');
+  expect(html).toContain('"recipeCategory":"Soups \\u0026 stews"');
+  expect(html).toContain('"@type":"BreadcrumbList"');
+  expect(html).toContain('/img/pin/9214e255.en.png');
+  expect(html).toContain('reddit.com/submit');
+  expect(html).toContain('t.me/share');
+  expect(html).toContain('data-copy-ingredients');
+  expect(html).toContain('data-share-card');
+  expect(html).toContain('class="related-recipes"');
+  expect(html).toContain('Second recipe');
  });
 });

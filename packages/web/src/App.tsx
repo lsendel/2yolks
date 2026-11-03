@@ -173,14 +173,15 @@ export function discoveryRecipes(rows: RecipeRow[], lang: string): RecipeRow[] {
 }
 export function Home({ recipes, lang='en', activeCategory=null }: HomeProps) {
  const d=DISCOVERY[lang]??DISCOVERY.en!; const selected=discoveryRecipes(recipes,lang);
+ const t=uiStrings(lang);
  const categories=[...new Set(selected.map(r=>r.category).filter((x):x is string=>Boolean(categoryLabel(x,lang))))].sort();
  const filtered=activeCategory?selected.filter(r=>r.category===activeCategory):selected;
  const featured=selected.find(r=>r.id==='w1pozole')??selected[0];
  const href=(r:RecipeRow)=>recipePathFor(r.country,r.lang,r.slug);
  const time=(n:number)=>n>=60?`${Math.floor(n/60)} h${n%60?' '+n%60+' min':''}`:`${n} min`;
  return <main className="wide discovery" id="main"><section className="after-hero"><div className="after-copy"><span className="eyebrow">{d.eyebrow}</span><h1>{d.title}</h1><p>{d.intro}</p><a className="discovery-cta" href="#recipes">{d.cta}<span aria-hidden="true">↗</span></a></div><figure className="identity-art"><img src="/img/identity/after-hours.webp" alt="" width="900" height="900" fetchPriority="high"/><figcaption>{d.illustration}</figcaption></figure></section>
- {featured?<section className="featured-recipe"><div><span className="eyebrow">{categoryLabel(featured.category,lang)??d.all}</span><h2><a href={href(featured)}>{featured.title}<span aria-hidden="true">↗</span></a></h2></div><div className="featured-facts">{featured.totalMinutes!=null?<span className="icon-stat"><FactIcon/>{d.total} · {time(featured.totalMinutes)}</span>:null}{featured.untested?<span className="status-label">{uiStrings(lang).untestedBadge}</span>:null}</div></section>:null}
- <section id="recipes" className="discovery-index"><div className="index-heading"><h2>{d.index}</h2><p>{d.note}</p></div><nav className="cat-nav" aria-label={uiStrings(lang).categories}><a href={`/?lang=${lang}#recipes`} className="chip" aria-current={!activeCategory?'page':undefined}>{d.all}</a>{categories.map(cat=><a key={cat} className="chip" aria-current={cat===activeCategory?'page':undefined} href={`/?lang=${lang}&cat=${cat}#recipes`}>{categoryLabel(cat,lang)}</a>)}</nav><ul className="discovery-list">{filtered.map((r,i)=><li key={r.id}><span className="recipe-number">{String(i+1).padStart(2,'0')}</span><div><span className="eyebrow">{categoryLabel(r.category,lang)}</span><h3><a href={href(r)}>{r.title}</a></h3>{r.untested?<span className="status-label">{uiStrings(lang).untestedBadge}</span>:null}{r.lang!==lang?<span className="fallback-language">{LANG_NAMES[r.lang]}</span>:null}</div><div className="row-end">{r.totalMinutes!=null?<span className="icon-stat"><FactIcon/>{time(r.totalMinutes)}</span>:null}<a href={href(r)} aria-label={r.title}>↗</a></div></li>)}</ul>{filtered.length===0?<p className="empty-note">{d.empty}</p>:null}</section></main>;
+ {featured?<section className="featured-recipe"><div><span className="eyebrow">{categoryLabel(featured.category,lang)??d.all}</span><h2><a href={href(featured)}>{featured.title}<span aria-hidden="true">↗</span></a></h2></div><div className="featured-facts">{featured.totalMinutes!=null?<span className="icon-stat"><FactIcon/>{d.total} · {time(featured.totalMinutes)}</span>:null}{featured.untested?<span className="status-label">{t.untestedBadge}</span>:null}</div></section>:null}
+ <section id="recipes" className="discovery-index"><div className="index-heading"><h2>{d.index}</h2><p>{d.note}</p></div><div className="discovery-toolbar"><nav className="cat-nav" aria-label={t.categories}><a href={`/?lang=${lang}#recipes`} className="chip" aria-current={!activeCategory?'page':undefined}>{d.all}</a>{categories.map(cat=><a key={cat} className="chip" aria-current={cat===activeCategory?'page':undefined} href={`/?lang=${lang}&cat=${cat}#recipes`}>{categoryLabel(cat,lang)}</a>)}</nav><div className="discovery-search-wrap"><input type="search" className="discovery-search" data-recipe-search placeholder={t.searchPlaceholder} aria-label={t.searchPlaceholder} autoComplete="off"/></div></div><ul className="discovery-list">{filtered.map((r,i)=>{const catText=categoryLabel(r.category,lang);return <li key={r.id} data-recipe-item data-search={`${r.title} ${catText??''}`.toLowerCase()}><span className="recipe-number">{String(i+1).padStart(2,'0')}</span><div>{catText?<span className="eyebrow">{catText}</span>:null}<h3><a className="stretched-row" href={href(r)}>{r.title}</a></h3><div className="row-badges">{r.untested?<span className="status-label">{t.untestedBadge}</span>:null}{r.lang!==lang?<span className="fallback-language">{LANG_NAMES[r.lang]}</span>:null}</div></div><div className="row-end">{r.totalMinutes!=null?<span className="icon-stat"><FactIcon/>{time(r.totalMinutes)}</span>:null}<a href={href(r)} aria-label={r.title} tabIndex={-1}>↗</a></div></li>;})}</ul><p className="empty-note" data-search-empty hidden>{d.empty}</p>{filtered.length===0?<p className="empty-note">{d.empty}</p>:null}</section></main>;
 }
 
 // ---------------------------------------------------------------------------
@@ -215,7 +216,9 @@ export function shareLinks(url: string, title: string, imageUrl?: string | null)
     { key: 'facebook', label: 'Facebook', href: `https://www.facebook.com/sharer/sharer.php?u=${u}` },
     { key: 'x', label: 'X', href: `https://x.com/intent/tweet?url=${u}&text=${t}` },
     { key: 'whatsapp', label: 'WhatsApp', href: `https://wa.me/?text=${t}%20${u}` },
-    { key: 'email', label: '', href: `mailto:?subject=${t}&body=${u}` },
+    { key: 'reddit', label: 'Reddit', href: `https://www.reddit.com/submit?url=${u}&title=${t}` },
+    { key: 'telegram', label: 'Telegram', href: `https://t.me/share/url?url=${u}&text=${t}` },
+    { key: 'email', label: '', href: `mailto:?subject=${t}&body=${t}%0A%0A${u}` },
   ];
   if (imageUrl) {
     links.splice(1, 0, { key: 'pinterest', label: 'Pinterest', href: `https://www.pinterest.com/pin/create/button/?url=${u}&media=${encodeURIComponent(imageUrl)}&description=${t}` });
@@ -229,12 +232,14 @@ export function RecipeView({
   canonicalUrl,
   imageUrl,
   countryName,
+  related = [],
 }: {
   page: RecipePage;
   alternates?: { hreflang: string; href: string }[];
   canonicalUrl?: string;
   imageUrl?: string | null;
   countryName?: string;
+  related?: RecipeRow[];
 }) {
   const t = uiStrings(page.locale.lang);
   const entries = JSON.parse(page.locale.ingredientsJson) as IngredientEntry[];
@@ -258,15 +263,25 @@ export function RecipeView({
   if (r.cookMinutes != null) timeItems.push({ label: t.timeCook, value: fmtMin(r.cookMinutes) });
   if (r.restMinutes != null) timeItems.push({ label: t.timeRest, value: fmtMin(r.restMinutes) });
   if (r.totalMinutes != null) timeItems.push({ label: t.timeTotal, value: fmtMin(r.totalMinutes) });
+  const crumbItems: { href?: string; label: string }[] = [
+    { href: `/?lang=${lang}`, label: t.home },
+  ];
+  if (cat && page.recipe.category) {
+    crumbItems.push({ href: `/?lang=${lang}&cat=${page.recipe.category}#recipes`, label: cat });
+  }
+  crumbItems.push({ label: page.locale.title });
   return (
     <main id="main" className="recipe-page">
-      <Crumbs
-        items={[
-          { href: `/?lang=${lang}`, label: t.home },
-          { label: page.locale.title },
-        ]}
-      />
-      <h1>{page.locale.title}</h1>
+      <Crumbs items={crumbItems} />
+      <header className="recipe-header">
+        {cat && page.recipe.category ? (
+          <a className="recipe-eyebrow" href={`/?lang=${lang}&cat=${page.recipe.category}#recipes`}>
+            {cat}
+          </a>
+        ) : null}
+        <h1>{page.locale.title}</h1>
+        {page.locale.intro ? <p className="recipe-intro">{page.locale.intro}</p> : null}
+      </header>
       {page.heroImage ? (
         <figure className="hero-image">
           <img src={page.heroImage.url.replace(/^https?:\/\/[^/]+/, '')} alt={page.locale.title} loading="lazy" />
@@ -282,17 +297,22 @@ export function RecipeView({
           ))}
         </p>
       ) : null}
-      {isUntested(page.recipe) ? (
-        <p className="untested" role="note">
-          <span className="badge">{t.untestedBadge}</span> {t.untestedNote}{' '}
-          <a href="/how-we-test">{t.howWeTest}</a>
-        </p>
-      ) : null}
-      {page.locale.translationOf && page.locale.translationMethod === 'machine' && page.locale.translationReviewerKind !== 'human' ? (
-        <p className="machine-note" role="note">
-          <span className="badge">{page.locale.lang === 'es' ? 'Traducci\u00f3n autom\u00e1tica' : page.locale.lang === 'fr' ? 'Traduction automatique' : 'Machine-translated'}</span> {t.machineNote}
-        </p>
-      ) : null}
+      <p className="recipe-actions">
+        <a href="#recipe" className="jump">
+          {t.jumpToRecipe} &darr;
+        </a>
+        {canonicalUrl ? (
+          <a href="#share-bar" className="share-jump">
+            {t.share} &nearr;
+          </a>
+        ) : null}
+        <button type="button" className="print-open" data-print-open>
+          {t.print}
+        </button>
+        <button type="button" className="cook-open" data-cook-open>
+          {t.cookMode}
+        </button>
+      </p>
       {others.length > 0 || cat ? (
         <p className="langs">
           {cat ? (
@@ -307,71 +327,88 @@ export function RecipeView({
           ))}
         </p>
       ) : null}
-      <p className="recipe-actions">
-        <a href="#recipe" className="jump">
-          {t.jumpToRecipe} &darr;
-        </a>
-        <button type="button" className="print-open" data-print-open>
-          {t.print}
-        </button>
-        <button type="button" className="cook-open" data-cook-open>
-          {t.cookMode}
-        </button>
-      </p>
-      {page.locale.intro ? <p className="recipe-intro">{page.locale.intro}</p> : null}
-      <section id="recipe">
-        <h2>{t.ingredients}</h2>
-        {hasQty ? (
-          <div className="scaler" role="group" aria-label={t.servings}>
-            <span className="scaler-label">{t.servings}:</span>
-            {SCALE_MULTIPLIERS.map((m) => (
-              <button
-                key={m}
-                type="button"
-                className={m === 1 ? 'scaler-btn active' : 'scaler-btn'}
-                data-mult={m}
-              >
-                {m === 0.5 ? '\u00bd' : String(m)}{'\u00d7'}
+      {isUntested(page.recipe) ? (
+        <p className="untested" role="note">
+          <span className="badge">{t.untestedBadge}</span> {t.untestedNote}{' '}
+          <a href="/how-we-test">{t.howWeTest}</a>
+        </p>
+      ) : null}
+      {page.locale.translationOf && page.locale.translationMethod === 'machine' && page.locale.translationReviewerKind !== 'human' ? (
+        <p className="machine-note" role="note">
+          <span className="badge">{page.locale.lang === 'es' ? 'Traducci\u00f3n autom\u00e1tica' : page.locale.lang === 'fr' ? 'Traduction automatique' : 'Machine-translated'}</span> {t.machineNote}
+        </p>
+      ) : null}
+      <section id="recipe" className="recipe-body-grid">
+        <div className="recipe-col ingredients-col">
+          <div className="section-head">
+            <h2>{t.ingredients}</h2>
+            <div className="ing-tools">
+              <span className="ing-progress" data-ing-progress hidden />
+              <button type="button" className="copy-ing-btn" data-copy-ingredients data-copied={t.ingredientsCopied}>
+                {t.copyIngredients}
               </button>
+            </div>
+          </div>
+          {hasQty ? (
+            <div className="scaler" role="group" aria-label={t.servings}>
+              <span className="scaler-label">{t.servings}:</span>
+              {SCALE_MULTIPLIERS.map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  className={m === 1 ? 'scaler-btn active' : 'scaler-btn'}
+                  data-mult={m}
+                >
+                  {m === 0.5 ? '\u00bd' : String(m)}{'\u00d7'}
+                </button>
+              ))}
+            </div>
+          ) : null}
+          {unitsMatter ? (
+            <div className="unit-toggle" role="group" aria-label={t.units} data-default-units={sys}>
+              <span className="scaler-label">{t.units}:</span>
+              <button type="button" data-units="metric">{t.unitsMetric}</button>
+              <button type="button" data-units="us">{t.unitsUs}</button>
+            </div>
+          ) : null}
+          <ul className="ingredients">
+            {entries.map((e, i) => (
+              <li key={i}>
+                <label>
+                  <input type="checkbox" />
+                  <span className="line" data-v={JSON.stringify(ingredientVariants(e, lang, mults))}>
+                    {renderIngredient(e, lang, sys, 1)}
+                  </span>
+                </label>
+              </li>
             ))}
-          </div>
-        ) : null}
-        {unitsMatter ? (
-          <div className="unit-toggle" role="group" aria-label={t.units} data-default-units={sys}>
-            <span className="scaler-label">{t.units}:</span>
-            <button type="button" data-units="metric">{t.unitsMetric}</button>
-            <button type="button" data-units="us">{t.unitsUs}</button>
-          </div>
-        ) : null}
-        <ul className="ingredients">
-          {entries.map((e, i) => (
-            <li key={i}>
-              <label>
-                <input type="checkbox" />
-                <span className="line" data-v={JSON.stringify(ingredientVariants(e, lang, mults))}>
-                  {renderIngredient(e, lang, sys, 1)}
-                </span>
-              </label>
-            </li>
-          ))}
-        </ul>
-        <h2>{t.steps}</h2>
-        <ol className="steps">
-          {steps.map((st, i) => (
-            <li key={i} data-v={hasStepTokens([st]) ? JSON.stringify(stepVariants(st, entries, lang, mults)) : undefined}>
-              {renderStep(st, entries, lang, sys, 1)}
-            </li>
-          ))}
-        </ol>
+          </ul>
+        </div>
+        <div className="recipe-col steps-col">
+          <h2>{t.steps}</h2>
+          <ol className="steps">
+            {steps.map((st, i) => (
+              <li key={i} id={`step-${i + 1}`} data-v={hasStepTokens([st]) ? JSON.stringify(stepVariants(st, entries, lang, mults)) : undefined}>
+                {renderStep(st, entries, lang, sys, 1)}
+              </li>
+            ))}
+          </ol>
+        </div>
       </section>
       {canonicalUrl ? (
-        <nav className="share" aria-label={t.share} data-share-url={canonicalUrl} data-share-title={page.locale.title}>
-          <span className="share-label">{t.share}:</span>
-          <button type="button" className="share-native" data-share-native hidden>{t.share}</button>
-          <button type="button" className="share-copy" data-share-copy data-copied={t.linkCopied}>{t.copyLink}</button>
-          {shareLinks(canonicalUrl, page.locale.title, imageUrl).map((l) => (
-            <a key={l.key} href={l.href} target="_blank" rel="noopener noreferrer">{l.label || t.shareEmail}</a>
-          ))}
+        <nav id="share-bar" className="share" aria-label={t.share} data-share-url={canonicalUrl} data-share-title={page.locale.title}>
+          <div className="share-head">
+            <span className="share-label">{t.share} · <strong>{t.shareHeading}</strong></span>
+            <span className="share-sub">{t.shareSubhead}</span>
+          </div>
+          <div className="share-buttons">
+            <button type="button" className="share-native" data-share-native hidden>{t.share}</button>
+            <button type="button" className="share-copy" data-share-copy data-copied={t.linkCopied}>{t.copyLink}</button>
+            <button type="button" className="share-card-btn" data-share-card data-copied={t.recipeCardCopied}>{t.copyRecipeCard}</button>
+            {shareLinks(canonicalUrl, page.locale.title, imageUrl).map((l) => (
+              <a key={l.key} className={`share-link share-${l.key}`} href={l.href} target="_blank" rel="noopener noreferrer">{l.label || t.shareEmail}</a>
+            ))}
+          </div>
         </nav>
       ) : null}
       <p className="recipe-source">
@@ -382,6 +419,35 @@ export function RecipeView({
           <span>{page.source.name}</span>
         )}
       </p>
+      {related.length > 0 ? (
+        <section className="related-recipes" aria-label={t.moreToCook}>
+          <h2>{t.moreToCook}</h2>
+          <ul className="related-grid">
+            {related.map((rel) => {
+              const relCat = categoryLabel(rel.category, lang);
+              return (
+                <li key={rel.id} className="related-card">
+                  {relCat ? <span className="eyebrow">{relCat}</span> : null}
+                  <h3>
+                    <a className="stretched" href={recipePathFor(rel.country, rel.lang, rel.slug)}>
+                      {rel.title}
+                    </a>
+                  </h3>
+                  <div className="related-meta">
+                    {rel.totalMinutes != null ? (
+                      <span className="icon-stat">
+                        <FactIcon />
+                        {fmtMin(rel.totalMinutes)}
+                      </span>
+                    ) : null}
+                    <span className="related-arrow" aria-hidden="true">↗</span>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      ) : null}
       <div className="cook-mode" data-cook-mode hidden>
         <div className="cook-inner">
           <div className="cook-top">
@@ -389,6 +455,9 @@ export function RecipeView({
             <button type="button" className="cook-close" data-cook-close>
               {t.exitCookMode}
             </button>
+          </div>
+          <div className="cook-bar" aria-hidden="true">
+            <div className="cook-bar-fill" data-cook-bar />
           </div>
           <p className="cook-step" data-cook-step />
           <div className="cook-timer" data-cook-timer hidden>

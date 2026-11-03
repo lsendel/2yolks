@@ -175,6 +175,15 @@ export interface UiStrings {
   timeRest: string;
   timeTotal: string;
   imageIllustrationNote: string;
+  copyIngredients: string;
+  ingredientsCopied: string;
+  copyRecipeCard: string;
+  recipeCardCopied: string;
+  shareHeading: string;
+  shareSubhead: string;
+  moreToCook: string;
+  searchPlaceholder: string;
+  checkedProgress: string;
 }
 
 const UI_STRINGS: Record<string, UiStrings> = {
@@ -196,6 +205,13 @@ const UI_STRINGS: Record<string, UiStrings> = {
     testingShort: 'How we test', emptyCategory: 'No recipes in this category yet.',
     timePrep: 'Prep', timeCook: 'Cook', timeRest: 'Rest', timeTotal: 'Total',
     imageIllustrationNote: 'Illustration generated for this recipe - not a photo of the cooked dish.',
+    copyIngredients: 'Copy list', ingredientsCopied: 'List copied',
+    copyRecipeCard: 'Copy recipe card', recipeCardCopied: 'Card copied',
+    shareHeading: 'Share this recipe',
+    shareSubhead: 'No ads, no life story — send a clean recipe link to a friend or group chat.',
+    moreToCook: 'More to cook',
+    searchPlaceholder: 'Filter recipes by dish or category…',
+    checkedProgress: 'checked',
   },
   es: {
     ingredients: 'Ingredientes', steps: 'Pasos', source: 'Fuente',
@@ -215,6 +231,13 @@ const UI_STRINGS: Record<string, UiStrings> = {
     testingShort: 'C\u00f3mo probamos', emptyCategory: 'A\u00fan no hay recetas en esta categor\u00eda.',
     timePrep: 'Preparaci\u00f3n', timeCook: 'Cocci\u00f3n', timeRest: 'Reposo', timeTotal: 'Total',
     imageIllustrationNote: 'Ilustraci\u00f3n generada para esta receta: no es una foto del plato cocinado.',
+    copyIngredients: 'Copiar lista', ingredientsCopied: 'Lista copiada',
+    copyRecipeCard: 'Copiar ficha', recipeCardCopied: 'Ficha copiada',
+    shareHeading: 'Comparte esta receta',
+    shareSubhead: 'Sin anuncios ni relleno — env\u00eda la receta directa a un amigo o chat grupal.',
+    moreToCook: 'M\u00e1s para cocinar',
+    searchPlaceholder: 'Filtrar recetas por plato o categor\u00eda…',
+    checkedProgress: 'marcados',
   },
   fr: {
     ingredients: 'Ingr\u00e9dients', steps: '\u00c9tapes', source: 'Source',
@@ -228,12 +251,19 @@ const UI_STRINGS: Record<string, UiStrings> = {
     tagline: 'Des recettes honn\u00eates, clairement \u00e9tiquet\u00e9es.',
     share: 'Partager', copyLink: 'Copier le lien', linkCopied: 'Lien copi\u00e9', shareEmail: 'E-mail',
     units: 'Unit\u00e9s', unitsMetric: 'M\u00e9trique', unitsUs: 'Am\u00e9ricaines (US)',
-    browseByCountry: 'Explorer par pays', allRecipes: 'Toutes les recettes',
+    browseByCountry: 'Explorer par pays', allRecipes: 'Toutes les recetas'.replace('recetas', 'recettes'),
     categories: 'Cat\u00e9gories', allCategories: 'Toutes', skipToContent: 'Aller au contenu',
     recipeWord: 'recette', recipesWord: 'recettes',
     testingShort: 'Comment nous testons', emptyCategory: 'Aucune recette dans cette cat\u00e9gorie pour le moment.',
     timePrep: 'Pr\u00e9paration', timeCook: 'Cuisson', timeRest: 'Repos', timeTotal: 'Total',
     imageIllustrationNote: 'Illustration g\u00e9n\u00e9r\u00e9e pour cette recette - ce n\u2019est pas une photo du plat cuisin\u00e9.',
+    copyIngredients: 'Copier la liste', ingredientsCopied: 'Liste copi\u00e9e',
+    copyRecipeCard: 'Copier la fiche', recipeCardCopied: 'Fiche copi\u00e9e',
+    shareHeading: 'Partager cette recette',
+    shareSubhead: 'Sans publicit\u00e9 ni d\u00e9tour — envoyez la recette directement \u00e0 un ami ou un groupe.',
+    moreToCook: '\u00c0 cuisiner aussi',
+    searchPlaceholder: 'Filtrer les recettes par plat ou cat\u00e9gorie…',
+    checkedProgress: 'coch\u00e9s',
   },
 };
 

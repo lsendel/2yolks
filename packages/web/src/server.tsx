@@ -26,23 +26,43 @@ import {
   NotFoundView,
   SiteHeader,
   SiteFooter,
+  discoveryRecipes,
   type HomeProps,
   type CountryHomeProps,
   type SiteNavItem,
+  type RecipeRow,
 } from './App';
-import { RECIPE_CLIENT_SCRIPT } from './clientScript';
+import { RECIPE_CLIENT_SCRIPT, DISCOVERY_CLIENT_SCRIPT } from './clientScript';
 import type { RecipePage, IngredientEntry } from '@2yolks/contracts';
-import { uiStrings, renderIngredient, renderStep, defaultUnitSystem, COUNTRY_INTROS, defaultLocale } from '@2yolks/contracts';
+import { uiStrings, renderIngredient, renderStep, defaultUnitSystem, COUNTRY_INTROS, defaultLocale, categoryLabel, recipePathFor } from '@2yolks/contracts';
 
 export type { SiteNavItem } from './App';
+
+/** Format integer minutes as an ISO 8601 duration (e.g. PT1H10M, PT25M). */
+export function isoDuration(minutes?: number | null): string | undefined {
+  if (minutes == null || !Number.isFinite(minutes) || minutes <= 0) return undefined;
+  const total = Math.round(minutes);
+  const h = Math.floor(total / 60);
+  const m = total % 60;
+  return `PT${h > 0 ? `${h}H` : ''}${m > 0 || h === 0 ? `${m}M` : ''}`;
+}
 
 interface ShellOptions {
   title: string;
   /** hreflang alternates: exact content equivalents only */
   alternates?: { hreflang: string; href: string }[];
-  jsonLd?: object;
+  jsonLd?: object | object[];
   noindex?: boolean;
-  og?: { title: string; description?: string; url: string; locale: string; image?: string | null };
+  og?: {
+    title: string;
+    description?: string;
+    url: string;
+    locale: string;
+    alternateLocales?: string[];
+    image?: string | null;
+    imageAlt?: string;
+    type?: 'article' | 'website';
+  };
   /** Countries-with-content nav for the header/footer. */
   nav?: SiteNavItem[];
   /** Locale for chrome strings (header/footer/skip link). */
@@ -196,34 +216,67 @@ ol.steps li::before { content: counter(step, decimal-leading-zero); position: ab
 @media print { .share, .site-header, .site-footer, .recipe-actions, .scaler, .unit-toggle, .cook-mode, .langs, .crumbs-nav { display: none !important; } body { background: #fff; } main { max-width: none; } ul.ingredients input { display: none; } ul.ingredients li { border-bottom: 0; } }
 `;
 
-const PIN_IMAGE_KEYS = new Set<string>(["w1golumpki:en", "w1potsticker:en", "w1pozole:es", "w1enchiladas:es", "w1birria:es", "w1golumpki:es", "w1golumpki:fr", "w1potsticker:es", "w1potsticker:fr", "w1pozole:en", "w1pozole:fr", "w1enchiladas:en", "w1enchiladas:fr", "w1birria:en", "w1birria:fr"]);
+const PIN_IMAGE_KEYS = new Set<string>([
+  'w1golumpki:en',
+  'w1potsticker:en',
+  'w1pozole:es',
+  'w1enchiladas:es',
+  'w1birria:es',
+  'w1golumpki:es',
+  'w1golumpki:fr',
+  'w1potsticker:es',
+  'w1potsticker:fr',
+  'w1pozole:en',
+  'w1pozole:fr',
+  'w1enchiladas:en',
+  'w1enchiladas:fr',
+  'w1birria:en',
+  'w1birria:fr',
+  '9214e255:en',
+  '2ba6d505:en',
+  '1c048512:en',
+  'b9e37a49:en',
+  'e9bc7550:en',
+  '6e2a61f5:en',
+  '22d307a4:en',
+  '4e23e226:es',
+]);
 
 function shell(body: string, { title, alternates = [], jsonLd, noindex = false, og, nav = [], lang = 'en' }: ShellOptions): string {
   const links = alternates
     .map((a) => `<link rel="alternate" hreflang="${escapeHtml(a.hreflang)}" href="${escapeHtml(a.href)}" />`)
     .join('\n    ');
-  const ld = jsonLd ? `<script type="application/ld+json">${safeJsonLd(jsonLd)}</script>` : '';
+  const ldList = Array.isArray(jsonLd) ? jsonLd : jsonLd ? [jsonLd] : [];
+  const ld = ldList.map((item) => `<script type="application/ld+json">${safeJsonLd(item)}</script>`).join('\n    ');
   const header = renderToString(<SiteHeader nav={nav} lang={lang} />);
   const footer = renderToString(<SiteFooter nav={nav} lang={lang} />);
+  const ogAlternates = (og?.alternateLocales ?? [])
+    .map((loc) => `<meta property="og:locale:alternate" content="${escapeHtml(loc)}" />`)
+    .join('\n    ');
   return `<!doctype html>
 <html lang="${escapeHtml(lang)}">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#211729" />
     <title>${escapeHtml(title)}</title>
     ${noindex ? '<meta name="robots" content="noindex, nofollow" />' : ''}
     ${links}
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="preload" href="/fonts/fraunces-var.woff2" as="font" type="font/woff2" crossorigin />
     ${og ? `<link rel="canonical" href="${escapeHtml(og.url)}" />
-    <meta property="og:type" content="article" />
+    <meta property="og:type" content="${og.type ?? 'article'}" />
     <meta property="og:site_name" content="2yolks" />
     <meta property="og:title" content="${escapeHtml(og.title)}" />
     <meta property="og:url" content="${escapeHtml(og.url)}" />
     <meta property="og:locale" content="${escapeHtml(og.locale)}" />
+    ${ogAlternates}
     ${og.description ? `<meta property="og:description" content="${escapeHtml(og.description)}" /><meta name="description" content="${escapeHtml(og.description)}" />` : ''}
-    ${og.image ? `<meta property="og:image" content="${escapeHtml(og.image)}" />` : ''}
-    <meta name="twitter:card" content="${og.image ? 'summary_large_image' : 'summary'}" />` : ''}
+    ${og.image ? `<meta property="og:image" content="${escapeHtml(og.image)}" />${og.imageAlt ? `<meta property="og:image:alt" content="${escapeHtml(og.imageAlt)}" />` : ''}` : ''}
+    <meta name="twitter:card" content="${og.image ? 'summary_large_image' : 'summary'}" />
+    <meta name="twitter:title" content="${escapeHtml(og.title)}" />
+    ${og.description ? `<meta name="twitter:description" content="${escapeHtml(og.description)}" />` : ''}
+    ${og.image ? `<meta name="twitter:image" content="${escapeHtml(og.image)}" />` : ''}` : ''}
     ${ld}
     <style>${BASE_CSS}\n${AFTER_HOURS_CSS}</style>
     ${ANALYTICS_BEACON}
@@ -236,29 +289,132 @@ function shell(body: string, { title, alternates = [], jsonLd, noindex = false, 
 const ANALYTICS_BEACON =
   `<script defer src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='{"token": "24832070d4c94429a9e409048f9a6b30"}'></script>`;
 
-export function renderHome(props: HomeProps, nav?: SiteNavItem[]): string {
-  return shell(renderToString(<Home {...props} />), { title: '2yolks', nav, lang:props.lang??'en' });
-}
+const HOME_SEO: Record<string, { title: string; description: string; locale: string }> = {
+  en: {
+    title: '2yolks — Small kitchen. Big appetite. | International Recipes',
+    description: 'Find something worth cooking. Honest, ad-free recipes in English, Spanish, and French with instant unit conversion and step-by-step cook mode.',
+    locale: 'en_US',
+  },
+  es: {
+    title: '2yolks — Cocina pequeña. Gran apetito. | Recetas sin fronteras',
+    description: 'Encuentra algo que quieras cocinar. Recetas honestas y sin anuncios en español, inglés y francés con conversión de unidades y modo cocina.',
+    locale: 'es_MX',
+  },
+  fr: {
+    title: '2yolks — Petite cuisine. Grand appétit. | Recettes sans frontières',
+    description: 'Trouvez une recette à cuisiner. Des recettes honnêtes et sans publicité en français, anglais et espagnol avec conversion d’unités et mode cuisine.',
+    locale: 'fr_FR',
+  },
+};
 
-export function renderCountryHome(props: CountryHomeProps, nav?: SiteNavItem[]): string {
-  const lang = COUNTRY_INTROS[props.country]?.lang ?? defaultLocale(props.country) ?? 'en';
-  return shell(renderToString(<CountryHome {...props} />), {
-    title: `2yolks - ${props.countryName}`,
+export function renderHome(props: HomeProps, nav?: SiteNavItem[], origin = 'https://2yolks.com'): string {
+  const lang = props.lang ?? 'en';
+  const seo = HOME_SEO[lang] ?? HOME_SEO.en!;
+  const canonicalUrl = lang === 'en' ? `${origin}/` : `${origin}/?lang=${lang}`;
+  const alternates = [
+    { hreflang: 'en', href: `${origin}/` },
+    { hreflang: 'es', href: `${origin}/?lang=es` },
+    { hreflang: 'fr', href: `${origin}/?lang=fr` },
+    { hreflang: 'x-default', href: `${origin}/` },
+  ];
+  const selected = discoveryRecipes(props.recipes, lang);
+  const jsonLd = [
+    {
+      '@context': 'https://schema.org',
+      '@type': 'WebSite',
+      name: '2yolks',
+      url: `${origin}/`,
+      inLanguage: ['en', 'es', 'fr'],
+      description: seo.description,
+      publisher: { '@type': 'Organization', name: '2yolks', url: `${origin}/` },
+    },
+    ...(selected.length > 0
+      ? [
+          {
+            '@context': 'https://schema.org',
+            '@type': 'ItemList',
+            name: seo.title,
+            numberOfItems: selected.length,
+            itemListElement: selected.map((r, i) => ({
+              '@type': 'ListItem',
+              position: i + 1,
+              name: r.title,
+              url: `${origin}${recipePathFor(r.country, r.lang, r.slug)}`,
+            })),
+          },
+        ]
+      : []),
+  ];
+  const body = renderToString(<Home {...props} />) + `<script>${DISCOVERY_CLIENT_SCRIPT}</script>`;
+  return shell(body, {
+    title: seo.title,
     nav,
     lang,
+    alternates,
+    jsonLd,
+    og: {
+      type: 'website',
+      title: seo.title,
+      description: seo.description,
+      url: canonicalUrl,
+      locale: seo.locale,
+      alternateLocales: ['en_US', 'es_MX', 'fr_FR'].filter((l) => l !== seo.locale),
+      image: `${origin}/img/identity/after-hours.webp`,
+      imageAlt: seo.title,
+    },
   });
 }
 
-export function renderPrivacy(nav?: SiteNavItem[]): string {
-  return shell(renderToString(<PrivacyView />), { title: 'Privacy - 2yolks', nav });
+export function renderCountryHome(props: CountryHomeProps, nav?: SiteNavItem[], origin = 'https://2yolks.com'): string {
+  const lang = COUNTRY_INTROS[props.country]?.lang ?? defaultLocale(props.country) ?? 'en';
+  const desc = COUNTRY_INTROS[props.country]?.text ?? (HOME_SEO[lang] ?? HOME_SEO.en!).description;
+  const title = `2yolks - ${props.countryName}`;
+  const canonicalUrl = `${origin}/${props.country.toLowerCase()}/`;
+  const body = renderToString(<CountryHome {...props} />) + `<script>${DISCOVERY_CLIENT_SCRIPT}</script>`;
+  return shell(body, {
+    title,
+    nav,
+    lang,
+    og: {
+      type: 'website',
+      title,
+      description: desc,
+      url: canonicalUrl,
+      locale: `${lang}_${props.country.toUpperCase()}`,
+      image: `${origin}/img/identity/after-hours.webp`,
+      imageAlt: title,
+    },
+  });
 }
 
-export function renderAbout(nav?: SiteNavItem[]): string {
-  return shell(renderToString(<AboutView />), { title: 'About 2yolks', nav });
+export function renderPrivacy(nav?: SiteNavItem[], origin = 'https://2yolks.com'): string {
+  const title = 'Privacy - 2yolks';
+  const description = 'How 2yolks handles privacy: cookieless reading, local unit preferences, and private recipe drafts.';
+  return shell(renderToString(<PrivacyView />), {
+    title,
+    nav,
+    og: { type: 'website', title, description, url: `${origin}/privacy`, locale: 'en_US' },
+  });
 }
 
-export function renderHowWeTest(nav?: SiteNavItem[]): string {
-  return shell(renderToString(<HowWeTestView />), { title: 'How we test and label recipes - 2yolks', nav });
+export function renderAbout(nav?: SiteNavItem[], origin = 'https://2yolks.com'): string {
+  const title = 'About 2yolks';
+  const description = '2yolks is an international recipe platform in English, Spanish, and French with honest testing labels and cleared sources.';
+  return shell(renderToString(<AboutView />), {
+    title,
+    nav,
+    og: { type: 'website', title, description, url: `${origin}/about`, locale: 'en_US', image: `${origin}/img/identity/after-hours.webp` },
+  });
+}
+
+export function renderHowWeTest(nav?: SiteNavItem[], origin = 'https://2yolks.com'): string {
+  const title = 'How we test and label recipes - 2yolks';
+  const description = 'Every recipe on 2yolks is clearly labeled as Not yet tested or Tested with real kitchen yield and timing.';
+  return shell(renderToString(<HowWeTestView />), {
+    title,
+    nav,
+    og: { type: 'website', title, description, url: `${origin}/how-we-test`, locale: 'en_US', image: `${origin}/img/identity/after-hours.webp` },
+  });
 }
 
 export function renderNotFound(): string {
@@ -268,44 +424,122 @@ export function renderNotFound(): string {
 export function renderRecipe(
   page: RecipePage,
   alternates: { hreflang: string; href: string }[],
-  opts: { nav?: SiteNavItem[]; countryName?: string } = {},
+  opts: { nav?: SiteNavItem[]; countryName?: string; related?: RecipeRow[] } = {},
 ): string {
-  const jsonLd = {
+  const t = uiStrings(page.locale.lang);
+  const self = alternates.find((a) => a.hreflang.toLowerCase() === `${page.locale.lang}-${page.locale.country}`.toLowerCase());
+  const canonicalUrl = self?.href;
+  const origin = canonicalUrl ? new URL(canonicalUrl).origin : 'https://2yolks.com';
+  const cat = categoryLabel(page.recipe.category, page.locale.lang);
+  const entries = JSON.parse(page.locale.ingredientsJson) as IngredientEntry[];
+  const steps = JSON.parse(page.locale.stepsJson) as string[];
+  const sys = defaultUnitSystem(page.locale.country);
+  const prepIso = isoDuration(page.recipe.prepMinutes);
+  const cookIso = isoDuration(page.recipe.cookMinutes);
+  const totalIso = isoDuration(page.recipe.totalMinutes);
+
+  const recipeLd: Record<string, unknown> = {
     '@context': 'https://schema.org',
     '@type': 'Recipe',
     name: page.locale.title,
     inLanguage: page.locale.lang,
     ...(page.locale.intro ? { description: page.locale.intro } : {}),
-    author: { '@type': 'Organization', name: '2yolks' },
-    recipeIngredient: (JSON.parse(page.locale.ingredientsJson) as IngredientEntry[]).map((e) => renderIngredient(e, page.locale.lang, defaultUnitSystem(page.locale.country), 1)),
-    recipeInstructions: (JSON.parse(page.locale.stepsJson) as string[]).map((s, i) => ({
+    ...(canonicalUrl ? { url: canonicalUrl, mainEntityOfPage: { '@type': 'WebPage', '@id': canonicalUrl } } : {}),
+    author: { '@type': 'Organization', name: '2yolks', url: `${origin}/` },
+    publisher: { '@type': 'Organization', name: '2yolks', url: `${origin}/` },
+    isAccessibleForFree: true,
+    ...(page.recipe.createdAt ? { datePublished: page.recipe.createdAt } : {}),
+    ...(prepIso ? { prepTime: prepIso } : {}),
+    ...(cookIso ? { cookTime: cookIso } : {}),
+    ...(totalIso ? { totalTime: totalIso } : {}),
+    ...(page.recipe.baseServings != null ? { recipeYield: `${page.recipe.baseServings} ${t.servings.toLowerCase()}` } : {}),
+    ...(cat ? { recipeCategory: cat } : {}),
+    ...(opts.countryName ? { recipeCuisine: opts.countryName } : {}),
+    ...(page.heroImage ? { image: [page.heroImage.url] } : {}),
+    recipeIngredient: entries.map((e) => renderIngredient(e, page.locale.lang, sys, 1)),
+    recipeInstructions: steps.map((s, i) => ({
       '@type': 'HowToStep',
       position: i + 1,
-      text: renderStep(s, JSON.parse(page.locale.ingredientsJson) as IngredientEntry[], page.locale.lang, defaultUnitSystem(page.locale.country), 1),
+      text: renderStep(s, entries, page.locale.lang, sys, 1),
+      ...(canonicalUrl ? { url: `${canonicalUrl}#step-${i + 1}` } : {}),
     })),
   };
-  const t = uiStrings(page.locale.lang);
-  const self = alternates.find((a) => a.hreflang.toLowerCase() === `${page.locale.lang}-${page.locale.country}`.toLowerCase());
-  const canonicalUrl = self?.href;
+
+  const crumbElements: Record<string, unknown>[] = [
+    {
+      '@type': 'ListItem',
+      position: 1,
+      name: t.home,
+      item: `${origin}/?lang=${page.locale.lang}`,
+    },
+  ];
+  if (cat && page.recipe.category) {
+    crumbElements.push({
+      '@type': 'ListItem',
+      position: 2,
+      name: cat,
+      item: `${origin}/?lang=${page.locale.lang}&cat=${page.recipe.category}#recipes`,
+    });
+  }
+  if (canonicalUrl) {
+    crumbElements.push({
+      '@type': 'ListItem',
+      position: crumbElements.length + 1,
+      name: page.locale.title,
+      item: canonicalUrl,
+    });
+  }
+  const breadcrumbLd = {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: crumbElements,
+  };
+
   // Title-only graphic (no food photo), built by scripts/build-pin-graphics.py. Only recipes with a built file get one.
-  const pinUrl = canonicalUrl && PIN_IMAGE_KEYS.has(`${page.locale.recipeId}:${page.locale.lang}`) ? `${new URL(canonicalUrl).origin}/img/pin/${page.locale.recipeId}.${page.locale.lang}.png` : null;
+  const pinUrl = canonicalUrl && PIN_IMAGE_KEYS.has(`${page.locale.recipeId}:${page.locale.lang}`) ? `${origin}/img/pin/${page.locale.recipeId}.${page.locale.lang}.png` : null;
   // A rights-tracked hero image (migration 0004) wins over the title graphic.
   const imageUrl = page.heroImage?.url ?? pinUrl;
   const cookData = safeJsonLd({
-    steps: (JSON.parse(page.locale.stepsJson) as string[]).map((st) => renderStep(st, JSON.parse(page.locale.ingredientsJson) as IngredientEntry[], page.locale.lang, defaultUnitSystem(page.locale.country), 1)),
+    steps: steps.map((st) => renderStep(st, entries, page.locale.lang, sys, 1)),
     strings: { timerDone: t.timerDone },
   });
+  const alternateLocales = alternates
+    .filter((a) => a.hreflang !== 'x-default' && a.hreflang.toLowerCase() !== `${page.locale.lang}-${page.locale.country}`.toLowerCase())
+    .map((a) => {
+      const [l, c] = a.hreflang.split('-');
+      return l && c ? `${l}_${c.toUpperCase()}` : a.hreflang;
+    });
   const body =
-    renderToString(<RecipeView page={page} alternates={alternates} canonicalUrl={canonicalUrl} imageUrl={imageUrl} countryName={opts.countryName} />) +
+    renderToString(
+      <RecipeView
+        page={page}
+        alternates={alternates}
+        canonicalUrl={canonicalUrl}
+        imageUrl={imageUrl}
+        countryName={opts.countryName}
+        related={opts.related}
+      />,
+    ) +
     `<script type="application/json" id="cook-data">${cookData}</script>` +
     `<script>${RECIPE_CLIENT_SCRIPT}</script>`;
   return shell(body, {
     title: `${page.locale.title} - 2yolks`,
     alternates,
-    jsonLd,
+    jsonLd: canonicalUrl ? [recipeLd, breadcrumbLd] : recipeLd,
     nav: opts.nav,
     lang: page.locale.lang,
-    og: canonicalUrl ? { title: page.locale.title, description: page.locale.intro ?? undefined, url: canonicalUrl, locale: `${page.locale.lang}_${page.locale.country.toUpperCase()}`, image: imageUrl } : undefined,
+    og: canonicalUrl
+      ? {
+          type: 'article',
+          title: page.locale.title,
+          description: page.locale.intro ?? undefined,
+          url: canonicalUrl,
+          locale: `${page.locale.lang}_${page.locale.country.toUpperCase()}`,
+          alternateLocales,
+          image: imageUrl,
+          imageAlt: page.locale.title,
+        }
+      : undefined,
     // Synthetic/dev-only sources must never be indexed as real recipes.
     noindex: page.source.license === 'internal-demo',
   });

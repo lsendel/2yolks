@@ -1,9 +1,32 @@
 /**
- * Client-side progressive enhancement for the recipe page.
- * Rendered inline by renderRecipe (no build step, no framework):
- * serving scaler, cook mode overlay with Wake Lock, per-step timers.
+ * Client-side progressive enhancement for the recipe page and discovery index.
+ * Rendered inline (no build step, no framework):
+ * serving scaler, unit toggle, ingredient copy, share-card copy,
+ * cook mode overlay with Wake Lock, keyboard navigation, and per-step timers.
  * Steps data comes from the #cook-data JSON script tag (escaped server-side).
  */
+export const DISCOVERY_CLIENT_SCRIPT = `(function () {
+  var input = document.querySelector('[data-recipe-search]');
+  if (!input) return;
+  var items = Array.prototype.slice.call(document.querySelectorAll('[data-recipe-item]'));
+  var emptyEl = document.querySelector('[data-search-empty]');
+  input.addEventListener('input', function () {
+    var q = (input.value || '').trim().toLowerCase();
+    var shown = 0;
+    items.forEach(function (li) {
+      var hay = (li.getAttribute('data-search') || '').toLowerCase();
+      var match = !q || hay.indexOf(q) !== -1;
+      li.hidden = !match;
+      if (match) {
+        shown++;
+        var num = li.querySelector('.recipe-number');
+        if (num) num.textContent = (shown < 10 ? '0' : '') + shown;
+      }
+    });
+    if (emptyEl) emptyEl.hidden = shown > 0 || items.length === 0;
+  });
+})();`;
+
 export const RECIPE_CLIENT_SCRIPT = `(function () {
   // Graceful fallback: hide the hero figure if its image failed to load (alt text alone is not a layout).
   Array.prototype.slice.call(document.querySelectorAll('figure.hero-image img')).forEach(function (img) {
@@ -61,7 +84,38 @@ export const RECIPE_CLIENT_SCRIPT = `(function () {
     var first = scaler.querySelector('button[data-mult="1"]');
     if (first) first.setAttribute('aria-pressed', 'true');
   }
-  // Cook mode
+  // Ingredient checkbox progress + copy ingredients list
+  var ingChecks = Array.prototype.slice.call(document.querySelectorAll('ul.ingredients input[type="checkbox"]'));
+  var ingProg = document.querySelector('[data-ing-progress]');
+  function updateIngProgress() {
+    if (!ingProg || !ingChecks.length) return;
+    var checked = ingChecks.filter(function (c) { return c.checked; }).length;
+    ingProg.hidden = checked === 0;
+    ingProg.textContent = checked + ' / ' + ingChecks.length;
+  }
+  ingChecks.forEach(function (c) { c.addEventListener('change', updateIngProgress); });
+  function flashBtn(btn) {
+    var orig = btn.textContent;
+    var msg = btn.getAttribute('data-copied');
+    if (!msg) return;
+    btn.textContent = msg;
+    setTimeout(function () { btn.textContent = orig; }, 1600);
+  }
+  function copyText(text, btn) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () { flashBtn(btn); }, function () {});
+    }
+  }
+  var copyIngBtn = document.querySelector('[data-copy-ingredients]');
+  if (copyIngBtn) {
+    copyIngBtn.addEventListener('click', function () {
+      var lines = Array.prototype.map.call(document.querySelectorAll('ul.ingredients .line'), function (el) {
+        return '- ' + (el.textContent || '').trim();
+      });
+      if (lines.length) copyText(lines.join('\\n'), copyIngBtn);
+    });
+  }
+  // Share bar + Copy recipe card
   var dataEl = document.getElementById('cook-data');
   var overlay = document.querySelector('[data-cook-mode]');
   var shareNav = document.querySelector('[data-share-url]');
@@ -70,10 +124,17 @@ export const RECIPE_CLIENT_SCRIPT = `(function () {
     var nat = shareNav.querySelector('[data-share-native]');
     if (nat && navigator.share) { nat.hidden = false; nat.addEventListener('click', function () { navigator.share({ title: sTitle, url: sUrl }).catch(function () {}); }); }
     var cp = shareNav.querySelector('[data-share-copy]');
-    if (cp) cp.addEventListener('click', function () {
-      var done = function () { var o = cp.textContent; cp.textContent = cp.getAttribute('data-copied'); setTimeout(function () { cp.textContent = o; }, 1500); };
-      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(sUrl).then(done, function () {});
-    });
+    if (cp) cp.addEventListener('click', function () { copyText(sUrl, cp); });
+    var cardBtn = shareNav.querySelector('[data-share-card]');
+    if (cardBtn) {
+      cardBtn.addEventListener('click', function () {
+        var lines = Array.prototype.map.call(document.querySelectorAll('ul.ingredients .line'), function (el) {
+          return '• ' + (el.textContent || '').trim();
+        });
+        var card = sTitle + ' — 2yolks\\n\\n' + lines.join('\\n') + '\\n\\n' + sUrl;
+        copyText(card, cardBtn);
+      });
+    }
   }
   var printBtn = document.querySelector('[data-print-open]');
   if (printBtn) printBtn.addEventListener('click', function () { window.print(); });
@@ -85,13 +146,14 @@ export const RECIPE_CLIENT_SCRIPT = `(function () {
     var strings = cookData.strings || {};
     var stepEl = overlay.querySelector('[data-cook-step]');
     var progEl = overlay.querySelector('[data-cook-progress]');
+    var barEl = overlay.querySelector('[data-cook-bar]');
     var timerWrap = overlay.querySelector('[data-cook-timer]');
     var timerLabel = overlay.querySelector('[data-timer-label]');
     var timerBtn = overlay.querySelector('[data-timer-btn]');
     var timerDisplay = overlay.querySelector('[data-timer-display]');
     var idx = 0, timerId = null, wakeLock = null;
     function minutesOf(text) {
-      var m = /(\\d+)\\s*(min(?:ute)?s?|minutos?|hours?|horas?)/i.exec(text);
+      var m = /(\\d+)\\s*(min(?:ute)?s?|minutos?|hours?|horas?|heures?)/i.exec(text);
       if (!m) return null;
       var n = parseInt(m[1], 10);
       return /h/i.test(m[2]) ? n * 60 : n;
@@ -100,6 +162,7 @@ export const RECIPE_CLIENT_SCRIPT = `(function () {
       idx = Math.max(0, Math.min(steps.length - 1, i));
       stepEl.textContent = steps[idx];
       progEl.textContent = (idx + 1) + ' / ' + steps.length;
+      if (barEl && steps.length) barEl.style.width = Math.round(((idx + 1) / steps.length) * 100) + '%';
       var mins = minutesOf(steps[idx]);
       timerWrap.hidden = mins === null;
       if (mins !== null) timerLabel.textContent = mins + ' min';
@@ -111,6 +174,8 @@ export const RECIPE_CLIENT_SCRIPT = `(function () {
       timerBtn.hidden = false;
     }
     function open() {
+      var liveSteps = Array.prototype.map.call(document.querySelectorAll('ol.steps li'), function (li) { return li.textContent; });
+      if (liveSteps.length) steps = liveSteps;
       overlay.hidden = false;
       document.body.style.overflow = 'hidden';
       show(0);
@@ -128,6 +193,12 @@ export const RECIPE_CLIENT_SCRIPT = `(function () {
     overlay.querySelector('[data-cook-close]').addEventListener('click', close);
     overlay.querySelector('[data-cook-prev]').addEventListener('click', function () { show(idx - 1); });
     overlay.querySelector('[data-cook-next]').addEventListener('click', function () { show(idx + 1); });
+    document.addEventListener('keydown', function (e) {
+      if (overlay.hidden) return;
+      if (e.key === 'Escape') close();
+      else if (e.key === 'ArrowRight') show(idx + 1);
+      else if (e.key === 'ArrowLeft') show(idx - 1);
+    });
     timerBtn.addEventListener('click', function () {
       var mins = minutesOf(steps[idx]);
       if (mins === null) return;
@@ -142,6 +213,17 @@ export const RECIPE_CLIENT_SCRIPT = `(function () {
           timerDisplay.textContent = strings.timerDone || 'Done!';
           clearInterval(timerId); timerId = null;
           timerBtn.hidden = false;
+          try {
+            var Ctx = window.AudioContext || window.webkitAudioContext;
+            if (Ctx) {
+              var ctx = new Ctx(), osc = ctx.createOscillator(), g = ctx.createGain();
+              osc.type = 'sine'; osc.frequency.value = 880;
+              g.gain.setValueAtTime(0.18, ctx.currentTime);
+              g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.6);
+              osc.connect(g); g.connect(ctx.destination);
+              osc.start(); osc.stop(ctx.currentTime + 0.6);
+            }
+          } catch (e3) {}
           return;
         }
         timerDisplay.textContent = mm + ':' + (ss < 10 ? '0' : '') + ss;

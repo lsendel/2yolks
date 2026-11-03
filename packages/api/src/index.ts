@@ -160,7 +160,11 @@ app.get('/sitemap.xml', async (c) => {
     .innerJoin(recipes, eq(recipeLocales.recipeId, recipes.id))
     .innerJoin(sources, eq(recipes.sourceId, sources.id))
     .where(published(db, demoAllowed(c)));
-  const urls: string[] = [];
+  const urls: string[] = [
+    `  <url>\n    <loc>${xmlEscape(origin + '/')}</loc>\n    <xhtml:link rel="alternate" hreflang="en" href="${xmlEscape(origin + '/')}" />\n    <xhtml:link rel="alternate" hreflang="es" href="${xmlEscape(origin + '/?lang=es')}" />\n    <xhtml:link rel="alternate" hreflang="fr" href="${xmlEscape(origin + '/?lang=fr')}" />\n    <xhtml:link rel="alternate" hreflang="x-default" href="${xmlEscape(origin + '/')}" />\n  </url>`,
+    `  <url><loc>${xmlEscape(origin + '/about')}</loc></url>`,
+    `  <url><loc>${xmlEscape(origin + '/how-we-test')}</loc></url>`,
+  ];
   const byRecipe = new Map<string, typeof rows>();
   for (const r of rows) {
     const list = byRecipe.get(r.recipeId) ?? [];
@@ -174,12 +178,19 @@ app.get('/sitemap.xml', async (c) => {
     urls.push(`  <url><loc>${xmlEscape(origin + countryPath(code))}</loc></url>`);
   }
   for (const list of byRecipe.values()) {
-    const links = list
-      .map(
-        (a) =>
-          `    <xhtml:link rel="alternate" hreflang="${xmlEscape(`${a.lang}-${a.country.toUpperCase()}`)}" href="${xmlEscape(origin + recipePathFor(a.country, a.lang, a.slug))}" />`,
-      )
-      .join('\n');
+    const linksList = list.map(
+      (a) =>
+        `    <xhtml:link rel="alternate" hreflang="${xmlEscape(`${a.lang}-${a.country.toUpperCase()}`)}" href="${xmlEscape(origin + recipePathFor(a.country, a.lang, a.slug))}" />`,
+    );
+    const primary = list[0];
+    if (primary) {
+      const defLang = defaultLocale(primary.country);
+      const defRow = list.find((a) => a.country === primary.country && a.lang === defLang) ?? primary;
+      linksList.push(
+        `    <xhtml:link rel="alternate" hreflang="x-default" href="${xmlEscape(origin + recipePathFor(defRow.country, defRow.lang, defRow.slug))}" />`,
+      );
+    }
+    const links = linksList.join('\n');
     for (const r of list) {
       urls.push(
         `  <url>\n    <loc>${xmlEscape(origin + recipePathFor(r.country, r.lang, r.slug))}</loc>\n${links}\n  </url>`,
@@ -272,6 +283,7 @@ app.get('/', async (c) => {
     .innerJoin(sources, eq(recipes.sourceId, sources.id))
     .where(published(db, demoAllowed(c)));
   const nav = await siteNav(db, demoAllowed(c), lang);
+  const origin = c.env.CANONICAL_ORIGIN ?? new URL(c.req.url).origin;
   return c.html(
     renderHome(
       {
@@ -280,6 +292,7 @@ app.get('/', async (c) => {
         recipes: recipeRows.map((r) => ({ id: r.id, country: r.country, lang: r.lang, slug: r.slug, title: r.title, untested: isUntested({ testedAt: r.testedAt }), category: r.category, totalMinutes:r.totalMinutes })),
       },
       nav,
+      origin,
     ),
   );
 });
@@ -315,6 +328,7 @@ const countryHome = async (c: Context<{ Bindings: Bindings }>) => {
   const filtered = activeCategory ? mapped.filter((r) => r.category === activeCategory) : mapped;
   const pageLang = defaultLocale(parsed.country) ?? 'en';
   const nav = await siteNav(db, demoAllowed(c), pageLang);
+  const origin = c.env.CANONICAL_ORIGIN ?? new URL(c.req.url).origin;
   return c.html(
     renderCountryHome(
       {
@@ -325,15 +339,16 @@ const countryHome = async (c: Context<{ Bindings: Bindings }>) => {
         activeCategory,
       },
       nav,
+      origin,
     ),
     // Empty listings must not be indexed (thin-page gate).
     200,
     filtered.length === 0 ? { 'x-robots-tag': 'noindex' } : undefined,
   );
 };
-app.get('/about', async (c) => c.html(renderAbout(await siteNav(createDb(c.env.DB), demoAllowed(c), 'en'))));
-app.get('/privacy', async (c) => c.html(renderPrivacy(await siteNav(createDb(c.env.DB), demoAllowed(c), 'en'))));
-app.get('/how-we-test', async (c) => c.html(renderHowWeTest(await siteNav(createDb(c.env.DB), demoAllowed(c), 'en'))));
+app.get('/about', async (c) => c.html(renderAbout(await siteNav(createDb(c.env.DB), demoAllowed(c), 'en'), c.env.CANONICAL_ORIGIN ?? new URL(c.req.url).origin)));
+app.get('/privacy', async (c) => c.html(renderPrivacy(await siteNav(createDb(c.env.DB), demoAllowed(c), 'en'), c.env.CANONICAL_ORIGIN ?? new URL(c.req.url).origin)));
+app.get('/how-we-test', async (c) => c.html(renderHowWeTest(await siteNav(createDb(c.env.DB), demoAllowed(c), 'en'), c.env.CANONICAL_ORIGIN ?? new URL(c.req.url).origin)));
 app.get('/:country', countryHome);
 app.get('/:country/', countryHome);
 
@@ -508,7 +523,37 @@ const recipeRoute = async (c: Context<{ Bindings: Bindings }>) => {
     },
   };
   const nav = alternates.filter(a=>a.hreflang!=='x-default').map(a=>({href:a.href,label:({en:'English',es:'Español',fr:'Français'} as Record<string,string>)[a.hreflang.split('-')[0]!]??a.hreflang,current:a.hreflang.toLowerCase()===`${page.locale.lang}-${page.locale.country}`.toLowerCase()}));
-  return c.html(renderRecipe(page, alternates, { nav, countryName: localizedCountryName(parsed.country, page.locale.lang) }));
+  const otherRows = await db
+    .select({ id: recipeLocales.recipeId, country: recipeLocales.country, lang: recipeLocales.lang, slug: recipeLocales.slug, title: recipeLocales.title, testedAt: recipes.testedAt, category: recipes.category, totalMinutes: recipes.totalMinutes })
+    .from(recipeLocales)
+    .innerJoin(recipes, eq(recipeLocales.recipeId, recipes.id))
+    .innerJoin(sources, eq(recipes.sourceId, sources.id))
+    .where(and(ne(recipeLocales.recipeId, recipeId), published(db, demoAllowed(c))));
+  const byRelId = new Map<string, typeof otherRows>();
+  for (const r of otherRows) {
+    const list = byRelId.get(r.id) ?? [];
+    list.push(r);
+    byRelId.set(r.id, list);
+  }
+  const related = [...byRelId.values()]
+    .map((list) => list.find((r) => r.lang === page.locale.lang) ?? list.find((r) => r.lang === 'en') ?? list[0]!)
+    .sort((a, b) => {
+      const aCat = a.category && a.category === page.recipe.category ? 0 : 1;
+      const bCat = b.category && b.category === page.recipe.category ? 0 : 1;
+      return aCat - bCat || a.title.localeCompare(b.title);
+    })
+    .slice(0, 4)
+    .map((r) => ({
+      id: r.id,
+      country: r.country,
+      lang: r.lang,
+      slug: r.slug,
+      title: r.title,
+      untested: isUntested({ testedAt: r.testedAt }),
+      category: r.category,
+      totalMinutes: r.totalMinutes,
+    }));
+  return c.html(renderRecipe(page, alternates, { nav, countryName: localizedCountryName(parsed.country, page.locale.lang), related }));
 };
 app.get('/:country/recipes/:idSlug', recipeRoute);
 app.get('/:country/:lang/recipes/:idSlug', recipeRoute);
