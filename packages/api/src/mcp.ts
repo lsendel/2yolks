@@ -317,7 +317,7 @@ const TOOLS: ToolDef[] = [
   {
     name: 'recipes.set_image',
     description:
-      'Attach a rights-tracked image to a recipe: hero (default) or one step (kind + stepIndex). Binary upload only via imageBase64 - jpeg/png/webp, max ~3MB, 4096px and 16MP; the file must parse end-to-end as its type (full JPEG marker walk to a terminal EOI, PNG chunk CRCs plus a capped IDAT inflate, exact WebP RIFF length), so truncated, malformed and polyglot files are rejected; no SVG, no URL fetching. Provenance metadata required: sourceName, sourceUrl (https://), license, and style (photo|illustration|graphic) as the honest-imagery label. Provenance is NOT clearance: the call must also carry rightsConfirmed: true, asserting the license was actually verified to permit this use; the image is stamped cleared_at and served at /img/recipe/<image_id> only while cleared AND the recipe has a published, rights-cleared locale. A new hero replaces the current hero (nothing is deleted; latest wins) and updates recipes.image_key. Executes only with confirmed: true; otherwise validates as a dry run.',
+      'Attach a rights-tracked image to a recipe: hero (default) or one step (kind + stepIndex). Binary upload only via imageBase64 - jpeg/png/webp, max ~3MB, 4096px and 16MP. Container-level structural validation: full JPEG marker walk to a terminal EOI, PNG chunk CRCs plus exact scanline verification of the inflated stream, exact WebP RIFF length - truncation, CRC corruption, trailing polyglot bytes, decompression bombs and oversize are rejected. Not detected: JPEG/WebP compressed-bitstream corruption that preserves container structure (no pixel decode in this runtime; images serve with nosniff as the backstop). No SVG, no URL fetching. Provenance metadata required: sourceName, sourceUrl (https://), license, and style (photo|illustration|graphic) as the honest-imagery label. Provenance is NOT clearance: the call must also carry rightsConfirmed: true, asserting the license was actually verified to permit this use; that assertion scopes to this one asset and clears nothing else. The image is stamped cleared_at and served at /img/recipe/<image_id> only while cleared AND the recipe has a published, rights-cleared locale. A new hero replaces the current hero (nothing is deleted; latest wins) and updates recipes.image_key. Executes only with confirmed: true; otherwise validates as a dry run.',
     role: 'admin',
     inputSchema: {
       type: 'object',
@@ -521,11 +521,14 @@ function readProvenance(l: Record<string, unknown>): { of?: string; method?: str
 // caller-supplied address (no SSRF). Validation is structural, not a
 // magic-byte sniff: an accepted file must parse END-TO-END as its detected
 // type - JPEG markers walked to a terminal EOI, PNG chunks walked with CRC32
-// verification to a final IEND with the IDAT stream inflated within a
-// computed size cap (decompression bombs fail here), WebP RIFF length
-// reconciled exactly. Truncated, malformed, dimension-capped, or
-// trailing-byte (polyglot) files are rejected, as are types we cannot
-// verify (SVG, avif, gif, ...).
+// verification to a final IEND with the IDAT stream inflated and verified
+// scanline-by-scanline (exact size, filter types 0-4, Adam7 passes handled;
+// decompression bombs fail here), WebP RIFF length reconciled exactly.
+// Truncated, malformed, dimension-capped, or trailing-byte (polyglot) files
+// are rejected, as are types we cannot verify (SVG, avif, gif, ...).
+// Known bound: JPEG/WebP COMPRESSED-BITSTREAM corruption that preserves
+// container structure is not detected (no pixel decode in this runtime);
+// nosniff serving is the backstop there.
 const MAX_IMAGE_BASE64 = 4_200_000; // ~3.1 MB decoded
 const MAX_IMAGE_BYTES = 3 * 1024 * 1024;
 const MAX_IMAGE_DIM = 4096;
@@ -576,26 +579,90 @@ function crc32(b: Uint8Array): number {
   return (c ^ 0xffffffff) >>> 0;
 }
 
-// Inflate a zlib stream, answering false on any stream error or the moment
-// the decoded size passes cap - a bomb never gets to expand fully.
-async function inflateWithinCap(deflated: Uint8Array, cap: number): Promise<boolean> {
+// Inflate a zlib stream fully, answering null on any stream error or the
+// moment the decoded size passes cap - a bomb never gets to expand fully.
+async function inflateMax(deflated: Uint8Array, cap: number): Promise<Uint8Array | null> {
   try {
     const ds = new DecompressionStream('deflate');
     const stream = new Blob([deflated as BlobPart]).stream().pipeThrough(ds);
     const reader = stream.getReader();
+    const parts: Uint8Array[] = [];
     let total = 0;
     for (;;) {
       const { done, value } = await reader.read();
-      if (done) return true;
-      total += (value as Uint8Array).byteLength;
+      if (done) break;
+      const v = value as Uint8Array;
+      total += v.byteLength;
       if (total > cap) {
         await reader.cancel('decompressed size cap exceeded');
-        return false;
+        return null;
       }
+      parts.push(v);
     }
+    const out = new Uint8Array(total);
+    let off = 0;
+    for (const p of parts) {
+      out.set(p, off);
+      off += p.length;
+    }
+    return out;
   } catch {
-    return false;
+    return null;
   }
+}
+
+const ADAM7: readonly (readonly [number, number, number, number])[] = [
+  [0, 0, 8, 8],
+  [4, 0, 8, 8],
+  [0, 4, 4, 8],
+  [2, 0, 4, 4],
+  [0, 2, 2, 4],
+  [1, 0, 2, 2],
+  [0, 1, 1, 2],
+];
+
+// Exact inflated size: per pass, ph rows of (1 filter byte + rowBytes).
+function pngExpectedScanlineBytes(width: number, height: number, bppBits: number, interlace: number): number {
+  let total = 0;
+  const pass = (pw: number, ph: number) => {
+    total += ph * (1 + Math.ceil((pw * bppBits) / 8));
+  };
+  if (interlace === 0) {
+    pass(width, height);
+  } else {
+    for (const [x0, y0, dx, dy] of ADAM7) {
+      const pw = width > x0 ? Math.ceil((width - x0) / dx) : 0;
+      const ph = height > y0 ? Math.ceil((height - y0) / dy) : 0;
+      if (pw > 0 && ph > 0) pass(pw, ph);
+    }
+  }
+  return total;
+}
+
+// Pixel-structure check without unfiltering: every scanline must start with
+// a valid filter type (0-4) and the walk must consume the inflated data
+// exactly - neither truncated nor overlong streams pass.
+function pngScanlinesOk(raw: Uint8Array, width: number, height: number, bppBits: number, interlace: number): boolean {
+  const rows: [number, number][] = [];
+  if (interlace === 0) {
+    rows.push([width, height]);
+  } else {
+    for (const [x0, y0, dx, dy] of ADAM7) {
+      const pw = width > x0 ? Math.ceil((width - x0) / dx) : 0;
+      const ph = height > y0 ? Math.ceil((height - y0) / dy) : 0;
+      if (pw > 0 && ph > 0) rows.push([pw, ph]);
+    }
+  }
+  let off = 0;
+  for (const [pw, ph] of rows) {
+    const rowBytes = Math.ceil((pw * bppBits) / 8);
+    for (let r = 0; r < ph; r++) {
+      if (off + 1 + rowBytes > raw.length) return false;
+      if (raw[off]! > 4) return false;
+      off += 1 + rowBytes;
+    }
+  }
+  return off === raw.length;
 }
 
 // JPEG: SOI, marker segments (in any order), SOS entropy scans, terminal
@@ -666,6 +733,8 @@ async function validatePng(b: Uint8Array): Promise<ImageInfo | null> {
   let pos = 8;
   let info: ImageInfo | null = null;
   let idatCap = 0;
+  let bppBits = 0;
+  let interlace = 0;
   let sawIdat = false;
   const idatParts: Uint8Array[] = [];
   let chunks = 0;
@@ -689,10 +758,12 @@ async function validatePng(b: Uint8Array): Promise<ImageInfo | null> {
       const depths = PNG_DEPTHS[color];
       if (!channels || !depths?.includes(depth)) return null;
       if (!dimsOk(width, height)) return null;
-      // Decoded bound: height * (1 filter byte + rowBytes), plus slack for
-      // Adam7's extra per-pass filter bytes. Past this is a bomb.
-      const rowBytes = Math.ceil((width * channels * depth) / 8);
-      idatCap = rowBytes * height + 8 * height + 64;
+      // The inflated stream must be EXACTLY the scanlines the header
+      // declares (per-pass for Adam7): a byte more is a bomb, a byte less is
+      // truncated, and every scanline filter byte is verified at IEND.
+      bppBits = channels * depth;
+      interlace = b[pos + 20]!;
+      idatCap = pngExpectedScanlineBytes(width, height, bppBits, interlace);
       info = { mime: 'image/png', ext: 'png', width, height };
     } else if (type === 'IDAT') {
       if (!info) return null;
@@ -709,7 +780,8 @@ async function validatePng(b: Uint8Array): Promise<ImageInfo | null> {
         idat.set(p, off);
         off += p.length;
       }
-      return (await inflateWithinCap(idat, idatCap)) ? info : null;
+      const raw = await inflateMax(idat, idatCap);
+      return raw !== null && pngScanlinesOk(raw, info.width, info.height, bppBits, interlace) ? info : null;
     }
     pos += 12 + len;
   }
@@ -832,8 +904,9 @@ async function callRecipesSetImage(ctx: CallCtx, args: Record<string, unknown>):
   }
   // Provenance metadata records where the image came from; it is NOT
   // clearance. Serving additionally requires this explicit assertion that
-  // someone verified the license permits this use. The stamp (cleared_at)
-  // is what the public route gates on.
+  // someone verified the license permits this use. The assertion scopes to
+  // this single asset: it clears no other image and not the recipe's text
+  // source. The stamp (cleared_at) is what the public route gates on.
   const rightsConfirmed = args['rightsConfirmed'] ?? args['rights_confirmed'];
   if (rightsConfirmed !== true) {
     return {

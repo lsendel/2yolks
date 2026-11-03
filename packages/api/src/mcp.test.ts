@@ -828,6 +828,14 @@ const GIF_1X1 = 'R0lGODdhAQABAIAAAP///////ywAAAAAAQABAAACAkQBADs=';
 const JPG_2X2 =
   '/9j/4AAQSkZJRgABAgAAAQABAAD//gARTGF2YzU4LjEzNC4xMDAA/9sAQwAIBAQEBAQFBQUFBQUGBgYGBgYGBgYGBgYGBwcHCAgIBwcHBgYHBwgICAgJCQkICAgICQkKCgoMDAsLDg4OEREU/8QATAABAQAAAAAAAAAAAAAAAAAAAAYBAQEAAAAAAAAAAAAAAAAAAAYHEAEAAAAAAAAAAAAAAAAAAAAAEQEAAAAAAAAAAAAAAAAAAAAA/8AAEQgAAgACAwEiAAIRAAMRAP/aAAwDAQACEQMRAD8AiwBRf3//2Q==';
 const WEBP_2X2 = 'UklGRjwAAABXRUJQVlA4IDAAAADQAQCdASoCAAIAAgA0JaACdLoB+AADsAD+8Oj3/yC5YXXI1/8gP+QH/ID/+PIAAAA=';
+// Adversarial PNGs built from PNG_1X1 with valid chunk CRCs: scanline filter
+// type 9 (invalid), inflated data one row too long for the 1x1 canvas, and a
+// 46-byte IDAT inflating to 25000 bytes (declared 1x1 => 5 allowed).
+const PNG_BAD_FILTER = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nONk+M9QDwADrgGIyg7FjgAAAABJRU5ErkJggg==';
+const PNG_BAD_LENGTH = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAD0lEQVR4nGNk+M9QzwAiAA6CAv7rO+ZWAAAAAElFTkSuQmCC';
+const PNG_BOMB = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAALklEQVR42u3BAQEAAACCIP+vbkhAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAfBhhqAABIheI1AAAAABJRU5ErkJggg==';
+// Hand-built Adam7-interlaced 5x5 RGBA with correct per-pass scanlines.
+const PNG_ADAM7_5X5 = 'iVBORw0KGgoAAAANSUhEUgAAAAUAAAAFCAYAAAH6aBZzAAAADElEQVR4nGNgoCsAAABvAAGOP3ogAAAAAElFTkSuQmCC';
 const IMAGE_META = { sourceName: '2yolks test', sourceUrl: 'https://example.com/img', license: 'CC0-1.0', style: 'graphic', rightsConfirmed: true };
 
 function b64bytes(b64: string): Uint8Array {
@@ -997,6 +1005,7 @@ describe('recipes.set_image (migration 0004)', () => {
     expect(served.status).toBe(200);
     expect(served.headers.get('content-type')).toBe('image/png');
     expect(served.headers.get('cache-control')).toBe('public, max-age=300');
+    expect(served.headers.get('x-content-type-options')).toBe('nosniff');
     const body = new Uint8Array(await served.arrayBuffer());
     expect(body.length).toBeGreaterThan(0);
   });
@@ -1070,6 +1079,25 @@ describe('recipes.set_image (migration 0004)', () => {
     const badCrc = await toolCall(ADMIN_KEY, 'recipes.set_image', { id, imageBase64: bytesB64(corrupted), ...IMAGE_META, confirmed: true });
     expect(badCrc.isError).toBe(true);
     expect(JSON.stringify(badCrc.data)).toMatch(/unsupported or unreadable/);
+  });
+
+  it('verifies png scanline structure, not just a bounded inflate', async () => {
+    const id = await draftId();
+    // valid CRCs and a clean inflate, but scanline filter type 9 is not a real filter
+    const badFilter = await toolCall(ADMIN_KEY, 'recipes.set_image', { id, imageBase64: PNG_BAD_FILTER, ...IMAGE_META, confirmed: true });
+    expect(badFilter.isError).toBe(true);
+    expect(JSON.stringify(badFilter.data)).toMatch(/unsupported or unreadable/);
+    // valid CRCs, but the inflated stream is one row longer than the 1x1 canvas allows
+    const badLen = await toolCall(ADMIN_KEY, 'recipes.set_image', { id, imageBase64: PNG_BAD_LENGTH, ...IMAGE_META, confirmed: true });
+    expect(badLen.isError).toBe(true);
+    // tiny IDAT inflating to 25000 bytes against a declared 1x1 (5 allowed): bomb
+    const bomb = await toolCall(ADMIN_KEY, 'recipes.set_image', { id, imageBase64: PNG_BOMB, ...IMAGE_META, confirmed: true });
+    expect(bomb.isError).toBe(true);
+    // interlaced Adam7 5x5 with correct per-pass scanlines is accepted
+    const adam7 = await toolCall(ADMIN_KEY, 'recipes.set_image', { id, kind: 'step', stepIndex: 0, imageBase64: PNG_ADAM7_5X5, ...IMAGE_META, confirmed: true });
+    expect(adam7.isError).toBe(false);
+    expect(adam7.data?.['width']).toBe(5);
+    expect(adam7.data?.['height']).toBe(5);
   });
 
   it('never serves an image whose rights were not confirmed, even once published', async () => {

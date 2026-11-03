@@ -220,6 +220,11 @@ app.get('/img/recipe/:imageId', async (c) => {
       // would keep serving unpublished images. max-age=300 bounds staleness
       // to 5 minutes, matching the draft/private visibility promise.
       'cache-control': 'public, max-age=300',
+      // Defense in depth for the container-validation bound (JPEG/WebP
+      // bitstream corruption is not detected): the browser must treat the
+      // bytes strictly as the declared image type, never sniffed as active
+      // content.
+      'x-content-type-options': 'nosniff',
     },
   });
 });
