@@ -93,6 +93,11 @@ export function RecipeView({ page, alternates = [], canonicalUrl, imageUrl }: { 
           <a href="/how-we-test">{t.howWeTest}</a>
         </p>
       ) : null}
+      {page.locale.translationOf && page.locale.translationMethod === 'machine' && page.locale.translationReviewerKind !== 'human' ? (
+        <p className="machine-note" role="note">
+          <span className="badge">{page.locale.lang === 'es' ? 'Traducci\u00f3n autom\u00e1tica' : page.locale.lang === 'fr' ? 'Traduction automatique' : 'Machine-translated'}</span> {t.machineNote}
+        </p>
+      ) : null}
       {others.length > 0 ? (
         <p className="langs">
           {others.map((a) => (
