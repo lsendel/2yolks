@@ -9,11 +9,16 @@ REG = '/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf'
 LABEL = {'en': 'NOT YET TESTED', 'es': 'AÚN NO PROBADA', 'fr': 'PAS ENCORE TESTÉE'}
 FOOT = {'en': 'This recipe has not been kitchen-tested by 2yolks.', 'es': 'Esta receta aún no ha sido probada en cocina por 2yolks.', 'fr': "Cette recette n’a pas encore été testée en cuisine par 2yolks."}
 COUNTRY = {'us': 'United States', 'mx': 'México'}
-for r in data['recipes']:
+COUNTRY_FR = {'us': 'États-Unis', 'mx': 'Mexique'}
+# Live recipes plus the unpublished French drafts (graphics are prepared ahead;
+# a page only references one once its key is added to PIN_IMAGE_KEYS at publication).
+drafts = json.load(open('packages/api/content/wave1.translation-drafts.json'))['drafts']
+items = list(data['recipes']) + [dict(id=x['recipe_id'], country=x['country'], lang=x['lang'], title=x['title']) for x in drafts if x['lang'] == 'fr']
+for r in items:
     img = Image.new('RGB', (W, H), '#fffbf5')
     d = ImageDraw.Draw(img)
     d.rectangle([0, 0, W, 24], fill='#c2410c')
-    d.text((80, 120), COUNTRY.get(r['country'], r['country']).upper(), font=ImageFont.truetype(FONT, 44), fill='#57534e')
+    d.text((80, 120), (COUNTRY_FR if r['lang'] == 'fr' else COUNTRY).get(r['country'], r['country']).upper(), font=ImageFont.truetype(FONT, 44), fill='#57534e')
     size = 96
     f = ImageFont.truetype(FONT, size)
     def wrap_px(text, font, maxw):

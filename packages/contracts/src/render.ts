@@ -33,11 +33,17 @@ function label(unit: string, lang: string, qty = 1): string {
   return unitInfo(unit)?.label ?? unit;
 }
 
-/** Spanish joins a measure and its ingredient with "de" ("2 cucharaditas de sal").
- * Written-out text rows already carry it; structured names do not. */
+/** Spanish and French join a measure and its ingredient with "de" / "d'"
+ * ("2 cucharaditas de sal", "1 c. à soupe d'huile"). Written-out text rows
+ * already carry it; structured names do not. */
 function joinText(lang: string, text: string): string {
-  if (lang !== 'es' || !text) return text;
-  return /^(de|del)\s/i.test(text) ? text : `de ${text}`;
+  if (!text) return text;
+  if (lang === 'es') return /^(de|del)\s/i.test(text) ? text : `de ${text}`;
+  if (lang === 'fr') {
+    if (/^(de|d'|d\u2019|du|des)[\s'\u2019]/i.test(text)) return text;
+    return /^[aeiouyh\u00e0\u00e2\u00e9\u00e8\u00ea\u0153]/i.test(text) ? `d\u2019${text}` : `de ${text}`;
+  }
+  return text;
 }
 
 /** Split a leading unit word off "cups all-purpose flour". */

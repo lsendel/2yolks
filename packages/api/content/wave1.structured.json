@@ -1,0 +1,412 @@
+{
+ "source": {
+  "id": "editorial-original",
+  "name": "2yolks editorial (original wording, untested drafts)",
+  "url": "internal:editorial-original",
+  "license": "internal-original",
+  "notes": "Original text written for 2yolks from standard, widely documented techniques. NOT kitchen-tested. No images. No copied expression from any site. Stays draft until a person cooks and signs off each recipe."
+ },
+ "recipes": [
+  {
+   "id": "w1golumpki",
+   "origin_country": "pl",
+   "country": "us",
+   "lang": "en",
+   "title": "Golumpki (Unstuffed Cabbage Roll) Soup",
+   "slug": "golumpki-soup",
+   "intro": "All the flavors of Polish stuffed cabbage rolls in one pot, with no rolling. Serves 6. About 25 minutes of work and 70 minutes total. Draft: not yet tested in a kitchen.",
+   "ingredients": [
+    {
+     "ref": "olive-oil",
+     "qty": 1.0,
+     "name": "olive oil",
+     "unit": "tbsp"
+    },
+    "1 lb (450 g) ground beef, or half beef and half pork",
+    {
+     "ref": "medium-onion",
+     "qty": 1.0,
+     "name": "medium onion",
+     "note": "diced"
+    },
+    {
+     "ref": "garlic-cloves",
+     "qty": 3.0,
+     "name": "garlic cloves",
+     "note": "minced"
+    },
+    {
+     "ref": "tomato-paste",
+     "qty": 1.0,
+     "name": "tomato paste",
+     "unit": "tbsp"
+    },
+    {
+     "ref": "sweet-paprika",
+     "qty": 1.0,
+     "name": "sweet paprika",
+     "unit": "tsp"
+    },
+    "1 small green cabbage (about 1.5 lb / 700 g), cored and cut into 1-inch (2.5 cm) pieces",
+    "1 can (28 oz / 800 g) crushed tomatoes",
+    "4 cups (1 L) beef broth",
+    "1/2 cup (100 g) long-grain white rice, uncooked",
+    {
+     "ref": "bay-leaf",
+     "qty": 1.0,
+     "name": "bay leaf"
+    },
+    {
+     "ref": "salt",
+     "qty": 1.0,
+     "name": "salt",
+     "unit": "tsp",
+     "note": "plus more to taste"
+    },
+    {
+     "ref": "black-pepper",
+     "qty": 0.5,
+     "name": "black pepper",
+     "unit": "tsp"
+    },
+    {
+     "ref": "apple-cider-vinegar",
+     "qty": 1.0,
+     "name": "apple cider vinegar",
+     "unit": "tbsp"
+    },
+    "Chopped parsley, to serve"
+   ],
+   "steps": [
+    "Heat the oil in a large pot over medium-high heat. Add the meat and cook, breaking it up, 6 to 8 minutes, until no pink remains and it reaches 160°F (71°C). Spoon off excess fat.",
+    "Add the onion and cook 4 minutes until soft. Stir in the garlic, tomato paste and paprika and cook 1 minute.",
+    "Add the cabbage, crushed tomatoes, broth, bay leaf, salt and pepper. Bring to a boil, then lower the heat, cover and simmer 15 minutes.",
+    "Stir in the rice. Cover and simmer 20 minutes more, until the rice and cabbage are tender. If the soup gets too thick, add 1/2 cup (120 ml) water.",
+    "Remove the bay leaf. Stir in the vinegar, taste, and add salt if needed. Serve hot with parsley. Refrigerate leftovers within 2 hours."
+   ]
+  },
+  {
+   "id": "w1potsticker",
+   "origin_country": "cn",
+   "country": "us",
+   "lang": "en",
+   "title": "Pork and Cabbage Potstickers",
+   "slug": "pork-cabbage-potstickers",
+   "intro": "Crisp-bottomed dumplings with a juicy pork and cabbage filling. Makes about 30 and serves 4 to 6. About 60 minutes. Draft: not yet tested in a kitchen.",
+   "ingredients": [
+    "3 cups (about 250 g) finely chopped napa cabbage",
+    {
+     "ref": "salt",
+     "qty": 1.0,
+     "name": "salt",
+     "unit": "tsp"
+    },
+    "1 lb (450 g) ground pork",
+    {
+     "ref": "scallions",
+     "qty": 3.0,
+     "name": "scallions",
+     "note": "thinly sliced"
+    },
+    {
+     "ref": "grated-fresh-ginger",
+     "qty": 1.0,
+     "name": "grated fresh ginger",
+     "unit": "tbsp"
+    },
+    {
+     "ref": "garlic-cloves",
+     "qty": 2.0,
+     "name": "garlic cloves",
+     "note": "minced"
+    },
+    {
+     "ref": "soy-sauce",
+     "qty": 1.0,
+     "name": "soy sauce",
+     "unit": "tbsp"
+    },
+    {
+     "ref": "shaoxing-wine-or-dry-she",
+     "qty": 1.0,
+     "name": "Shaoxing wine or dry sherry",
+     "unit": "tbsp"
+    },
+    {
+     "ref": "toasted-sesame-oil",
+     "qty": 1.0,
+     "name": "toasted sesame oil",
+     "unit": "tsp"
+    },
+    {
+     "ref": "white-pepper",
+     "qty": 0.5,
+     "name": "white pepper",
+     "unit": "tsp"
+    },
+    {
+     "ref": "cornstarch",
+     "qty": 1.0,
+     "name": "cornstarch",
+     "unit": "tbsp"
+    },
+    "30 to 36 round dumpling wrappers (one 12 to 14 oz package)",
+    {
+     "ref": "neutral-oil",
+     "qty": 2.0,
+     "name": "neutral oil",
+     "unit": "tbsp",
+     "note": "for pan-frying"
+    },
+    "1 cup (240 ml) water, for steaming, used in batches",
+    "Dipping sauce: 3 tbsp soy sauce, 1 tbsp rice vinegar, 1 tsp sesame oil"
+   ],
+   "steps": [
+    "Toss the cabbage with the salt and let it sit 15 minutes. Squeeze it dry in a clean towel.",
+    "Mix the cabbage with the pork, scallions, ginger, garlic, soy sauce, wine, sesame oil, white pepper and cornstarch. Stir in one direction for about 1 minute until the mixture holds together.",
+    "To check the seasoning, cook a small spoonful in a pan until no pink remains (160°F / 71°C), taste, and adjust.",
+    "Put a heaped tablespoon of filling in the center of a wrapper. Wet the edge, fold in half and pleat to seal. Keep filled dumplings covered with a damp towel.",
+    "Heat 2 teaspoons of oil in a large nonstick skillet with a lid over medium-high heat. Add about 10 dumplings flat side down and cook 2 to 3 minutes until golden underneath.",
+    "Add 1/3 cup (80 ml) water, cover and steam 6 to 7 minutes, until the filling reaches 160°F (71°C). Uncover and cook 1 minute until the water is gone. Repeat with the remaining dumplings in two more batches.",
+    "Stir the dipping sauce ingredients together and serve with the hot dumplings. Refrigerate leftovers within 2 hours."
+   ]
+  },
+  {
+   "id": "w1pozole",
+   "origin_country": "mx",
+   "country": "mx",
+   "lang": "es",
+   "title": "Pozole rojo de cerdo",
+   "slug": "pozole-rojo-de-cerdo",
+   "intro": "Caldo de maíz cacahuazintle con cerdo y salsa de chiles guajillo y ancho. Rinde 6 a 8 porciones. Unas 2 horas y 30 minutos en total. Borrador: aún no probado en cocina.",
+   "ingredients": [
+    "1 kg de espaldilla de cerdo, en trozos de 4 cm",
+    "2500 ml de agua (2.5 litros)",
+    {
+     "ref": "cebolla",
+     "qty": 0.5,
+     "name": "cebolla"
+    },
+    {
+     "ref": "dientes-de-ajo",
+     "qty": 4.0,
+     "name": "dientes de ajo"
+    },
+    {
+     "ref": "hojas-de-laurel",
+     "qty": 2.0,
+     "name": "hojas de laurel"
+    },
+    {
+     "ref": "sal",
+     "qty": 2.0,
+     "name": "sal",
+     "unit": "tsp",
+     "note": "y más al gusto"
+    },
+    {
+     "ref": "chiles-guajillo",
+     "qty": 4.0,
+     "name": "chiles guajillo",
+     "note": "sin rabo, semillas ni venas"
+    },
+    {
+     "ref": "chiles-ancho",
+     "qty": 2.0,
+     "name": "chiles ancho",
+     "note": "sin rabo, semillas ni venas"
+    },
+    "1/4 de cebolla",
+    "2 dientes de ajo",
+    {
+     "ref": "oregano-mexicano",
+     "qty": 1.0,
+     "name": "orégano mexicano",
+     "unit": "tsp"
+    },
+    "1/4 de cucharadita de comino molido",
+    {
+     "ref": "maiz-cacahuazintle-preco",
+     "qty": 800.0,
+     "name": "maíz cacahuazintle precocido (cocido y escurrido)",
+     "unit": "g"
+    },
+    "Para servir: lechuga o repollo picado, rábanos en rodajas, cebolla picada, orégano, limón y tostadas"
+   ],
+   "steps": [
+    "Pon el cerdo en una olla grande con el agua, la 1/2 cebolla, los 4 dientes de ajo, el laurel y la sal. Hierve y retira la espuma de la superficie.",
+    "Baja el fuego, tapa y cuece 1 hora y 15 minutos a 1 hora y 30 minutos, hasta que la carne esté muy suave. Debe marcar al menos 63°C (145°F) en el centro; con esta cocción larga suele superarla por mucho.",
+    "Mientras tanto, tuesta los chiles en un comal 20 a 30 segundos por lado, sin quemarlos. Remójalos 15 minutos en agua caliente que los cubra.",
+    "Licúa los chiles con 1 taza (250 ml) de su agua de remojo, el 1/4 de cebolla, los 2 dientes de ajo, el orégano y el comino hasta que quede liso. Cuela la salsa.",
+    "Retira la carne y déjala reposar al menos 3 minutos. Escurre y enjuaga el maíz. Regresa la carne a la olla y agrega el maíz y la salsa colada.",
+    "Hierve suavemente 30 minutos, hasta que el caldo tome sabor. Prueba y ajusta la sal.",
+    "Sirve caliente con lechuga o repollo, rábano, cebolla, orégano, limón y tostadas. Refrigera las sobras dentro de 2 horas."
+   ]
+  },
+  {
+   "id": "w1enchiladas",
+   "origin_country": "mx",
+   "country": "mx",
+   "lang": "es",
+   "title": "Enchiladas rojas de pollo",
+   "slug": "enchiladas-rojas-de-pollo",
+   "intro": "Tortillas de maíz bañadas en salsa roja de guajillo y ancho, rellenas de pollo deshebrado. Rinde 4 porciones (12 enchiladas). Unos 55 minutos. Borrador: aún no probado en cocina.",
+   "ingredients": [
+    "2 pechugas de pollo (unos 600 g)",
+    "1/2 cebolla",
+    "2 dientes de ajo",
+    {
+     "ref": "sal",
+     "qty": 1.0,
+     "name": "sal",
+     "unit": "tsp",
+     "note": "y más al gusto"
+    },
+    {
+     "ref": "chiles-guajillo",
+     "qty": 5.0,
+     "name": "chiles guajillo",
+     "note": "sin rabo, semillas ni venas"
+    },
+    {
+     "ref": "chiles-ancho",
+     "qty": 2.0,
+     "name": "chiles ancho",
+     "note": "sin rabo, semillas ni venas"
+    },
+    {
+     "ref": "jitomates-guaje-roma",
+     "qty": 3.0,
+     "name": "jitomates guaje (roma)"
+    },
+    "1/4 de cebolla",
+    "1 diente de ajo",
+    "1 cucharada de aceite, para freír la salsa",
+    "1/2 taza (120 ml) de aceite, para pasar las tortillas",
+    {
+     "ref": "tortillas-de-maiz",
+     "qty": 12.0,
+     "name": "tortillas de maíz"
+    },
+    {
+     "ref": "queso-fresco-desmoronado",
+     "qty": 150.0,
+     "name": "queso fresco desmoronado",
+     "unit": "g"
+    },
+    "1/2 taza (120 ml) de crema",
+    "Cebolla picada y lechuga, para servir"
+   ],
+   "steps": [
+    "Pon el pollo en una olla con agua que lo cubra, la 1/2 cebolla, 2 dientes de ajo y la cucharadita de sal. Hierve, baja el fuego y cuece tapado 18 a 20 minutos, hasta que el centro llegue a 74°C. Reserva 1 taza (250 ml) del caldo. Deshebra el pollo.",
+    "Mientras tanto, tuesta los chiles en un comal 20 a 30 segundos por lado. Remójalos 15 minutos en agua caliente. Hierve los jitomates 5 minutos.",
+    "Licúa los chiles escurridos con los jitomates, el 1/4 de cebolla, 1 diente de ajo, 1 taza del caldo reservado y una pizca de sal. Cuela.",
+    "Calienta 1 cucharada de aceite en una sartén, vierte la salsa y cocina 5 minutos a fuego medio. Ajusta la sal.",
+    "Calienta 1/2 taza de aceite en otra sartén. Pasa cada tortilla 5 segundos por lado en el aceite caliente y luego por la salsa.",
+    "Rellena cada tortilla con pollo, enróllala y acomódala en un platón. Baña con la salsa restante.",
+    "Sirve con queso fresco, crema, cebolla y lechuga. Refrigera las sobras dentro de 2 horas."
+   ]
+  },
+  {
+   "id": "w1birria",
+   "origin_country": "mx",
+   "country": "mx",
+   "lang": "es",
+   "title": "Tacos de birria de res con consomé",
+   "slug": "tacos-de-birria-de-res",
+   "intro": "Res cocida lentamente en una salsa de chiles, servida en tacos dorados con queso y un consomé para mojar. Rinde unos 16 tacos. Unas 4 horas y media en total (1 hora de marinada y 3 de horno). Borrador: aún no probado en cocina.",
+   "ingredients": [
+    "1200 g de falda o aguayón de res, en 4 trozos grandes",
+    {
+     "ref": "chiles-guajillo",
+     "qty": 5.0,
+     "name": "chiles guajillo",
+     "note": "sin rabo, semillas ni venas"
+    },
+    {
+     "ref": "chiles-ancho",
+     "qty": 2.0,
+     "name": "chiles ancho",
+     "note": "sin rabo, semillas ni venas"
+    },
+    "3 chiles de árbol secos (opcional, para más picante)",
+    {
+     "ref": "jitomates-guaje-roma",
+     "qty": 3.0,
+     "name": "jitomates guaje (roma)"
+    },
+    {
+     "ref": "cebolla",
+     "qty": 0.5,
+     "name": "cebolla"
+    },
+    {
+     "ref": "dientes-de-ajo",
+     "qty": 5.0,
+     "name": "dientes de ajo"
+    },
+    {
+     "ref": "vinagre-de-manzana",
+     "qty": 2.0,
+     "name": "vinagre de manzana",
+     "unit": "tbsp"
+    },
+    {
+     "ref": "oregano-mexicano",
+     "qty": 1.0,
+     "name": "orégano mexicano",
+     "unit": "tsp"
+    },
+    {
+     "ref": "comino-molido",
+     "qty": 0.5,
+     "name": "comino molido",
+     "unit": "tsp"
+    },
+    {
+     "ref": "clavos-de-olor",
+     "qty": 3.0,
+     "name": "clavos de olor"
+    },
+    {
+     "ref": "raja-pequena-de-canela",
+     "qty": 1.0,
+     "name": "raja pequeña de canela"
+    },
+    {
+     "ref": "sal",
+     "qty": 2.0,
+     "name": "sal",
+     "unit": "tsp"
+    },
+    {
+     "ref": "hojas-de-laurel",
+     "qty": 2.0,
+     "name": "hojas de laurel"
+    },
+    "2 tazas (500 ml) de agua, y 1 taza (250 ml) más para licuar",
+    {
+     "ref": "tortillas-de-maiz",
+     "qty": 16.0,
+     "name": "tortillas de maíz"
+    },
+    {
+     "ref": "queso-oaxaca-deshebrado",
+     "qty": 250.0,
+     "name": "queso Oaxaca deshebrado",
+     "unit": "g"
+    },
+    "Cebolla y cilantro picados, y limón, para servir"
+   ],
+   "steps": [
+    "Tuesta los chiles en un comal 20 a 30 segundos por lado y remójalos 15 minutos en agua caliente. Hierve los jitomates 5 minutos.",
+    "Licúa los chiles escurridos con los jitomates, la cebolla, el ajo, el vinagre, el orégano, el comino, los clavos, la canela, la sal y 1 taza (250 ml) de agua hasta que quede liso. Cuela.",
+    "Unta la carne con la salsa en un recipiente y refrigérala al menos 1 hora y hasta una noche. No la dejes a temperatura ambiente.",
+    "Calienta el horno a 160°C. Pasa la carne con toda la salsa a una olla con tapa, agrega el laurel y 2 tazas (500 ml) de agua. Tapa bien y hornea 3 horas, hasta que la carne se deshaga con un tenedor y marque al menos 63°C (145°F) en el centro.",
+    "Retira la carne y déjala reposar al menos 3 minutos antes de deshebrar. Cuela el caldo, quítale la grasa roja de la superficie y reserva esa grasa. Mantén el caldo (consomé) caliente y ajusta la sal.",
+    "Moja cada tortilla en la grasa reservada y ponla en un comal caliente. Agrega queso y carne a la mitad, dobla y dora 1 a 2 minutos por lado.",
+    "Sirve los tacos con cebolla, cilantro y limón, y una taza de consomé caliente para mojar. Refrigera las sobras dentro de 2 horas."
+   ]
+  }
+ ]
+}
