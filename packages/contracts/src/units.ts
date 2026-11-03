@@ -70,10 +70,12 @@ function roundUsVolume(ml: number): Quantity {
 }
 
 export function fahrenheitToCelsius(f: number): number {
-  return Math.round(((f - 32) * 5) / 9);
+  // Ceil: a converted temperature is never below the exact value, so a
+  // minimum-doneness threshold is never rounded down into an unsafe number.
+  return Math.ceil(((f - 32) * 5) / 9 - 1e-9);
 }
 export function celsiusToFahrenheit(c: number): number {
-  return Math.round((c * 9) / 5 + 32);
+  return Math.ceil((c * 9) / 5 + 32 - 1e-9);
 }
 
 // ---------------------------------------------------------------------------

@@ -69,3 +69,13 @@ describe('translation rules in submissions', () => {
     expect(checkStructuredTranslation(src.ingredients, [{ ref: 'oil', qty: 1, unit: 'cup', name: 'aceite' }, '1 cebolla']).ok).toBe(false);
   });
 });
+
+import { fahrenheitToCelsius as _f2c, celsiusToFahrenheit as _c2f } from './units';
+describe('temperature conversion never rounds below the exact value', () => {
+  it('safety thresholds', () => {
+    expect(_f2c(160)).toBe(72); // exact 71.1
+    expect(_f2c(165)).toBe(74); // exact 73.9
+    expect(_c2f(74)).toBe(166); // exact 165.2
+    expect(_f2c(350)).toBe(177);
+  });
+});
