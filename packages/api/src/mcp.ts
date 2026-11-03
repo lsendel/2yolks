@@ -20,13 +20,25 @@ import {
   slugify,
   validateRecipeSubmission,
   SLUG_PATTERN,
+  checkAllergens,
+  checkStructuredTranslation,
+  checkTranslation,
+  ingredientText,
+  isStructured,
+  unitInfo,
+  unknownRefs,
 } from '@2yolks/contracts';
+import type { IngredientEntry, StructuredIngredient } from '@2yolks/contracts';
 
 export type McpBindings = {
   DB: D1Database;
   ADMIN_MCP_API_KEY?: string;
   MCP_READ_KEY?: string;
   MCP_NAMED_KEYS?: string;
+  // Fail-closed gate for translations.mark_reviewed. The human-vs-agent
+  // translation publication policy is unresolved, so review stays disabled
+  // until that policy decision enables it explicitly.
+  MCP_TRANSLATION_REVIEW?: string;
 };
 
 type Role = 'viewer' | 'editor' | 'admin';
@@ -197,7 +209,7 @@ const TOOLS: ToolDef[] = [
   {
     name: 'recipes.create_draft',
     description:
-      'Create a recipe draft (source + locales). The source is created uncleared, so the recipe cannot be served or published until sources.clear_rights. Same validation as public submissions. Executes only with confirmed: true; otherwise validates as a dry run.',
+      'Create a recipe draft (source + locales). Same validation as public submissions: ingredients may be strings or structured {ref, qty, qtyEnd?, unit?, name, note?} objects, exactly one original locale per submission, translations carry translationOf/translationMethod and pass the QA gate at creation. The source is created uncleared, so the recipe cannot be served or published until sources.clear_rights. Executes only with confirmed: true; otherwise validates as a dry run.',
     role: 'editor',
     inputSchema: {
       type: 'object',
@@ -212,12 +224,40 @@ const TOOLS: ToolDef[] = [
   {
     name: 'recipes.update_draft',
     description:
-      'Update title/intro/ingredients/steps of draft locales. Args: id, locales: [{country, lang, ...fields}]. Published locales are not editable; unpublish first.',
+      'Update title/intro/ingredients/steps of draft locales. Args: id, locales: [{country, lang, ...fields}]. Published locales are not editable; unpublish first. Translation provenance is fixed at creation; any edit to a translation clears its review stamp.',
     role: 'editor',
     inputSchema: {
       type: 'object',
       properties: { id: { type: 'string' }, locales: { type: 'array' } },
       required: ['id', 'locales'],
+    },
+  },
+  {
+    name: 'recipes.add_locale',
+    description:
+      "Add one draft locale to an existing recipe. Added locales are translations: translationOf ('country/lang' of the original locale) and translationMethod (human|machine) are required, and the translation QA gate runs against the stored source at creation. Ingredients may be strings or structured objects; step {i:ref} tokens must resolve.",
+    role: 'editor',
+    inputSchema: {
+      type: 'object',
+      properties: { id: { type: 'string' }, locale: { type: 'object' } },
+      required: ['id', 'locale'],
+    },
+  },
+  {
+    name: 'translations.mark_reviewed',
+    description:
+      'Stamp a translated draft locale as reviewed after re-running the QA gate against its stored source row (source must be published). Requires confirmed: true and a note; the server stamps time + authenticated reviewer, never caller content. Disabled unless the deployment enables translation review.',
+    role: 'admin',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string' },
+        country: { type: 'string' },
+        lang: { type: 'string' },
+        confirmed: { type: 'boolean' },
+        note: { type: 'string' },
+      },
+      required: ['id', 'country', 'lang', 'confirmed', 'note'],
     },
   },
   {
@@ -343,6 +383,107 @@ const MAX_LEN = { title: 200, intro: 2000, item: 500, excerpt: 500, body: 20000,
 const MAX_LOCALES = 12;
 const MAX_BODY_BYTES = 262_144;
 
+const REF_PATTERN = /^[a-z0-9-]{1,40}$/;
+// Mirrors the contracts MAX_LEN.item cap for ingredient/step entries.
+const MAX_ITEM = 1000;
+
+// Ingredients validation mirrors the shared contract's acceptance rules
+// (validateRecipeSubmission) so the MCP never rejects contract-valid content,
+// then canonicalizes structured objects down to the contract's fields before
+// storage so caller content cannot smuggle extra keys into ingredients_json.
+function canonicalizeIngredients(v: unknown): { ok: true; entries: IngredientEntry[] } | { ok: false; error: string } {
+  if (!Array.isArray(v) || v.length === 0 || v.length > 50) {
+    return { ok: false, error: 'ingredients must be an array of 1-50 entries' };
+  }
+  const entries: IngredientEntry[] = [];
+  for (const entry of v as unknown[]) {
+    if (typeof entry === 'string') {
+      if (entry.length === 0 || entry.length > MAX_ITEM) return { ok: false, error: 'ingredient strings must be 1-1000 chars' };
+      entries.push(entry);
+      continue;
+    }
+    if (typeof entry !== 'object' || entry === null || Array.isArray(entry) || !isStructured(entry)) {
+      return { ok: false, error: 'ingredient entries must be strings or {ref, qty, qtyEnd?, unit?, name, note?} objects' };
+    }
+    if (entry.name.length === 0 || entry.name.length > MAX_ITEM) return { ok: false, error: 'ingredient name must be 1-1000 chars' };
+    if (typeof entry.qty === 'number' && (!Number.isFinite(entry.qty) || entry.qty <= 0 || entry.qty > 1e6)) {
+      return { ok: false, error: 'ingredient qty must be a finite number in (0, 1e6]' };
+    }
+    const qtyEnd = entry.qtyEnd;
+    if (qtyEnd !== undefined && qtyEnd !== null) {
+      if (typeof qtyEnd !== 'number' || !Number.isFinite(qtyEnd) || qtyEnd <= 0 || qtyEnd > 1e6) {
+        return { ok: false, error: 'ingredient qtyEnd must be null or a finite number in (0, 1e6]' };
+      }
+      if (typeof entry.qty === 'number' && qtyEnd < entry.qty) return { ok: false, error: 'ingredient qtyEnd must be >= qty' };
+    }
+    if (entry.unit !== undefined && entry.unit !== '' && unitInfo(entry.unit) === undefined && entry.qty !== null && !/^[a-z]+$/.test(entry.unit)) {
+      return { ok: false, error: `unknown unit: ${entry.unit}` };
+    }
+    const note = entry.note;
+    if (note !== undefined && (typeof note !== 'string' || note.length > MAX_ITEM)) {
+      return { ok: false, error: 'ingredient note must be a string of at most 1000 chars' };
+    }
+    const canonical: StructuredIngredient = { ref: entry.ref, qty: entry.qty, name: entry.name };
+    if (qtyEnd !== undefined) canonical.qtyEnd = qtyEnd;
+    if (entry.unit !== undefined) canonical.unit = entry.unit;
+    if (note !== undefined) canonical.note = note;
+    entries.push(canonical);
+  }
+  return { ok: true, entries };
+}
+
+function validateStepsArray(v: unknown): { ok: true; steps: string[] } | { ok: false; error: string } {
+  if (!Array.isArray(v) || v.length === 0 || !v.every((x) => typeof x === 'string' && (x as string).length > 0 && (x as string).length <= MAX_ITEM)) {
+    return { ok: false, error: 'steps must be a non-empty string array (1-1000 chars each)' };
+  }
+  return { ok: true, steps: v as string[] };
+}
+
+// Steps reference structured ingredient amounts by {i:ref} token; every
+// referenced ref must exist so numbers cannot drift from the ingredient list.
+function validateStepTokens(steps: string[], entries: IngredientEntry[]): string | null {
+  const structured = entries.filter((e): e is StructuredIngredient => typeof e !== 'string');
+  for (const step of steps) {
+    const missing = unknownRefs(step, structured);
+    if (missing.length) {
+      return `steps reference unknown ingredient refs: ${[...new Set(missing)].join(', ')}`;
+    }
+  }
+  return null;
+}
+
+// The deterministic translation gate, shared by recipes.add_locale (at
+// creation) and translations.mark_reviewed (re-verified against the stored
+// source row): step numbers/tokens, structured quantity equality, allergen
+// terms, and step-token resolution.
+function translationGateProblems(source: { ingredients: IngredientEntry[]; steps: string[] }, target: { ingredients: IngredientEntry[]; steps: string[] }): string[] {
+  const problems: string[] = [];
+  problems.push(...checkTranslation({ steps: source.steps }, { steps: target.steps }).problems);
+  problems.push(...checkStructuredTranslation(source.ingredients, target.ingredients).problems);
+  problems.push(...checkAllergens(ingredientText(source.ingredients), ingredientText(target.ingredients)).problems);
+  const tokenErr = validateStepTokens(target.steps, target.ingredients);
+  if (tokenErr) problems.push(tokenErr);
+  return problems;
+}
+
+// translation_reviewed_at/_by/_kind are server-stamped by
+// translations.mark_reviewed, never accepted from caller content.
+function rejectCallerReviewFields(l: Record<string, unknown>): string | null {
+  for (const k of ['translation_reviewed_at', 'translationReviewedAt', 'translation_reviewed_by', 'translationReviewedBy', 'translation_reviewer_kind', 'translationReviewerKind']) {
+    if (l[k] !== undefined) return `${k} is server-stamped by translations.mark_reviewed, never accepted from content`;
+  }
+  return null;
+}
+
+function readProvenance(l: Record<string, unknown>): { of?: string; method?: string } {
+  const of = l['translationOf'] ?? l['translation_of'];
+  const method = l['translationMethod'] ?? l['translation_method'];
+  return {
+    of: typeof of === 'string' ? of : undefined,
+    method: typeof method === 'string' ? method : undefined,
+  };
+}
+
 // --- Helpers ----------------------------------------------------------------
 
 function rpcError(id: unknown, code: number, message: string) {
@@ -376,7 +517,7 @@ function limitArg(v: unknown): number {
 // --- Tool handlers ------------------------------------------------------------
 // Each returns { status, data }; data is an error body when status >= 400.
 
-type CallCtx = { db: D1Database; role: Role; actor: string; declaredCaller?: string | null; dryRun?: boolean };
+type CallCtx = { db: D1Database; role: Role; actor: string; declaredCaller?: string | null; dryRun?: boolean; translationReviewEnabled?: boolean };
 type CallResult = { status: number; data: unknown };
 
 async function callRecipesList(db: D1Database, args: Record<string, unknown>): Promise<CallResult> {
@@ -426,15 +567,33 @@ async function callSourcesList(db: D1Database): Promise<CallResult> {
 }
 
 async function callRecipesCreateDraft(ctx: CallCtx, args: Record<string, unknown>): Promise<CallResult> {
-  // Only validated fields are read from result.value: injected extras (e.g. a
-  // cleared_at or status field in the request body) cannot reach the insert.
+  // The shared contract validator owns shape, structured ingredients, the
+  // exactly-one-original rule and the translation QA floor for multi-locale
+  // submissions. Only validated fields reach the insert: injected extras
+  // (cleared_at, status) cannot.
   const rawLocales = args['locales'];
   if (Array.isArray(rawLocales) && rawLocales.length > MAX_LOCALES) {
     return { status: 400, data: { error: `at most ${MAX_LOCALES} locales per call` } };
   }
+  if (Array.isArray(rawLocales)) {
+    for (const entry of rawLocales as unknown[]) {
+      if (typeof entry !== 'object' || entry === null) continue;
+      const reject = rejectCallerReviewFields(entry as Record<string, unknown>);
+      if (reject) return { status: 400, data: { error: reject } };
+    }
+  }
   const result = validateRecipeSubmission(args);
   if (!result.ok) return { status: 400, data: { error: 'validation failed', failures: result.errors } };
   const sub = result.value;
+  // Canonicalize structured ingredients for storage and verify step tokens.
+  const storedIngredients: IngredientEntry[][] = [];
+  for (const l of sub.locales) {
+    const canon = canonicalizeIngredients(l.ingredients);
+    if (!canon.ok) return { status: 400, data: { error: canon.error } };
+    const tokenErr = validateStepTokens(l.steps, canon.entries);
+    if (tokenErr) return { status: 400, data: { error: tokenErr } };
+    storedIngredients.push(canon.entries);
+  }
   if (ctx.dryRun) {
     return { status: 200, data: { dry_run: true, ok: true, locales: sub.locales.length } };
   }
@@ -448,10 +607,10 @@ async function callRecipesCreateDraft(ctx: CallCtx, args: Record<string, unknown
     ctx.db
       .prepare('INSERT INTO recipes (id, source_id, origin_country, image_key, created_at) VALUES (?, ?, ?, NULL, ?)')
       .bind(id, sourceId, sub.originCountry ?? null, now),
-    ...sub.locales.map((l) =>
+    ...sub.locales.map((l, i) =>
       ctx.db
         .prepare(
-          'INSERT INTO recipe_locales (recipe_id, country, lang, title, slug, intro, ingredients_json, steps_json, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          'INSERT INTO recipe_locales (recipe_id, country, lang, title, slug, intro, ingredients_json, steps_json, status, translation_of, translation_method) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
         )
         .bind(
           id,
@@ -460,9 +619,11 @@ async function callRecipesCreateDraft(ctx: CallCtx, args: Record<string, unknown
           l.title,
           l.slug ?? slugify(l.title),
           l.intro ?? null,
-          JSON.stringify(l.ingredients),
+          JSON.stringify(storedIngredients[i]),
           JSON.stringify(l.steps),
           'draft',
+          l.translationOf ?? null,
+          l.translationMethod ?? null,
         ),
     ),
     // Audit in the same atomic batch as the write.
@@ -493,6 +654,10 @@ async function callRecipesUpdateDraft(ctx: CallCtx, args: Record<string, unknown
     return { status: 400, data: { error: 'id and non-empty locales array required' } };
   }
   if (locales.length > MAX_LOCALES) return { status: 400, data: { error: `at most ${MAX_LOCALES} locales per call` } };
+  const existingRows = await ctx.db
+    .prepare('SELECT country, lang, status, ingredients_json, steps_json, translation_of FROM recipe_locales WHERE recipe_id = ?')
+    .bind(id)
+    .all<{ country: string; lang: string; status: string; ingredients_json: string; steps_json: string; translation_of: string | null }>();
   // Pass 1: validate every locale before any write; a multi-locale call never
   // applies partially.
   type Planned = { key: string; stmt: D1PreparedStatement };
@@ -500,29 +665,36 @@ async function callRecipesUpdateDraft(ctx: CallCtx, args: Record<string, unknown
   for (const entry of locales as unknown[]) {
     if (typeof entry !== 'object' || entry === null) continue;
     const l = entry as Record<string, unknown>;
+    const reject = rejectCallerReviewFields(l);
+    if (reject) return { status: 400, data: { error: reject } };
+    if (l['translationOf'] !== undefined || l['translation_of'] !== undefined || l['translationMethod'] !== undefined || l['translation_method'] !== undefined) {
+      // Provenance is fixed at creation (create_draft/add_locale): changing it
+      // would break the exactly-one-original invariant, so it is not editable.
+      return { status: 400, data: { error: 'translation provenance is set at locale creation and is not editable' } };
+    }
     const country = str(l['country'], 8);
     const lang = str(l['lang'], 8);
     if (!country || !lang) return { status: 400, data: { error: 'each locale needs country and lang' } };
-    const existing = await ctx.db
-      .prepare('SELECT status, ingredients_json, steps_json FROM recipe_locales WHERE recipe_id = ? AND country = ? AND lang = ?')
-      .bind(id, country, lang)
-      .first<{ status: string; ingredients_json: string; steps_json: string }>();
+    const existing = existingRows.results.find((r) => r.country === country && r.lang === lang);
     if (!existing) return { status: 404, data: { error: 'locale not found', id, country, lang } };
     if (existing.status !== 'draft') {
       return { status: 409, data: { error: 'only draft locales are editable', country, lang, status: existing.status } };
     }
-    // Fail closed if the stored row has moved past plain string arrays (e.g.
-    // structured quantities): this tool version must not rewrite that shape.
-    for (const stored of [existing.ingredients_json, existing.steps_json]) {
-      try {
-        const parsed: unknown = JSON.parse(stored);
-        if (!Array.isArray(parsed) || !parsed.every((x) => typeof x === 'string')) {
-          return { status: 409, data: { error: 'stored locale shape is not editable by this tool version', country, lang } };
-        }
-      } catch {
+    // Stored ingredients may be strings or schema-valid structured objects;
+    // anything else is a shape this tool must not rewrite.
+    let storedIngredients: IngredientEntry[];
+    let storedSteps: string[];
+    try {
+      storedIngredients = JSON.parse(existing.ingredients_json) as IngredientEntry[];
+      storedSteps = JSON.parse(existing.steps_json) as string[];
+      const check = canonicalizeIngredients(storedIngredients);
+      if (!check.ok || !Array.isArray(storedSteps) || !storedSteps.every((x) => typeof x === 'string')) {
         return { status: 409, data: { error: 'stored locale shape is not editable by this tool version', country, lang } };
       }
+    } catch {
+      return { status: 409, data: { error: 'stored locale shape is not editable by this tool version', country, lang } };
     }
+
     const sets: string[] = [];
     const params: unknown[] = [];
     if (l['title'] !== undefined) {
@@ -537,14 +709,32 @@ async function callRecipesUpdateDraft(ctx: CallCtx, args: Record<string, unknown
       sets.push('intro = ?');
       params.push(intro);
     }
-    for (const col of ['ingredients', 'steps'] as const) {
-      const arr = l[col];
-      if (arr === undefined) continue;
-      if (!Array.isArray(arr) || arr.length === 0 || !arr.every((x) => typeof x === 'string' && x.length > 0 && x.length <= MAX_LEN.item)) {
-        return { status: 400, data: { error: `${col} must be a non-empty string array` } };
-      }
-      sets.push(`${col}_json = ?`);
-      params.push(JSON.stringify(arr));
+    // Ingredients and steps are validated together: step {i:ref} tokens must
+    // resolve against the effective (new or stored) ingredient list.
+    let effective: IngredientEntry[] = storedIngredients;
+    if (l['ingredients'] !== undefined) {
+      const canon = canonicalizeIngredients(l['ingredients']);
+      if (!canon.ok) return { status: 400, data: { error: canon.error } };
+      effective = canon.entries;
+      sets.push('ingredients_json = ?');
+      params.push(JSON.stringify(canon.entries));
+    }
+    if (l['steps'] !== undefined) {
+      const steps = validateStepsArray(l['steps']);
+      if (!steps.ok) return { status: 400, data: { error: steps.error } };
+      const tokenErr = validateStepTokens(steps.steps, effective);
+      if (tokenErr) return { status: 400, data: { error: tokenErr } };
+      sets.push('steps_json = ?');
+      params.push(JSON.stringify(steps.steps));
+    } else if (l['ingredients'] !== undefined) {
+      // Ingredients changed but steps did not: stored steps must still resolve.
+      const tokenErr = validateStepTokens(storedSteps, effective);
+      if (tokenErr) return { status: 400, data: { error: tokenErr } };
+    }
+    if (sets.length > 0 && existing.translation_of !== null) {
+      // Any edit to a translation clears its review stamp, so a reviewed
+      // translation cannot be silently altered before publish.
+      sets.push('translation_reviewed_at = NULL', 'translation_reviewed_by = NULL', 'translation_reviewer_kind = NULL');
     }
     if (!sets.length) continue;
     planned.push({
@@ -561,6 +751,157 @@ async function callRecipesUpdateDraft(ctx: CallCtx, args: Record<string, unknown
     await ctx.db.batch([...planned.map((pl) => pl.stmt), auditStmt(ctx, 'recipes.update_draft', id, { updated })]);
   }
   return { status: 200, data: { id, updated } };
+}
+
+async function callRecipesAddLocale(ctx: CallCtx, args: Record<string, unknown>): Promise<CallResult> {
+  const id = str(args['id'], 64);
+  const l = (typeof args['locale'] === 'object' && args['locale'] !== null ? args['locale'] : {}) as Record<string, unknown>;
+  if (!id) return { status: 400, data: { error: 'id required' } };
+  const recipe = await ctx.db.prepare('SELECT id FROM recipes WHERE id = ?').bind(id).first();
+  if (!recipe) return { status: 404, data: { error: 'recipe not found', id } };
+  const reject = rejectCallerReviewFields(l);
+  if (reject) return { status: 400, data: { error: reject } };
+  const country = str(l['country'], 8);
+  const lang = str(l['lang'], 8);
+  const title = str(l['title'], MAX_LEN.title);
+  if (!country || !lang || !title) return { status: 400, data: { error: 'locale needs country, lang, title' } };
+  if (!getCountry(country)) return { status: 400, data: { error: 'unknown country', country } };
+  if (!localesFor(country).includes(lang)) return { status: 400, data: { error: 'locale not enabled for this country', country, lang } };
+  const intro = l['intro'] === undefined || l['intro'] === null ? null : str(l['intro'], MAX_LEN.intro);
+  if (l['intro'] !== undefined && l['intro'] !== null && !intro) return { status: 400, data: { error: 'invalid intro' } };
+  const canon = canonicalizeIngredients(l['ingredients']);
+  if (!canon.ok) return { status: 400, data: { error: canon.error } };
+  const steps = validateStepsArray(l['steps']);
+  if (!steps.ok) return { status: 400, data: { error: steps.error } };
+  const tokenErr = validateStepTokens(steps.steps, canon.entries);
+  if (tokenErr) return { status: 400, data: { error: tokenErr } };
+
+  const existingRows = await ctx.db
+    .prepare('SELECT country, lang, ingredients_json, steps_json, translation_of FROM recipe_locales WHERE recipe_id = ?')
+    .bind(id)
+    .all<{ country: string; lang: string; ingredients_json: string; steps_json: string; translation_of: string | null }>();
+  const knownKeys = new Set(existingRows.results.map((r) => `${r.country}/${r.lang}`));
+  if (knownKeys.has(`${country}/${lang}`)) {
+    return { status: 409, data: { error: 'locale already exists', id, country, lang } };
+  }
+  // A locale added to an existing recipe is always a translation: the single
+  // original already exists and the new locale must point at it.
+  const prov = readProvenance(l);
+  if (!prov.of || !prov.method) {
+    return { status: 400, data: { error: "added locales must carry translationOf + translationMethod ('human'|'machine')" } };
+  }
+  if (prov.method !== 'human' && prov.method !== 'machine') {
+    return { status: 400, data: { error: "translationMethod must be 'human' or 'machine'" } };
+  }
+  if (prov.of === `${country}/${lang}`) {
+    return { status: 400, data: { error: 'translationOf cannot reference the locale itself' } };
+  }
+  const source = existingRows.results.find((r) => `${r.country}/${r.lang}` === prov.of);
+  if (!source) return { status: 400, data: { error: `translationOf target not found on this recipe: ${prov.of}` } };
+  if (source.translation_of !== null) {
+    return { status: 400, data: { error: 'translationOf must name the original locale, not another translation' } };
+  }
+  // The translation QA floor runs at creation, against the stored source row.
+  let srcContent: { ingredients: IngredientEntry[]; steps: string[] };
+  try {
+    srcContent = { ingredients: JSON.parse(source.ingredients_json) as IngredientEntry[], steps: JSON.parse(source.steps_json) as string[] };
+  } catch {
+    return { status: 409, data: { error: 'stored source locale content is not parseable' } };
+  }
+  const problems = translationGateProblems(srcContent, { ingredients: canon.entries, steps: steps.steps });
+  if (problems.length) {
+    return { status: 400, data: { error: 'translation QA gate failed', problems } };
+  }
+  const slug = str(l['slug'], 200) ?? slugify(title);
+  if (!SLUG_PATTERN.test(slug)) return { status: 400, data: { error: 'invalid slug' } };
+  if (ctx.dryRun) return { status: 200, data: { dry_run: true, ok: true, id, locale: `${country}/${lang}` } };
+  try {
+    await ctx.db.batch([
+      ctx.db
+        .prepare(
+          'INSERT INTO recipe_locales (recipe_id, country, lang, title, slug, intro, ingredients_json, steps_json, status, translation_of, translation_method) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        )
+        .bind(id, country, lang, title, slug, intro, JSON.stringify(canon.entries), JSON.stringify(steps.steps), 'draft', prov.of, prov.method),
+      auditStmt(ctx, 'recipes.add_locale', id, { locale: `${country}/${lang}`, translation_of: prov.of }),
+    ]);
+  } catch (e) {
+    if (String(e).includes('UNIQUE constraint')) {
+      return { status: 409, data: { error: 'a locale with this country/lang/slug already exists', slug } };
+    }
+    throw e;
+  }
+  return { status: 201, data: { id, locale: `${country}/${lang}`, status: 'draft', translation_of: prov.of } };
+}
+
+async function callMarkReviewed(ctx: CallCtx, args: Record<string, unknown>): Promise<CallResult> {
+  // Fail closed while the human-vs-agent translation publication policy is
+  // unresolved: the tool exists only when the deployment opts in.
+  if (!ctx.translationReviewEnabled) {
+    return { status: 403, data: { error: 'translation review is not enabled on this deployment' } };
+  }
+  const id = str(args['id'], 64);
+  const country = str(args['country'], 8);
+  const lang = str(args['lang'], 8);
+  if (!id || !country || !lang) return { status: 400, data: { error: 'id, country and lang required' } };
+  if (args['confirmed'] !== true) {
+    return { status: 400, data: { error: 'confirmed: true required to mark a translation reviewed' } };
+  }
+  const note = str(args['note'], 500);
+  if (!note) return { status: 400, data: { error: 'note required (what the reviewer checked)' } };
+  type Row = {
+    status: string;
+    ingredients_json: string;
+    steps_json: string;
+    translation_of: string | null;
+    translation_reviewed_at: string | null;
+  };
+  const target = await ctx.db
+    .prepare('SELECT status, ingredients_json, steps_json, translation_of, translation_reviewed_at FROM recipe_locales WHERE recipe_id = ? AND country = ? AND lang = ?')
+    .bind(id, country, lang)
+    .first<Row>();
+  if (!target) return { status: 404, data: { error: 'locale not found', id, country, lang } };
+  if (target.status !== 'draft') return { status: 409, data: { error: 'only draft locales are reviewed', status: target.status } };
+  if (!target.translation_of) return { status: 409, data: { error: 'locale is not a translation (no translation_of)' } };
+  if (target.translation_reviewed_at) return { status: 409, data: { error: 'translation already reviewed; editing clears the stamp' } };
+  const m = /^([a-z]{2})\/([a-z]{2})$/.exec(target.translation_of);
+  if (!m) return { status: 409, data: { error: 'stored translation_of is malformed', translation_of: target.translation_of } };
+  const source = await ctx.db
+    .prepare('SELECT status, ingredients_json, steps_json FROM recipe_locales WHERE recipe_id = ? AND country = ? AND lang = ?')
+    .bind(id, m[1], m[2])
+    .first<{ status: string; ingredients_json: string; steps_json: string }>();
+  if (!source) return { status: 409, data: { error: 'source locale not found', translation_of: target.translation_of } };
+  if (source.status !== 'published') {
+    return { status: 409, data: { error: 'source locale must be published before its translations are reviewed', translation_of: target.translation_of } };
+  }
+
+  let srcContent: { ingredients: IngredientEntry[]; steps: string[] };
+  let dstContent: { ingredients: IngredientEntry[]; steps: string[] };
+  try {
+    srcContent = { ingredients: JSON.parse(source.ingredients_json) as IngredientEntry[], steps: JSON.parse(source.steps_json) as string[] };
+    dstContent = { ingredients: JSON.parse(target.ingredients_json) as IngredientEntry[], steps: JSON.parse(target.steps_json) as string[] };
+  } catch {
+    return { status: 409, data: { error: 'stored locale content is not parseable' } };
+  }
+  const problems = translationGateProblems(srcContent, dstContent);
+
+  if (problems.length) {
+    // Failed reviews are audited too: the attempt is evidence.
+    await ctx.db.batch([
+      auditStmt(ctx, 'translations.mark_reviewed', id, { locale: `${country}/${lang}`, ok: false, problems, note }),
+    ]);
+    return { status: 409, data: { error: 'translation QA gate failed', problems } };
+  }
+  if (ctx.dryRun) return { status: 200, data: { dry_run: true, ok: true, id, locale: `${country}/${lang}` } };
+  // Server stamps the review: time and reviewer come from the authenticated
+  // key, never from caller content. reviewer_kind stays NULL: possessing a
+  // key proves neither a human nor an agent reviewer.
+  await ctx.db.batch([
+    ctx.db
+      .prepare("UPDATE recipe_locales SET translation_reviewed_at = datetime('now'), translation_reviewed_by = ?, translation_reviewer_kind = NULL WHERE recipe_id = ? AND country = ? AND lang = ?")
+      .bind(ctx.actor, id, country, lang),
+    auditStmt(ctx, 'translations.mark_reviewed', id, { locale: `${country}/${lang}`, ok: true, translation_of: target.translation_of, note, reviewer: ctx.actor }),
+  ]);
+  return { status: 200, data: { id, locale: `${country}/${lang}`, reviewed: true, reviewer: ctx.actor } };
 }
 
 async function callStatusChange(
@@ -588,6 +929,30 @@ async function callStatusChange(
         status: 409,
         data: { error: 'source rights not cleared', id, hint: 'sources.clear_rights after rights review' },
       };
+    }
+    if (target === 'published') {
+      // A translated locale publishes only after translations.mark_reviewed
+      // has stamped it. Unreviewed translations fail closed.
+      const conds = ['recipe_id = ?', 'translation_of IS NOT NULL', 'translation_reviewed_at IS NULL', "status = 'draft'"];
+      const params: unknown[] = [id];
+      if (country && lang) {
+        conds.push('country = ?', 'lang = ?');
+        params.push(country, lang);
+      }
+      const unreviewed = await ctx.db
+        .prepare(`SELECT country, lang FROM recipe_locales WHERE ${conds.join(' AND ')}`)
+        .bind(...params)
+        .all<{ country: string; lang: string }>();
+      if (unreviewed.results.length) {
+        return {
+          status: 409,
+          data: {
+            error: 'translated locales are not reviewed',
+            locales: unreviewed.results.map((r) => `${r.country}/${r.lang}`),
+            hint: 'translations.mark_reviewed (when translation review is enabled on this deployment)',
+          },
+        };
+      }
     }
   } else {
     const post = await ctx.db.prepare('SELECT id FROM blog_posts WHERE id = ?').bind(id).first();
@@ -865,6 +1230,20 @@ async function callTool(ctx: CallCtx, name: string, args: Record<string, unknown
       data: { error: 'insufficient role', tool: name, needs: tool.role, has: ctx.role },
     };
   }
+  // Every write commits content + audit in one D1 batch, so an unexpected
+  // failure means nothing was written: return a structured, retry-safe 500
+  // instead of a bare crash that invites a blind retry.
+  try {
+    return await dispatch(ctx, name, args);
+  } catch {
+    return {
+      status: 500,
+      data: { error: 'write failed before commit; content and audit are atomic, so nothing was written and the call is safe to retry' },
+    };
+  }
+}
+
+async function dispatch(ctx: CallCtx, name: string, args: Record<string, unknown>): Promise<CallResult> {
   switch (name) {
     case 'recipes.list':
       return callRecipesList(ctx.db, args);
@@ -876,6 +1255,10 @@ async function callTool(ctx: CallCtx, name: string, args: Record<string, unknown
       return callRecipesCreateDraft(ctx, args);
     case 'recipes.update_draft':
       return callRecipesUpdateDraft(ctx, args);
+    case 'recipes.add_locale':
+      return callRecipesAddLocale(ctx, args);
+    case 'translations.mark_reviewed':
+      return callMarkReviewed(ctx, args);
     case 'recipes.publish':
       return callStatusChange(ctx, args, 'recipe', 'published');
     case 'recipes.unpublish':
@@ -937,6 +1320,7 @@ async function handleRpc(c: Context<{ Bindings: McpBindings }>) {
     role: auth.role,
     actor: auth.actor,
     declaredCaller: auth.declared,
+    translationReviewEnabled: Boolean(c.env.MCP_TRANSLATION_REVIEW),
   };
 
   // Write semantics are identical on both wire shapes: an explicit

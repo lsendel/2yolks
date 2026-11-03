@@ -84,7 +84,7 @@ function makeD1(sqlite: DatabaseSync): D1Database {
 
 function migratedD1(): D1Database {
   const sqlite = new DatabaseSync(':memory:');
-  for (const file of ['0001_init.sql', '0002_mcp_blog.sql']) {
+  for (const file of ['0001_init.sql', '0002_mcp_blog.sql', '0003_quality_translation.sql']) {
     const sql = readFileSync(new URL(`../migrations/${file}`, import.meta.url), 'utf8');
     sqlite.exec(sql);
   }
@@ -385,6 +385,50 @@ describe('MCP hardening', () => {
     expect((second.data as { existing_id: string }).existing_id).toBe(first.data?.['id']);
   });
 
+  it('treats an unconfirmed write on the JSON-RPC transport as a dry run, same as shorthand', async () => {
+    const dry = await toolCall(EDITOR_KEY, 'recipes.create_draft', RECIPE);
+    expect(dry.isError).toBe(false);
+    expect(dry.data?.['dry_run']).toBe(true);
+    expect(await dbCount('recipes')).toBe(0);
+    const exec = await toolCall(EDITOR_KEY, 'recipes.create_draft', { ...RECIPE, confirmed: true });
+    expect(exec.isError).toBe(false);
+    expect(await dbCount('recipes')).toBe(1);
+  });
+
+  it('enforces the same role gates on both transports', async () => {
+    const viaRpc = await toolCall(READ_KEY, 'recipes.create_draft', { ...RECIPE, confirmed: true });
+    expect(viaRpc.isError).toBe(true);
+    expect(JSON.stringify(viaRpc.data)).toContain('insufficient role');
+    const viaShorthand = await shorthand(READ_KEY, { name: 'recipes.create_draft', confirmed: true, arguments: RECIPE });
+    expect(viaShorthand.status).toBe(403);
+    expect(await dbCount('recipes')).toBe(0);
+  });
+
+  it('blog.publish refuses without confirmed + review note, even for admin', async () => {
+    const created = await toolCall(EDITOR_KEY, 'blog.create_draft', {
+      author: 'harvester-1',
+      confirmed: true,
+      locales: [{ country: 'us', lang: 'en', title: 'T', body: 'Body text for the blog post.' }],
+    });
+    const id = created.data?.['id'] as string;
+    const noReview = await toolCall(ADMIN_KEY, 'blog.publish', { id, confirmed: true });
+    expect(noReview.isError).toBe(true);
+    expect(JSON.stringify(noReview.data)).toContain('review');
+    const noConfirm = await toolCall(ADMIN_KEY, 'blog.publish', { id, review: 'looks fine' });
+    expect(noConfirm.isError).toBe(true);
+    expect(JSON.stringify(noConfirm.data)).toContain('confirmed');
+    const row = await DB.prepare('SELECT status FROM blog_post_locales WHERE post_id = ?').bind(id).first<{ status: string }>();
+    expect(row!.status).toBe('draft');
+  });
+
+  it('commits no content when the audit write fails (no blind-retry 500s)', async () => {
+    DB.exec('DROP TABLE mcp_audit');
+    const res = await toolCall(EDITOR_KEY, 'recipes.create_draft', { ...RECIPE, confirmed: true });
+    expect(res.isError).toBe(true);
+    expect(await dbCount('recipes')).toBe(0);
+    expect(await dbCount('sources')).toBe(0);
+  });
+
   it('attributes audit rows to the authenticated key, not the caller header', async () => {
     await toolCall(EDITOR_KEY, 'recipes.create_draft', { ...RECIPE, confirmed: true }); // header-less JSON-RPC
     const res = await app.request(
@@ -446,5 +490,307 @@ describe('MCP hardening', () => {
     expect(dry.data?.['dry_run']).toBe(true);
     const listed = await toolCall(READ_KEY, 'recipes.list', {});
     expect((listed.data?.['recipes'] as unknown[]).length).toBe(0);
+  });
+});
+
+const STRUCTURED_RECIPE = {
+  source: { name: 'Test Kitchen', url: 'https://example.com/r', license: 'CC0-1.0' },
+  originCountry: 'us',
+  locales: [
+    {
+      country: 'us',
+      lang: 'en',
+      title: 'Structured Pancakes',
+      ingredients: [
+        { ref: 'flour', qty: 2, unit: 'cup', name: 'flour' },
+        { ref: 'eggs', qty: 2, name: 'eggs' },
+        { ref: 'milk', qty: 1, unit: 'cup', name: 'milk' },
+      ],
+      steps: ['Whisk {i:eggs} into {i:flour}.', 'Add {i:milk}.', 'Cook at {t:350F} for 20 minutes.'],
+    },
+  ],
+};
+
+const TRANSLATED_RECIPE = {
+  source: { name: 'Test Kitchen', url: 'https://example.com/r', license: 'CC0-1.0' },
+  originCountry: 'us',
+  locales: [
+    {
+      country: 'us',
+      lang: 'en',
+      title: 'Test Pancakes',
+      ingredients: ['2 cups flour', '2 eggs', '1 cup milk', '1 tsp salt'],
+      steps: ['Mix.', 'Cook 2 minutes per side.', 'Serve.'],
+    },
+    {
+      country: 'mx',
+      lang: 'es',
+      title: 'Panqueques de prueba',
+      translationOf: 'us/en',
+      translationMethod: 'machine',
+      ingredients: ['2 tazas de harina', '2 huevos', '1 taza de leche', '1 pizca de sal'],
+      steps: ['Mezclar.', 'Cocinar 2 minutos por lado.', 'Servir.'],
+    },
+  ],
+};
+
+async function dbCount(table: string): Promise<number> {
+  const r = await DB.prepare(`SELECT COUNT(*) AS n FROM ${table}`).first<{ n: number }>();
+  return r!.n;
+}
+
+async function toolCallEnv(extra: Record<string, string>, token: string, name: string, args: Record<string, unknown>) {
+  const res = await app.request(
+    'https://2yolks.com/api/admin/mcp',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: JSON.stringify(rpc('tools/call', { name, arguments: args })),
+    },
+    env(DB, extra),
+  );
+  const body = (await res.json()) as { result?: { content?: { text: string }[]; isError?: boolean } };
+  const text = body.result?.content?.[0]?.text;
+  return {
+    status: res.status,
+    isError: body.result?.isError === true,
+    data: text ? (JSON.parse(text) as Record<string, unknown>) : undefined,
+  };
+}
+
+describe('MCP structured ingredients and translation provenance (contracts, migration 0003)', () => {
+  beforeEach(() => {
+    DB = migratedD1();
+  });
+
+  it('accepts structured ingredients with resolvable tokens and stores them verbatim', async () => {
+    const created = await toolCall(EDITOR_KEY, 'recipes.create_draft', { ...STRUCTURED_RECIPE, confirmed: true });
+    expect(created.isError).toBe(false);
+    const { id } = created.data as { id: string };
+    const row = await DB.prepare('SELECT ingredients_json FROM recipe_locales WHERE recipe_id = ?').bind(id).first<{ ingredients_json: string }>();
+    const stored = JSON.parse(row!.ingredients_json) as unknown[];
+    expect(stored[0]).toEqual({ ref: 'flour', qty: 2, unit: 'cup', name: 'flour' });
+  });
+
+  it('rejects malformed structured ingredients', async () => {
+    const base = STRUCTURED_RECIPE.locales[0];
+    const bad = [
+      [{ ref: 'flour', qty: 2, unit: 'cup', name: 'flour', extra: 'smuggled' }],
+      [{ ref: 'Flour!', qty: 2, name: 'flour' }],
+      [{ ref: 'flour', qty: 3, qtyEnd: 2, name: 'flour' }],
+      [{ ref: 'flour', qty: 2, unit: 'smoot', name: 'flour' }],
+      [{ ref: 'flour', qty: Number.NaN, name: 'flour' }],
+    ];
+    for (const ingredients of bad) {
+      const res = await toolCall(EDITOR_KEY, 'recipes.create_draft', {
+        ...STRUCTURED_RECIPE,
+        locales: [{ ...base, ingredients }],
+        confirmed: true,
+      });
+      expect(res.isError).toBe(true);
+    }
+    expect(await dbCount('recipes')).toBe(0);
+  });
+
+  it('rejects steps that reference unknown ingredient refs', async () => {
+    const res = await toolCall(EDITOR_KEY, 'recipes.create_draft', {
+      ...STRUCTURED_RECIPE,
+      locales: [{ ...STRUCTURED_RECIPE.locales[0], steps: ['Whisk {i:butter}.'] }],
+      confirmed: true,
+    });
+    expect(res.isError).toBe(true);
+    expect(JSON.stringify(res.data)).toContain('unknown ingredient refs');
+  });
+
+  it('requires exactly one original locale per recipe', async () => {
+    const twoOriginals = await toolCall(EDITOR_KEY, 'recipes.create_draft', {
+      ...TRANSLATED_RECIPE,
+      locales: TRANSLATED_RECIPE.locales.map((l) => {
+        const { translationOf, translationMethod, ...rest } = l as Record<string, unknown>;
+        return rest;
+      }),
+      confirmed: true,
+    });
+    expect(twoOriginals.isError).toBe(true);
+    expect(JSON.stringify(twoOriginals.data)).toContain('exactly one locale must be the original');
+    const ok = await toolCall(EDITOR_KEY, 'recipes.create_draft', { ...TRANSLATED_RECIPE, confirmed: true });
+    expect(ok.isError).toBe(false);
+    const { id } = ok.data as { id: string };
+    const row = await DB.prepare("SELECT translation_of, translation_method FROM recipe_locales WHERE recipe_id = ? AND country = 'mx'").bind(id).first<{ translation_of: string; translation_method: string }>();
+    expect(row).toEqual({ translation_of: 'us/en', translation_method: 'machine' });
+  });
+
+  it('never accepts translation_reviewed_at from content', async () => {
+    const res = await toolCall(EDITOR_KEY, 'recipes.create_draft', {
+      ...TRANSLATED_RECIPE,
+      locales: [
+        TRANSLATED_RECIPE.locales[0],
+        { ...TRANSLATED_RECIPE.locales[1], translation_reviewed_at: '2026-01-01T00:00:00Z' },
+      ],
+      confirmed: true,
+    });
+    expect(res.isError).toBe(true);
+    expect(JSON.stringify(res.data)).toContain('server-stamped');
+  });
+
+  it('recipes.add_locale adds translation drafts and rejects second originals', async () => {
+    const created = await toolCall(EDITOR_KEY, 'recipes.create_draft', { ...RECIPE, confirmed: true });
+    const { id } = JSON.parse((created.data ? '' : '') || '{}') as { id?: string };
+    const recipeId = (created.data as { id: string }).id;
+    expect(id).toBeUndefined();
+    const asOriginal = await toolCall(EDITOR_KEY, 'recipes.add_locale', {
+      id: recipeId,
+      confirmed: true,
+      locale: { country: 'mx', lang: 'es', title: 'Panqueques', ingredients: ['2 tazas de harina'], steps: ['Mezclar.'] },
+    });
+    expect(asOriginal.isError).toBe(true);
+    expect(JSON.stringify(asOriginal.data)).toContain('translationOf');
+    const added = await toolCall(EDITOR_KEY, 'recipes.add_locale', {
+      id: recipeId,
+      confirmed: true,
+      locale: {
+        country: 'mx',
+        lang: 'es',
+        title: 'Panqueques de prueba',
+        translationOf: 'us/en',
+        translationMethod: 'machine',
+        ingredients: ['2 tazas de harina', '2 huevos', '1 taza de leche', '1 pizca de sal'],
+        steps: ['Mezclar.', 'Cocinar 2 minutos por lado.', 'Servir.'],
+      },
+    });
+    expect(added.isError).toBe(false);
+    const dup = await toolCall(EDITOR_KEY, 'recipes.add_locale', {
+      id: recipeId,
+      confirmed: true,
+      locale: { country: 'mx', lang: 'es', title: 'Otra vez', translationOf: 'us/en', translationMethod: 'human', ingredients: ['x'], steps: ['y'] },
+    });
+    expect(dup.isError).toBe(true);
+  });
+
+  it('translations fail closed while review is disabled, and publish after review when enabled', async () => {
+    const created = await toolCall(EDITOR_KEY, 'recipes.create_draft', { ...TRANSLATED_RECIPE, confirmed: true });
+    const id = (created.data as { id: string }).id;
+    await toolCall(ADMIN_KEY, 'sources.clear_rights', { id: `src-${id}`, confirmed: true, notes: 'CC0 verified' });
+    // Review tool disabled by default.
+    const disabled = await toolCall(ADMIN_KEY, 'translations.mark_reviewed', { id, country: 'mx', lang: 'es', confirmed: true, note: 'checked' });
+    expect(disabled.isError).toBe(true);
+    expect(JSON.stringify(disabled.data)).toContain('not enabled');
+    // Publishing the whole recipe fails closed on the unreviewed translation.
+    const pubAll = await toolCall(ADMIN_KEY, 'recipes.publish', { id, confirmed: true });
+    expect(pubAll.isError).toBe(true);
+    expect(JSON.stringify(pubAll.data)).toContain('not reviewed');
+    // Publish the original only, then review the translation with the flag on.
+    const pubOrig = await toolCall(ADMIN_KEY, 'recipes.publish', { id, country: 'us', lang: 'en', confirmed: true });
+    expect(pubOrig.isError).toBe(false);
+    const reviewed = await toolCallEnv({ MCP_TRANSLATION_REVIEW: '1' }, ADMIN_KEY, 'translations.mark_reviewed', { id, country: 'mx', lang: 'es', confirmed: true, note: 'Compared against us/en line by line' });
+    expect(reviewed.isError).toBe(false);
+    const row = await DB.prepare("SELECT translation_reviewed_by, translation_reviewer_kind, translation_reviewed_at FROM recipe_locales WHERE recipe_id = ? AND country = 'mx'").bind(id).first<{ translation_reviewed_by: string; translation_reviewer_kind: string | null; translation_reviewed_at: string }>();
+    expect(row!.translation_reviewed_by).toBe('shared-admin-key');
+    expect(row!.translation_reviewer_kind).toBeNull();
+    expect(row!.translation_reviewed_at).toBeTruthy();
+    const pubEs = await toolCall(ADMIN_KEY, 'recipes.publish', { id, country: 'mx', lang: 'es', confirmed: true });
+    expect(pubEs.isError).toBe(false);
+  });
+
+  it('create_draft runs the translation QA floor at creation (contract gate)', async () => {
+    const bad = await toolCall(EDITOR_KEY, 'recipes.create_draft', {
+      ...TRANSLATED_RECIPE,
+      confirmed: true,
+      locales: [
+        TRANSLATED_RECIPE.locales[0],
+        { ...TRANSLATED_RECIPE.locales[1], steps: ['Mezclar.', 'Cocinar 5 minutos por lado.', 'Servir.'] },
+      ],
+    });
+    expect(bad.isError).toBe(true);
+    expect(JSON.stringify(bad.data)).toContain('translation check');
+  });
+
+  it('mark_reviewed rejects changed numbers and dropped allergens, and audits the failure', async () => {
+    const created = await toolCall(EDITOR_KEY, 'recipes.create_draft', { ...TRANSLATED_RECIPE, confirmed: true });
+    const id = (created.data as { id: string }).id;
+    // Break the translation after creation: numbers changed, allergen dropped.
+    const broken = await toolCall(EDITOR_KEY, 'recipes.update_draft', {
+      id,
+      confirmed: true,
+      locales: [{ country: 'mx', lang: 'es', steps: ['Mezclar.', 'Cocinar 5 minutos.', 'Servir.'], ingredients: ['2 tazas de harina', '2 huevos', '1 pizca de sal'] }],
+    });
+    expect(broken.isError).toBe(false);
+    await toolCall(ADMIN_KEY, 'sources.clear_rights', { id: `src-${id}`, confirmed: true, notes: 'CC0 verified' });
+    await toolCall(ADMIN_KEY, 'recipes.publish', { id, country: 'us', lang: 'en', confirmed: true });
+    const reviewed = await toolCallEnv({ MCP_TRANSLATION_REVIEW: '1' }, ADMIN_KEY, 'translations.mark_reviewed', { id, country: 'mx', lang: 'es', confirmed: true, note: 'attempted' });
+    expect(reviewed.isError).toBe(true);
+    const problems = JSON.stringify((reviewed.data as { problems: string[] }).problems);
+    expect(problems).toContain('numbers changed');
+    expect(problems).toContain('allergen');
+    const audits = await DB.prepare("SELECT details_json FROM mcp_audit WHERE tool = 'translations.mark_reviewed'").all<{ details_json: string }>();
+    expect(audits.results.length).toBe(1);
+    expect(audits.results[0]!.details_json).toContain('"ok":false');
+  });
+
+  it('mark_reviewed enforces canonical quantity equality on structured ingredients', async () => {
+    const created = await toolCall(EDITOR_KEY, 'recipes.create_draft', {
+      source: STRUCTURED_RECIPE.source,
+      originCountry: 'us',
+      confirmed: true,
+      locales: [
+        STRUCTURED_RECIPE.locales[0],
+        {
+          country: 'mx',
+          lang: 'es',
+          title: 'Panqueques estructurados',
+          translationOf: 'us/en',
+          translationMethod: 'machine',
+          ingredients: [
+            { ref: 'flour', qty: 2, unit: 'cup', name: 'harina' },
+            { ref: 'eggs', qty: 2, name: 'huevos' },
+            { ref: 'milk', qty: 1, unit: 'cup', name: 'leche' },
+          ],
+          steps: ['Batir {i:eggs} con {i:flour}.', 'Agregar {i:milk}.', 'Cocinar a {t:350F} por 20 minutos.'],
+        },
+      ],
+    });
+    expect(created.isError).toBe(false);
+    const id = (created.data as { id: string }).id;
+    // Drift the quantity after creation; the review gate must catch it.
+    const drift = await toolCall(EDITOR_KEY, 'recipes.update_draft', {
+      id,
+      confirmed: true,
+      locales: [
+        {
+          country: 'mx',
+          lang: 'es',
+          ingredients: [
+            { ref: 'flour', qty: 2, unit: 'cup', name: 'harina' },
+            { ref: 'eggs', qty: 3, name: 'huevos' },
+            { ref: 'milk', qty: 1, unit: 'cup', name: 'leche' },
+          ],
+        },
+      ],
+    });
+    expect(drift.isError).toBe(false);
+    await toolCall(ADMIN_KEY, 'sources.clear_rights', { id: `src-${id}`, confirmed: true, notes: 'CC0 verified' });
+    await toolCall(ADMIN_KEY, 'recipes.publish', { id, country: 'us', lang: 'en', confirmed: true });
+    const reviewed = await toolCallEnv({ MCP_TRANSLATION_REVIEW: '1' }, ADMIN_KEY, 'translations.mark_reviewed', { id, country: 'mx', lang: 'es', confirmed: true, note: 'attempted' });
+    expect(reviewed.isError).toBe(true);
+    expect(JSON.stringify((reviewed.data as { problems: string[] }).problems)).toContain('quantity changed');
+  });
+
+  it('editing a reviewed translation clears the review stamp', async () => {
+    const created = await toolCall(EDITOR_KEY, 'recipes.create_draft', { ...TRANSLATED_RECIPE, confirmed: true });
+    const id = (created.data as { id: string }).id;
+    await toolCall(ADMIN_KEY, 'sources.clear_rights', { id: `src-${id}`, confirmed: true, notes: 'CC0 verified' });
+    await toolCall(ADMIN_KEY, 'recipes.publish', { id, country: 'us', lang: 'en', confirmed: true });
+    await toolCallEnv({ MCP_TRANSLATION_REVIEW: '1' }, ADMIN_KEY, 'translations.mark_reviewed', { id, country: 'mx', lang: 'es', confirmed: true, note: 'checked' });
+    const edit = await toolCall(EDITOR_KEY, 'recipes.update_draft', {
+      id,
+      confirmed: true,
+      locales: [{ country: 'mx', lang: 'es', steps: ['Mezclar bien.', 'Cocinar 2 minutos por lado.', 'Servir.'] }],
+    });
+    expect(edit.isError).toBe(false);
+    const row = await DB.prepare("SELECT translation_reviewed_at FROM recipe_locales WHERE recipe_id = ? AND country = 'mx'").bind(id).first<{ translation_reviewed_at: string | null }>();
+    expect(row!.translation_reviewed_at).toBeNull();
+    const pub = await toolCall(ADMIN_KEY, 'recipes.publish', { id, country: 'mx', lang: 'es', confirmed: true });
+    expect(pub.isError).toBe(true);
+    expect(JSON.stringify(pub.data)).toContain('not reviewed');
   });
 });
