@@ -19,6 +19,8 @@ export type AccountBindings = MailEnv & {
   CANONICAL_ORIGIN?: string;
   /** Where "submitted for review" notices go (secret, never committed). */
   REVIEW_NOTIFY_TO?: string;
+  /** 'true' turns on link import. Default OFF (DNS-rebinding residual, see ssrf.ts). */
+  IMPORT_ENABLED?: string;
   /** Optional Workers rate-limit bindings (approximate, per location). Absent = skipped. */
   RL_AUTH?: RateLimiter;
   RL_SUBMIT?: RateLimiter;
@@ -87,6 +89,7 @@ async function currentUser(c: Ctx) {
 }
 
 accountApp.use('*', async (c, next) => {
+  importOn = c.env.IMPORT_ENABLED === 'true';
   const u = await currentUser(c);
   if (u) c.set('user', u);
   await next();
@@ -210,11 +213,12 @@ function localeOptions(selected: string): string {
   })).join('');
 }
 
+let importOn = false;
 function renderForm(s: FormState, errors: string[] = [], note = ''): string {
   const errBox = errors.length ? banner('err', `<strong>Fix these first:</strong><ul>${errors.map((e) => `<li>${esc(e)}</li>`).join('')}</ul>`) : '';
   const entry = s.id ? '' : `<div class="panel"><h2>Start faster</h2>
 <form method="post" action="/account/recipes/paste"><label>Paste a recipe<small>Plain text with a title line, then "Ingredients" and "Instructions". You review everything before saving.</small><textarea name="text" maxlength="60000"></textarea></label><button class="quiet" type="submit">Fill the form from this text</button></form>
-<form method="post" action="/account/recipes/import"><label>Or import from a link<small>Only your own recipe, or one you have permission to share. We read the page's recipe data and nothing else.</small><input type="url" name="url" maxlength="2000" placeholder="https://"></label><button class="quiet" type="submit">Fill the form from this link</button></form></div>`;
+${importOn ? `<form method="post" action="/account/recipes/import"><label>Or import from a link<small>Only your own recipe, or one you have permission to share. We read the page's recipe data and nothing else.</small><input type="url" name="url" maxlength="2000" placeholder="https://"></label><button class="quiet" type="submit">Fill the form from this link</button></form>` : ''}</div>`;
   return `<h1>${s.id ? 'Edit your draft' : 'Add a recipe'}</h1><p class="lead">Drafts are private to you until you send one in and we review it.</p>${note}${errBox}${entry}
 <form method="post" action="/account/recipes/save">${s.id ? `<input type="hidden" name="id" value="${esc(s.id)}">` : ''}
 <label>Recipe name<input type="text" name="title" value="${esc(s.title)}" maxlength="200" required></label>
@@ -285,6 +289,7 @@ accountApp.post('/recipes/paste', async (c) => {
 
 accountApp.post('/recipes/import', async (c) => {
   const user = c.get('user');
+  if (c.env.IMPORT_ENABLED !== 'true') return page(c, 'Add a recipe', renderForm(blank(user), ['Link import is not switched on yet. Paste the recipe text instead.']), 404);
   if (await limited(c.env.RL_SUBMIT, c, 'import')) return page(c, 'Slow down', renderForm(blank(user), ['Too many imports. Please wait a minute.']), 429);
   const form = await c.req.parseBody();
   const url = str(form['url'], 2000).trim();

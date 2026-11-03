@@ -9,7 +9,7 @@ const ORIGIN = 'https://2yolks.com';
 const realFetch = globalThis.fetch;
 
 function env(extra: Record<string, unknown> = {}) {
-  return { DB, CANONICAL_ORIGIN: ORIGIN, ALLOW_DEMO_SEED: 'false', ASSETS: { fetch: async () => new Response('', { status: 404 }) }, RESEND_API_KEY: 're_test', REVIEW_NOTIFY_TO: 'owner@example.com', ...extra };
+  return { DB, CANONICAL_ORIGIN: ORIGIN, ALLOW_DEMO_SEED: 'false', IMPORT_ENABLED: 'true', ASSETS: { fetch: async () => new Response('', { status: 404 }) }, RESEND_API_KEY: 're_test', REVIEW_NOTIFY_TO: 'owner@example.com', ...extra };
 }
 function post(path: string, form: Record<string, string>, opts: { cookie?: string; origin?: string | null; e?: Record<string, unknown> } = {}) {
   const headers: Record<string, string> = { 'content-type': 'application/x-www-form-urlencoded' };
@@ -203,6 +203,17 @@ describe('paste and import', () => {
       const res = await post('/account/recipes/import', { url }, { cookie });
       expect(res.status, url).toBe(400);
     }
+  });
+});
+
+describe('link import is off by default', () => {
+  it('hides the form and refuses the route unless IMPORT_ENABLED=true', async () => {
+    const cookie = await signIn();
+    const off = { IMPORT_ENABLED: undefined };
+    const page = await app.request(`${ORIGIN}/account/recipes/new`, { headers: { cookie } }, env(off));
+    expect(await page.text()).not.toContain('/account/recipes/import');
+    const res = await post('/account/recipes/import', { url: 'https://example.com/r' }, { cookie, e: off });
+    expect(res.status).toBe(404);
   });
 });
 
