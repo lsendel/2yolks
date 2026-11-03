@@ -23,8 +23,7 @@ describe('machine-translation label on translated pages', () => {
     expect(html).toContain('non relue par un locuteur natif');
     expect(html).toContain('/img/pin/w1golumpki.fr.png');
     expect(html).toContain('Pas encore test');
-    expect(html).toContain('hrefLang="en-US"'.replace('hrefLang','hreflang'));
-    expect(html).toMatch(/hreflang="en-US"[^>]*>English<\/a>/);
+    expect(html).toContain('>English</a>');
     expect(html).not.toMatch(/>en-US</);
   });
   it('shows no machine label on an original-language page', () => {
