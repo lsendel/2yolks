@@ -202,6 +202,18 @@ export function RecipeView({ page, alternates = [], canonicalUrl, imageUrl }: { 
   );
 }
 
+export function PrivacyView() {
+  return (
+    <main>
+      <h1>Privacy</h1>
+      <p>2yolks does not ask you to sign in to read recipes and sets no cookies of its own. We measure page views and page speed with Cloudflare Web Analytics. Per Cloudflare, it does not use cookies or local storage, and does not fingerprint visitors or collect personal data for analytics.</p>
+      <p>We use the counts only to see which recipes and pages people read. Recipe links you share carry no personal information from us.</p>
+      <h2>Privacidad</h2>
+      <p>2yolks no pide iniciar sesi&oacute;n para leer recetas y no usa cookies propias. Medimos visitas y velocidad de p&aacute;gina con Cloudflare Web Analytics, que seg&uacute;n Cloudflare no usa cookies ni almacenamiento local, ni identifica a los visitantes ni recopila datos personales para estad&iacute;sticas.</p>
+    </main>
+  );
+}
+
 export function AboutView() {
   return (
     <main>

@@ -14,7 +14,7 @@ import {
   validateRecipeSubmission,
   type RecipePage,
 } from '@2yolks/contracts';
-import { renderHome, renderCountryHome, renderRecipe, renderAbout, renderHowWeTest, renderNotFound } from '@2yolks/web/server';
+import { renderHome, renderCountryHome, renderRecipe, renderAbout, renderPrivacy, renderHowWeTest, renderNotFound } from '@2yolks/web/server';
 import { isUntested } from '@2yolks/contracts';
 import { createDb, recipes, recipeLocales, sources } from './db';
 import { mcpApp } from './mcp';
@@ -208,6 +208,7 @@ const countryHome = async (c: Context<{ Bindings: Bindings }>) => {
   );
 };
 app.get('/about', (c) => c.html(renderAbout()));
+app.get('/privacy', (c) => c.html(renderPrivacy()));
 app.get('/how-we-test', (c) => c.html(renderHowWeTest()));
 app.get('/:country', countryHome);
 app.get('/:country/', countryHome);

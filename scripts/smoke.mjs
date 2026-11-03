@@ -86,6 +86,8 @@ try {
 
   r = await get('/about');
   check('about page 200', r.status === 200 && r.body.includes('About 2yolks'));
+  r = await get('/privacy');
+  check('privacy page 200 with beacon', r.status === 200 && r.body.includes('Privacy') && r.body.includes('static.cloudflareinsights.com/beacon.min.js'));
   r = await get('/how-we-test');
   check('how-we-test page 200', r.status === 200 && r.body.includes('Not yet tested'));
   r = await get('/api/dev/passkey-spike');
