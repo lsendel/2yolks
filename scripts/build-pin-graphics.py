@@ -16,9 +16,16 @@ for r in data['recipes']:
     d.text((80, 120), COUNTRY.get(r['country'], r['country']).upper(), font=ImageFont.truetype(FONT, 44), fill='#57534e')
     size = 96
     f = ImageFont.truetype(FONT, size)
-    lines = textwrap.wrap(r['title'], 16)
+    def wrap_px(text, font, maxw):
+        out, cur = [], ''
+        for w in text.split():
+            t = (cur + ' ' + w).strip()
+            if d.textlength(t, font=font) <= maxw: cur = t
+            else: out.append(cur); cur = w
+        out.append(cur); return out
+    lines = wrap_px(r['title'], f, W - 240)
     while len(lines) > 5 and size > 60:
-        size -= 8; f = ImageFont.truetype(FONT, size); lines = textwrap.wrap(r['title'], 20)
+        size -= 8; f = ImageFont.truetype(FONT, size); lines = wrap_px(r['title'], f, W - 240)
     y = 300
     for ln in lines:
         d.text((80, y), ln, font=f, fill='#1c1917'); y += int(size * 1.25)
@@ -27,9 +34,16 @@ for r in data['recipes']:
     tw = d.textlength(lab, font=lf)
     d.rounded_rectangle([80, H - 400, 80 + tw + 64, H - 320], radius=40, fill='#fef3c7', outline='#fcd34d', width=3)
     d.text((112, H - 390), lab, font=lf, fill='#78350f')
-    sf = ImageFont.truetype(REG, 34)
+    ff = ImageFont.truetype(REG, 34)
     foot = FOOT.get(r['lang'], FOOT['en'])
-    d.text((80, H - 260), FOOT.get(r['lang'], FOOT['en']), font=ImageFont.truetype(REG, 34), fill='#57534e')
+    # wrap to the safe width (80px margins each side)
+    words, cur, rows = foot.split(), '', []
+    for w in words:
+        t = (cur + ' ' + w).strip()
+        if d.textlength(t, font=ff) <= W - 160: cur = t
+        else: rows.append(cur); cur = w
+    rows.append(cur)
+    for k, row in enumerate(rows): d.text((80, H - 260 + k * 46), row, font=ff, fill='#57534e')
     d.text((80, H - 140), '2yolks.com', font=ImageFont.truetype(FONT, 64), fill='#c2410c')
     img.save(f"packages/web/public/img/pin/{r['id']}.{r['lang']}.png", optimize=True)
     print(r['id'], len(lines), size)
