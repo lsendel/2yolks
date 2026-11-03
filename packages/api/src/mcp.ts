@@ -188,7 +188,7 @@ type ToolDef = {
 const TOOLS: ToolDef[] = [
   {
     name: 'recipes.list',
-    description: 'List recipe locales with source provenance. Optional filters: country, lang, status.',
+    description: 'List recipe locales with source provenance. Optional filters: country, lang, status, submitted (true = user submissions waiting for review).',
     role: 'viewer',
     inputSchema: {
       type: 'object',
@@ -196,6 +196,7 @@ const TOOLS: ToolDef[] = [
         country: { type: 'string' },
         lang: { type: 'string' },
         status: { type: 'string', enum: ['draft', 'published', 'rejected'] },
+        submitted: { type: 'boolean' },
         limit: { type: 'number' },
       },
     },
@@ -1024,10 +1025,12 @@ async function callRecipesList(db: D1Database, args: Record<string, unknown>): P
       params.push(v);
     }
   }
+  if (args['submitted'] === true) conds.push('r.submitted_at IS NOT NULL');
   const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
   const rows = await db
     .prepare(
       `SELECT rl.recipe_id AS id, rl.country, rl.lang, rl.slug, rl.title, rl.status,
+              r.submitted_at, r.attested_at, r.owner_user_id IS NOT NULL AS user_submitted,
               r.origin_country, s.id AS source_id, s.name AS source_name, s.license,
               s.cleared_at IS NOT NULL AS source_cleared
        FROM recipe_locales rl

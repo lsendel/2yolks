@@ -206,12 +206,28 @@ describe('paste and import', () => {
   });
 });
 
+describe('review queue handoff', () => {
+  it('MCP recipes.list can show submitted user recipes even with no notify address', async () => {
+    const cookie = await signIn();
+    const sv = await post('/account/recipes/save', recipeForm(), { cookie });
+    const id = /recipes\/([a-z0-9]+)\/edit/.exec(sv.headers.get('location')!)![1]!;
+    await post(`/account/recipes/${id}/submit`, {}, { cookie, e: { REVIEW_NOTIFY_TO: undefined } });
+    const rpc = (args: unknown) => app.request(`${ORIGIN}/api/admin/mcp`, { method: 'POST', headers: { authorization: 'Bearer test-admin-key-0000000000', 'content-type': 'application/json', accept: 'application/json, text/event-stream' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'recipes.list', arguments: args } }) }, env({ ADMIN_MCP_API_KEY: 'test-admin-key-0000000000' }));
+    const res = await rpc({ submitted: true });
+    const txt = await res.text();
+    expect(txt).toContain(id);
+    expect(txt).toContain('submitted_at');
+  });
+});
+
 describe('link import is off by default', () => {
   it('hides the form and refuses the route unless IMPORT_ENABLED=true', async () => {
     const cookie = await signIn();
     const off = { IMPORT_ENABLED: undefined };
     const page = await app.request(`${ORIGIN}/account/recipes/new`, { headers: { cookie } }, env(off));
-    expect(await page.text()).not.toContain('/account/recipes/import');
+    const html = await page.text();
+    expect(html).not.toContain('action="/account/recipes/import"');
+    expect(html).toContain('not available yet');
     const res = await post('/account/recipes/import', { url: 'https://example.com/r' }, { cookie, e: off });
     expect(res.status).toBe(404);
   });
