@@ -635,9 +635,7 @@ describe('MCP structured ingredients and translation provenance (contracts, migr
 
   it('recipes.add_locale adds translation drafts and rejects second originals', async () => {
     const created = await toolCall(EDITOR_KEY, 'recipes.create_draft', { ...RECIPE, confirmed: true });
-    const { id } = JSON.parse((created.data ? '' : '') || '{}') as { id?: string };
     const recipeId = (created.data as { id: string }).id;
-    expect(id).toBeUndefined();
     const asOriginal = await toolCall(EDITOR_KEY, 'recipes.add_locale', {
       id: recipeId,
       confirmed: true,
