@@ -1,0 +1,610 @@
+{
+ "note": "PREPARED DIFF ONLY. Not applied to production. Rows listed under convert are single-unit rows with no dual unit and no flagged-step quote; rows under hold stay exactly as written. Steps flagged below are held (amounts quoted in prose) until tokenized.",
+ "recipes": [
+  {
+   "id": "w1golumpki",
+   "lang": "en",
+   "convert": [
+    {
+     "before": "1 tbsp olive oil",
+     "after": {
+      "ref": "olive-oil",
+      "qty": 1.0,
+      "name": "olive oil",
+      "unit": "tbsp"
+     }
+    },
+    {
+     "before": "1 medium onion, diced",
+     "after": {
+      "ref": "medium-onion",
+      "qty": 1.0,
+      "name": "medium onion",
+      "note": "diced"
+     }
+    },
+    {
+     "before": "3 garlic cloves, minced",
+     "after": {
+      "ref": "garlic-cloves",
+      "qty": 3.0,
+      "name": "garlic cloves",
+      "note": "minced"
+     }
+    },
+    {
+     "before": "1 tbsp tomato paste",
+     "after": {
+      "ref": "tomato-paste",
+      "qty": 1.0,
+      "name": "tomato paste",
+      "unit": "tbsp"
+     }
+    },
+    {
+     "before": "1 tsp sweet paprika",
+     "after": {
+      "ref": "sweet-paprika",
+      "qty": 1.0,
+      "name": "sweet paprika",
+      "unit": "tsp"
+     }
+    },
+    {
+     "before": "1 bay leaf",
+     "after": {
+      "ref": "bay-leaf",
+      "qty": 1.0,
+      "name": "bay leaf"
+     }
+    },
+    {
+     "before": "1 tsp salt, plus more to taste",
+     "after": {
+      "ref": "salt",
+      "qty": 1.0,
+      "name": "salt",
+      "unit": "tsp",
+      "note": "plus more to taste"
+     }
+    },
+    {
+     "before": "1/2 tsp black pepper",
+     "after": {
+      "ref": "black-pepper",
+      "qty": 0.5,
+      "name": "black pepper",
+      "unit": "tsp"
+     }
+    },
+    {
+     "before": "1 tbsp apple cider vinegar",
+     "after": {
+      "ref": "apple-cider-vinegar",
+      "qty": 1.0,
+      "name": "apple cider vinegar",
+      "unit": "tbsp"
+     }
+    }
+   ],
+   "hold": [
+    {
+     "row": "1 lb (450 g) ground beef, or half beef and half pork",
+     "reason": "dual unit: needs explicit canonical choice"
+    },
+    {
+     "row": "1 small green cabbage (about 1.5 lb / 700 g), cored and cut into 1-inch (2.5 cm) pieces",
+     "reason": "extra number in text (second amount or size)"
+    },
+    {
+     "row": "1 can (28 oz / 800 g) crushed tomatoes",
+     "reason": "extra number in text (second amount or size)"
+    },
+    {
+     "row": "4 cups (1 L) beef broth",
+     "reason": "dual unit: needs explicit canonical choice"
+    },
+    {
+     "row": "1/2 cup (100 g) long-grain white rice, uncooked",
+     "reason": "alt amount in other dimension"
+    },
+    {
+     "row": "Chopped parsley, to serve",
+     "reason": "no leading quantity"
+    }
+   ],
+   "flagged_steps_held": [
+    "Stir in the rice. Cover and simmer 20 minutes more, until the rice and cabbage are tender. If the soup gets too thick, add 1/2 cup (120 ml) water."
+   ]
+  },
+  {
+   "id": "w1potsticker",
+   "lang": "en",
+   "convert": [
+    {
+     "before": "1 tsp salt",
+     "after": {
+      "ref": "salt",
+      "qty": 1.0,
+      "name": "salt",
+      "unit": "tsp"
+     }
+    },
+    {
+     "before": "3 scallions, thinly sliced",
+     "after": {
+      "ref": "scallions",
+      "qty": 3.0,
+      "name": "scallions",
+      "note": "thinly sliced"
+     }
+    },
+    {
+     "before": "1 tbsp grated fresh ginger",
+     "after": {
+      "ref": "grated-fresh-ginger",
+      "qty": 1.0,
+      "name": "grated fresh ginger",
+      "unit": "tbsp"
+     }
+    },
+    {
+     "before": "2 garlic cloves, minced",
+     "after": {
+      "ref": "garlic-cloves",
+      "qty": 2.0,
+      "name": "garlic cloves",
+      "note": "minced"
+     }
+    },
+    {
+     "before": "1 tbsp soy sauce",
+     "after": {
+      "ref": "soy-sauce",
+      "qty": 1.0,
+      "name": "soy sauce",
+      "unit": "tbsp"
+     }
+    },
+    {
+     "before": "1 tbsp Shaoxing wine or dry sherry",
+     "after": {
+      "ref": "shaoxing-wine-or-dry-she",
+      "qty": 1.0,
+      "name": "Shaoxing wine or dry sherry",
+      "unit": "tbsp"
+     }
+    },
+    {
+     "before": "1 tsp toasted sesame oil",
+     "after": {
+      "ref": "toasted-sesame-oil",
+      "qty": 1.0,
+      "name": "toasted sesame oil",
+      "unit": "tsp"
+     }
+    },
+    {
+     "before": "1/2 tsp white pepper",
+     "after": {
+      "ref": "white-pepper",
+      "qty": 0.5,
+      "name": "white pepper",
+      "unit": "tsp"
+     }
+    },
+    {
+     "before": "1 tbsp cornstarch",
+     "after": {
+      "ref": "cornstarch",
+      "qty": 1.0,
+      "name": "cornstarch",
+      "unit": "tbsp"
+     }
+    },
+    {
+     "before": "2 tbsp neutral oil, for pan-frying",
+     "after": {
+      "ref": "neutral-oil",
+      "qty": 2.0,
+      "name": "neutral oil",
+      "unit": "tbsp",
+      "note": "for pan-frying"
+     }
+    }
+   ],
+   "hold": [
+    {
+     "row": "3 cups (about 250 g) finely chopped napa cabbage",
+     "reason": "alt amount in other dimension"
+    },
+    {
+     "row": "1 lb (450 g) ground pork",
+     "reason": "dual unit: needs explicit canonical choice"
+    },
+    {
+     "row": "30 to 36 round dumpling wrappers (one 12 to 14 oz package)",
+     "reason": "extra number in text (second amount or size)"
+    },
+    {
+     "row": "1 cup (240 ml) water, for steaming, used in batches",
+     "reason": "dual unit: needs explicit canonical choice"
+    },
+    {
+     "row": "Dipping sauce: 3 tbsp soy sauce, 1 tbsp rice vinegar, 1 tsp sesame oil",
+     "reason": "no leading quantity"
+    }
+   ],
+   "flagged_steps_held": [
+    "Add 1/3 cup (80 ml) water, cover and steam 6 to 7 minutes, until the filling reaches 160°F (71°C). Uncover and cook 1 minute until the water is gone. Repeat with the remaining dumplings in two more batches."
+   ]
+  },
+  {
+   "id": "w1pozole",
+   "lang": "es",
+   "convert": [
+    {
+     "before": "1/2 cebolla",
+     "after": {
+      "ref": "cebolla",
+      "qty": 0.5,
+      "name": "cebolla"
+     }
+    },
+    {
+     "before": "4 dientes de ajo",
+     "after": {
+      "ref": "dientes-de-ajo",
+      "qty": 4.0,
+      "name": "dientes de ajo"
+     }
+    },
+    {
+     "before": "2 hojas de laurel",
+     "after": {
+      "ref": "hojas-de-laurel",
+      "qty": 2.0,
+      "name": "hojas de laurel"
+     }
+    },
+    {
+     "before": "2 cucharaditas de sal, y más al gusto",
+     "after": {
+      "ref": "sal",
+      "qty": 2.0,
+      "name": "sal",
+      "unit": "tsp",
+      "note": "y más al gusto"
+     }
+    },
+    {
+     "before": "4 chiles guajillo, sin rabo, semillas ni venas",
+     "after": {
+      "ref": "chiles-guajillo",
+      "qty": 4.0,
+      "name": "chiles guajillo",
+      "note": "sin rabo, semillas ni venas"
+     }
+    },
+    {
+     "before": "2 chiles ancho, sin rabo, semillas ni venas",
+     "after": {
+      "ref": "chiles-ancho",
+      "qty": 2.0,
+      "name": "chiles ancho",
+      "note": "sin rabo, semillas ni venas"
+     }
+    },
+    {
+     "before": "1 cucharadita de orégano mexicano",
+     "after": {
+      "ref": "oregano-mexicano",
+      "qty": 1.0,
+      "name": "orégano mexicano",
+      "unit": "tsp"
+     }
+    },
+    {
+     "before": "800 g de maíz cacahuazintle precocido (cocido y escurrido)",
+     "after": {
+      "ref": "maiz-cacahuazintle-preco",
+      "qty": 800.0,
+      "name": "maíz cacahuazintle precocido (cocido y escurrido)",
+      "unit": "g"
+     }
+    }
+   ],
+   "hold": [
+    {
+     "row": "1 kg de espaldilla de cerdo, en trozos de 4 cm",
+     "reason": "extra number in text (second amount or size)"
+    },
+    {
+     "row": "2500 ml de agua (2.5 litros)",
+     "reason": "extra number in text (second amount or size)"
+    },
+    {
+     "row": "1/4 de cebolla",
+     "reason": "quantity quoted in a flagged step"
+    },
+    {
+     "row": "2 dientes de ajo",
+     "reason": "quantity quoted in a flagged step"
+    },
+    {
+     "row": "1/4 de cucharadita de comino molido",
+     "reason": "quantity quoted in a flagged step"
+    },
+    {
+     "row": "Para servir: lechuga o repollo picado, rábanos en rodajas, cebolla picada, orégano, limón y tostadas",
+     "reason": "no leading quantity"
+    }
+   ],
+   "flagged_steps_held": [
+    "Licúa los chiles con 1 taza (250 ml) de su agua de remojo, el 1/4 de cebolla, los 2 dientes de ajo, el orégano y el comino hasta que quede liso. Cuela la salsa."
+   ]
+  },
+  {
+   "id": "w1enchiladas",
+   "lang": "es",
+   "convert": [
+    {
+     "before": "1 cucharadita de sal, y más al gusto",
+     "after": {
+      "ref": "sal",
+      "qty": 1.0,
+      "name": "sal",
+      "unit": "tsp",
+      "note": "y más al gusto"
+     }
+    },
+    {
+     "before": "5 chiles guajillo, sin rabo, semillas ni venas",
+     "after": {
+      "ref": "chiles-guajillo",
+      "qty": 5.0,
+      "name": "chiles guajillo",
+      "note": "sin rabo, semillas ni venas"
+     }
+    },
+    {
+     "before": "2 chiles ancho, sin rabo, semillas ni venas",
+     "after": {
+      "ref": "chiles-ancho",
+      "qty": 2.0,
+      "name": "chiles ancho",
+      "note": "sin rabo, semillas ni venas"
+     }
+    },
+    {
+     "before": "3 jitomates guaje (roma)",
+     "after": {
+      "ref": "jitomates-guaje-roma",
+      "qty": 3.0,
+      "name": "jitomates guaje (roma)"
+     }
+    },
+    {
+     "before": "12 tortillas de maíz",
+     "after": {
+      "ref": "tortillas-de-maiz",
+      "qty": 12.0,
+      "name": "tortillas de maíz"
+     }
+    },
+    {
+     "before": "150 g de queso fresco desmoronado",
+     "after": {
+      "ref": "queso-fresco-desmoronado",
+      "qty": 150.0,
+      "name": "queso fresco desmoronado",
+      "unit": "g"
+     }
+    }
+   ],
+   "hold": [
+    {
+     "row": "2 pechugas de pollo (unos 600 g)",
+     "reason": "extra number in text (second amount or size)"
+    },
+    {
+     "row": "1/2 cebolla",
+     "reason": "quantity quoted in a flagged step"
+    },
+    {
+     "row": "2 dientes de ajo",
+     "reason": "quantity quoted in a flagged step"
+    },
+    {
+     "row": "1/4 de cebolla",
+     "reason": "quantity quoted in a flagged step"
+    },
+    {
+     "row": "1 diente de ajo",
+     "reason": "quantity quoted in a flagged step"
+    },
+    {
+     "row": "1 cucharada de aceite, para freír la salsa",
+     "reason": "quantity quoted in a flagged step"
+    },
+    {
+     "row": "1/2 taza (120 ml) de aceite, para pasar las tortillas",
+     "reason": "dual unit: needs explicit canonical choice"
+    },
+    {
+     "row": "1/2 taza (120 ml) de crema",
+     "reason": "dual unit: needs explicit canonical choice"
+    },
+    {
+     "row": "Cebolla picada y lechuga, para servir",
+     "reason": "no leading quantity"
+    }
+   ],
+   "flagged_steps_held": [
+    "Pon el pollo en una olla con agua que lo cubra, la 1/2 cebolla, 2 dientes de ajo y la cucharadita de sal. Hierve, baja el fuego y cuece tapado 18 a 20 minutos, hasta que el centro llegue a 74°C. Reserva 1 taza (250 ml) del caldo. Deshebra el pollo.",
+    "Licúa los chiles escurridos con los jitomates, el 1/4 de cebolla, 1 diente de ajo, 1 taza del caldo reservado y una pizca de sal. Cuela.",
+    "Calienta 1 cucharada de aceite en una sartén, vierte la salsa y cocina 5 minutos a fuego medio. Ajusta la sal.",
+    "Calienta 1/2 taza de aceite en otra sartén. Pasa cada tortilla 5 segundos por lado en el aceite caliente y luego por la salsa."
+   ]
+  },
+  {
+   "id": "w1birria",
+   "lang": "es",
+   "convert": [
+    {
+     "before": "5 chiles guajillo, sin rabo, semillas ni venas",
+     "after": {
+      "ref": "chiles-guajillo",
+      "qty": 5.0,
+      "name": "chiles guajillo",
+      "note": "sin rabo, semillas ni venas"
+     }
+    },
+    {
+     "before": "2 chiles ancho, sin rabo, semillas ni venas",
+     "after": {
+      "ref": "chiles-ancho",
+      "qty": 2.0,
+      "name": "chiles ancho",
+      "note": "sin rabo, semillas ni venas"
+     }
+    },
+    {
+     "before": "3 chiles de árbol secos (opcional, para más picante)",
+     "after": {
+      "ref": "chiles-de-arbol-secos-op",
+      "qty": 3.0,
+      "name": "chiles de árbol secos (opcional",
+      "note": "para más picante)"
+     }
+    },
+    {
+     "before": "3 jitomates guaje (roma)",
+     "after": {
+      "ref": "jitomates-guaje-roma",
+      "qty": 3.0,
+      "name": "jitomates guaje (roma)"
+     }
+    },
+    {
+     "before": "1/2 cebolla",
+     "after": {
+      "ref": "cebolla",
+      "qty": 0.5,
+      "name": "cebolla"
+     }
+    },
+    {
+     "before": "5 dientes de ajo",
+     "after": {
+      "ref": "dientes-de-ajo",
+      "qty": 5.0,
+      "name": "dientes de ajo"
+     }
+    },
+    {
+     "before": "2 cucharadas de vinagre de manzana",
+     "after": {
+      "ref": "vinagre-de-manzana",
+      "qty": 2.0,
+      "name": "vinagre de manzana",
+      "unit": "tbsp"
+     }
+    },
+    {
+     "before": "1 cucharadita de orégano mexicano",
+     "after": {
+      "ref": "oregano-mexicano",
+      "qty": 1.0,
+      "name": "orégano mexicano",
+      "unit": "tsp"
+     }
+    },
+    {
+     "before": "1/2 cucharadita de comino molido",
+     "after": {
+      "ref": "comino-molido",
+      "qty": 0.5,
+      "name": "comino molido",
+      "unit": "tsp"
+     }
+    },
+    {
+     "before": "3 clavos de olor",
+     "after": {
+      "ref": "clavos-de-olor",
+      "qty": 3.0,
+      "name": "clavos de olor"
+     }
+    },
+    {
+     "before": "1 raja pequeña de canela",
+     "after": {
+      "ref": "raja-pequena-de-canela",
+      "qty": 1.0,
+      "name": "raja pequeña de canela"
+     }
+    },
+    {
+     "before": "2 cucharaditas de sal",
+     "after": {
+      "ref": "sal",
+      "qty": 2.0,
+      "name": "sal",
+      "unit": "tsp"
+     }
+    },
+    {
+     "before": "2 hojas de laurel",
+     "after": {
+      "ref": "hojas-de-laurel",
+      "qty": 2.0,
+      "name": "hojas de laurel"
+     }
+    },
+    {
+     "before": "16 tortillas de maíz",
+     "after": {
+      "ref": "tortillas-de-maiz",
+      "qty": 16.0,
+      "name": "tortillas de maíz"
+     }
+    },
+    {
+     "before": "250 g de queso Oaxaca deshebrado",
+     "after": {
+      "ref": "queso-oaxaca-deshebrado",
+      "qty": 250.0,
+      "name": "queso Oaxaca deshebrado",
+      "unit": "g"
+     }
+    }
+   ],
+   "hold": [
+    {
+     "row": "1200 g de falda o aguayón de res, en 4 trozos grandes",
+     "reason": "extra number in text (second amount or size)"
+    },
+    {
+     "row": "2 tazas (500 ml) de agua, y 1 taza (250 ml) más para licuar",
+     "reason": "extra number in text (second amount or size)"
+    },
+    {
+     "row": "Cebolla y cilantro picados, y limón, para servir",
+     "reason": "no leading quantity"
+    }
+   ],
+   "flagged_steps_held": [
+    "Licúa los chiles escurridos con los jitomates, la cebolla, el ajo, el vinagre, el orégano, el comino, los clavos, la canela, la sal y 1 taza (250 ml) de agua hasta que quede liso. Cuela.",
+    "Calienta el horno a 160°C. Pasa la carne con toda la salsa a una olla con tapa, agrega el laurel y 2 tazas (500 ml) de agua. Tapa bien y hornea 3 horas, hasta que la carne se deshaga con un tenedor y marque al menos 63°C (145°F) en el centro."
+   ]
+  }
+ ],
+ "counts": {
+  "convert": 48,
+  "hold_dual": 6,
+  "hold_step_quote": 8,
+  "hold_unparsed": 15
+ },
+ "convert_rows_with_unit": 24
+}

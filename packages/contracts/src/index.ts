@@ -445,8 +445,20 @@ export function recipePath(country: string, id: string, slug: string): string {
   return `${countryPath(country)}recipes/${id.toLowerCase()}-${slug}`;
 }
 
+/** Locale-aware recipe path. The country's default locale keeps the legacy
+ * URL (/{country}/recipes/...), so existing URLs never change; any other
+ * registered locale lives at /{country}/{lang}/recipes/... */
+export function recipePathFor(country: string, lang: string, id: string, slug: string): string {
+  const def = defaultLocale(country);
+  return !def || lang.toLowerCase() === def
+    ? recipePath(country, id, slug)
+    : `${countryPath(country)}${lang.toLowerCase()}/recipes/${id.toLowerCase()}-${slug}`;
+}
+
 export interface ParsedPath {
   country: string;
+  /** Present only for explicit /{country}/{lang}/ paths of a registered, non-default locale. */
+  lang?: string;
   id?: string;
   slug?: string;
 }
@@ -458,6 +470,15 @@ export function parsePath(pathname: string): ParsedPath | null {
   if (home) {
     const country = home[1];
     return country && getCountry(country) ? { country } : null;
+  }
+  const loc = /^\/([a-z]{2})\/([a-z]{2})\/recipes\/([a-z0-9]+)-([a-z0-9-]+)\/?$/.exec(pathname);
+  if (loc) {
+    const [, country, lang, id, slug] = loc;
+    if (!country || !lang || !id || !slug || !getCountry(country)) return null;
+    // Only registered, non-default locales have a prefixed URL; the default
+    // locale lives at the legacy path (no duplicate URLs).
+    if (!localesFor(country).includes(lang) || lang === defaultLocale(country)) return null;
+    return { country, lang, id, slug };
   }
   const rec = /^\/([a-z]{2})\/recipes\/([a-z0-9]+)-([a-z0-9-]+)\/?$/.exec(pathname);
   if (!rec) return null;
@@ -520,3 +541,4 @@ export interface RecipePage {
 }
 export * from './units';
 export * from './render';
+export * from './translation';
