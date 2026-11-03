@@ -32,8 +32,8 @@ const SESSION_DAYS = 30;
 const CODE_TTL_MS = 10 * 60_000;
 const MAX_ATTEMPTS = 5;
 const CODES_PER_EMAIL_10MIN = 3;
-const CODES_PER_DAY = 80; // login codes: headroom under the Resend free 100/day cap
-const MAIL_PER_DAY = 95; // all mail incl. review notices; hard ceiling below 100/day
+const CODES_PER_DAY = 32; // login codes. The Resend free plan (100/day, 3,000/month) is shared with other sites, so 2yolks takes at most 40/day in total
+const MAIL_PER_DAY = 40; // all 2yolks mail per rolling 24h = 32 codes + 8 review notices at most
 const MAX_DRAFTS_PER_USER = 50; // active (not removed) drafts
 const MAX_ROWS_PER_USER = 500; // lifetime rows incl. removed ones, so remove/recreate loops cannot grow storage forever
 

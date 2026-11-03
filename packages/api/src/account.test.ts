@@ -131,10 +131,10 @@ describe('atomicity under concurrency', () => {
   });
   it('daily mail budget holds under concurrency and covers review notices', async () => {
     const now = Date.now();
-    for (let i = 0; i < 79; i++) await DB.prepare("INSERT INTO mail_log (id,kind,created_at) VALUES (?,'code',?)").bind(`seed${i}`, now).run();
+    for (let i = 0; i < 31; i++) await DB.prepare("INSERT INTO mail_log (id,kind,created_at) VALUES (?,'code',?)").bind(`seed${i}`, now).run();
     await Promise.all(Array.from({ length: 10 }, (_, i) => post('/account/code', { email: `u${i}@example.com` })));
     expect(sent.length).toBe(1);
-    expect((await DB.prepare('SELECT count(*) AS n FROM mail_log').first<{ n: number }>())!.n).toBe(80);
+    expect((await DB.prepare('SELECT count(*) AS n FROM mail_log').first<{ n: number }>())!.n).toBe(32);
   });
   it('review notices stop at the overall cap but the submit still flags the draft', async () => {
     const cookie = await signIn();
@@ -412,6 +412,13 @@ describe('limits and credit', () => {
 });
 
 describe('budget order, concurrent issuance, removal frees a slot', () => {
+  it('codes stop at 32/day but the remaining 8 of the 40/day total stay for review notices', async () => {
+    const now = Date.now();
+    for (let i = 0; i < 32; i++) await DB.prepare("INSERT INTO mail_log (id,kind,created_at) VALUES (?,'code',?)").bind(`c${i}`, now).run();
+    expect((await post('/account/code', { email: 'cap@example.com' })).status).toBe(503);
+    for (let i = 0; i < 8; i++) await DB.prepare("INSERT INTO mail_log (id,kind,created_at) VALUES (?,'notice',?)").bind(`n${i}`, now).run();
+    expect((await DB.prepare('SELECT count(*) AS n FROM mail_log').first<{ n: number }>())!.n).toBe(40);
+  });
   it('per-email rejections do not spend the site-wide mail budget', async () => {
     for (let i = 0; i < 3; i++) await post('/account/code', { email: 'spam@example.com' });
     const before = (await DB.prepare('SELECT count(*) AS n FROM mail_log').first<{ n: number }>())!.n;
@@ -420,7 +427,7 @@ describe('budget order, concurrent issuance, removal frees a slot', () => {
   });
   it('when the site budget is exhausted the code is killed, not sent', async () => {
     const now = Date.now();
-    for (let i = 0; i < 80; i++) await DB.prepare("INSERT INTO mail_log (id,kind,created_at) VALUES (?,'code',?)").bind(`b${i}`, now).run();
+    for (let i = 0; i < 32; i++) await DB.prepare("INSERT INTO mail_log (id,kind,created_at) VALUES (?,'code',?)").bind(`b${i}`, now).run();
     expect((await post('/account/code', { email: 'late@example.com' })).status).toBe(503);
     expect(sent.length).toBe(0);
     expect((await DB.prepare('SELECT used FROM auth_codes').first<{ used: number }>())!.used).toBe(1);
