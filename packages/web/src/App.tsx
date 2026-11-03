@@ -1,5 +1,5 @@
 import type { RecipePage } from '@2yolks/contracts';
-import { countryPath, recipePath, uiStrings, parseIngredient, formatQty } from '@2yolks/contracts';
+import { countryPath, recipePath, uiStrings, parseIngredient, formatQty, scalingIsSafe } from '@2yolks/contracts';
 
 export interface HomeProps {
   locales: { country: string; countryName: string; lang: string }[];
@@ -54,7 +54,9 @@ export function RecipeView({ page, alternates = [] }: { page: RecipePage; altern
   }));
   const steps = JSON.parse(page.locale.stepsJson) as string[];
   const others = alternates.filter((a) => a.hreflang !== 'x-default' && !a.hreflang.startsWith(page.locale.lang + '-'));
-  const hasQty = ingredients.some((i) => i.parsed.qty !== null);
+  const hasQty =
+    ingredients.some((i) => i.parsed.qty !== null) &&
+    scalingIsSafe(ingredients.map((i) => i.raw), steps);
   return (
     <main>
       <h1>{page.locale.title}</h1>

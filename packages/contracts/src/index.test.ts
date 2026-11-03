@@ -12,6 +12,7 @@ import {
   validateRecipeSubmission,
   parseIngredient,
   formatQty,
+  scalingIsSafe,
 } from './index';
 
 describe('country registry', () => {
@@ -113,5 +114,18 @@ describe('formatQty', () => {
     expect(formatQty(0.5)).toBe('\u00bd');
     expect(formatQty(1.5)).toBe('1 \u00bd');
     expect(formatQty(0.25)).toBe('\u00bc');
+  });
+});
+
+describe('scalingIsSafe', () => {
+  it('allows simple lists whose steps quote no amounts', () => {
+    expect(scalingIsSafe(['2 huevos', '2 tortillas', 'salsa'], ['Warm tortillas', 'Fry eggs 3 minutes'])).toBe(true);
+  });
+  it('blocks scaling when ingredients carry unit conversions', () => {
+    expect(scalingIsSafe(['2 cups (500 ml) water'], ['Boil'])).toBe(false);
+  });
+  it('blocks scaling when steps quote ingredient amounts', () => {
+    expect(scalingIsSafe(['1 cup rice'], ['Add 1/2 cup water'])).toBe(false);
+    expect(scalingIsSafe(['1 taza arroz'], ['Agrega 250 ml de agua'])).toBe(false);
   });
 });

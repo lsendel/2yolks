@@ -37,4 +37,13 @@ describe('wave 1 editorial drafts', () => {
       expect(parsePath(recipePath(r.country, r.id, r.slug))).toEqual({ country: r.country, id: r.id, slug: r.slug });
     }
   });
+  it('pairs the 145F whole-meat minimum with the 3-minute rest', () => {
+    for (const r of data.recipes) {
+      const text = r.steps.join(' ');
+      if (/145°F/.test(text)) expect(text).toMatch(/3 minutos|3 minutes/);
+    }
+  });
+  it('lists no decimal leading quantities that the display would turn into odd fractions', () => {
+    for (const r of data.recipes) for (const i of r.ingredients) expect(i).not.toMatch(/^\d+\.\d/);
+  });
 });
