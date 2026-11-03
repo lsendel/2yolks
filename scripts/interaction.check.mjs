@@ -43,7 +43,7 @@ try {
   await page.click('button[data-units="us"]');
   check('units: toggle to US customary (g -> oz)', (await li(1)) === '9 oz harina', await li(1));
   check('units: eggs unchanged', (await li(3)) === '3 huevos');
-  check('units: structured row + temp token in steps', (await li(4)) === '1 tbsp aceite' && (await page.$eval('ol.steps li:nth-child(3)', (e) => e.textContent)) === 'Hornear a 356\u00b0F');
+  check('units: structured row + temp token in steps', (await li(4)) === '1 cucharada de aceite' && (await page.$eval('ol.steps li:nth-child(3)', (e) => e.textContent)) === 'Hornear a 356\u00b0F');
   await page.click('button[data-mult="2"]');
   check('units: scaler composes with toggle', (await li(1)) === '1 lb harina', await li(1));
   await page.reload({ waitUntil: 'networkidle0' });

@@ -82,7 +82,7 @@ describe('recipe submission validation (fail closed)', () => {
   });
   it('rejects unknown countries and disabled locales', () => {
     expect(validateRecipeSubmission({ ...valid, locales: [{ ...valid.locales[0], country: 'zz' }] }).ok).toBe(false);
-    expect(validateRecipeSubmission({ ...valid, locales: [{ ...valid.locales[0], lang: 'en' }] }).ok).toBe(false);
+    expect(validateRecipeSubmission({ ...valid, locales: [{ ...valid.locales[0], lang: 'de' }] }).ok).toBe(false);
   });
   it('rejects bad slugs, empty ingredients, non-https source urls', () => {
     expect(validateRecipeSubmission({ ...valid, locales: [{ ...valid.locales[0], slug: 'Bad Slug!' }] }).ok).toBe(false);
@@ -140,10 +140,11 @@ describe('locale-aware recipe paths', () => {
   });
   it('non-default locale gets a prefix only when registered; unregistered/default prefixes do not parse', () => {
     expect(_rpf('mx', 'en', 'abc123', 'pozole')).toBe('/mx/en/recipes/abc123-pozole');
-    // today no non-default locale is registered, so no prefixed URL resolves
-    expect(_pp('/mx/en/recipes/abc123-pozole')).toBeNull();
-    expect(_pp('/mx/fr/recipes/abc123-pozole')).toBeNull();
+    expect(_pp('/mx/en/recipes/abc123-pozole')).toEqual({ country: 'mx', lang: 'en', id: 'abc123', slug: 'pozole' });
+    expect(_pp('/mx/fr/recipes/abc123-pozole')).toEqual({ country: 'mx', lang: 'fr', id: 'abc123', slug: 'pozole' });
+    expect(_pp('/mx/de/recipes/abc123-pozole')).toBeNull(); // unregistered
     expect(_pp('/mx/es/recipes/abc123-pozole')).toBeNull(); // default locale: no duplicate URL
-    expect(Object.keys(_LOC)).toEqual(['us', 'mx']);
+    expect(_LOC.us).toEqual(['en', 'es', 'fr']);
+    expect(_LOC.mx).toEqual(['es', 'en', 'fr']);
   });
 });

@@ -167,7 +167,7 @@ const ALLERGEN_GROUPS: string[][] = [
   ['wheat', 'trigo', 'bl\u00e9'],
   ['soy', 'soya', 'soja'],
   ['shrimp', 'camar\u00f3n', 'crevette'],
-  ['sesame', 's\u00e9samo', 'ajonjol\u00ed'],
+  ['sesame', 's\u00e9samo', 's\u00e9same', 'ajonjol\u00ed'],
 ];
 
 /** Allergen terms found in the source ingredient text must appear (in any

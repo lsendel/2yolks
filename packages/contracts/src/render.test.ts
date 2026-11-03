@@ -44,3 +44,13 @@ describe('metric output uses decimals, not fractions', () => {
     expect(_ri('1 cucharadita de orégano', 'es', 'metric')).toMatch(/^5 ml/);
   });
 });
+
+describe('structured rows keep localized wording', () => {
+  it('es: spelled-out unit and "de"', () => {
+    const e = { ref: 'sal', qty: 2, name: 'sal', unit: 'tsp', note: 'y más al gusto' } as any;
+    expect(renderIngredient(e, 'es', 'us')).toBe('2 cucharaditas sal, y más al gusto'.replace('cucharaditas sal', 'cucharaditas de sal'));
+    expect(renderIngredient(e, 'es', 'metric')).toBe('10 ml de sal, y más al gusto');
+    expect(renderIngredient({ ref: 'o', qty: 1, name: 'orégano', unit: 'tsp' } as any, 'es', 'us')).toBe('1 cucharadita de orégano');
+    expect(renderIngredient({ ref: 'm', qty: 800, name: 'maíz', unit: 'g' } as any, 'es', 'metric')).toBe('800 g de maíz');
+  });
+});
