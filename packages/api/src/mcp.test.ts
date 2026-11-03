@@ -4,6 +4,7 @@
 import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { COUNTRIES, LOCALES } from '@2yolks/contracts';
 import app from './index';
 
 const ADMIN_KEY = 'test-admin-key-0000000000';
@@ -221,6 +222,10 @@ describe('admin MCP', () => {
     // public API does not list the draft
     const pub = await app.request('https://2yolks.com/api/v1/countries/us/recipes', {}, env(DB));
     expect(((await pub.json()) as { recipes: unknown[] }).recipes.length).toBe(0);
+    const cat0 = (await (await app.request('https://2yolks.com/api/v1/countries', {}, env(DB))).json()) as { countries: unknown[]; locales: Record<string, string[]>; published: Record<string, string[]> };
+    expect(cat0.countries.length).toBe(COUNTRIES.length);
+    expect(cat0.locales).toEqual(JSON.parse(JSON.stringify(LOCALES)));
+    expect(cat0.published.us).toBeUndefined();
 
     // clear_rights requires confirmation and a reason
     const unconfirmed = await toolCall(ADMIN_KEY, 'sources.clear_rights', { id: sourceId });
@@ -248,6 +253,8 @@ describe('admin MCP', () => {
     const pub2 = await app.request('https://2yolks.com/api/v1/countries/us/recipes', {}, env(DB));
     const listed = ((await pub2.json()) as { recipes: { title: string }[] }).recipes;
     expect(listed.map((r) => r.title)).toContain('Test Pancakes');
+    const cat1 = (await (await app.request('https://2yolks.com/api/v1/countries', {}, env(DB))).json()) as { published: Record<string, string[]> };
+    expect(cat1.published.us).toContain('en');
 
     // published locales are not editable; unpublish returns to draft
     const editPub = await toolCall(EDITOR_KEY, 'recipes.update_draft', {
