@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { checkTranslation, checkAllergens, checkStructuredTranslation, ingredientText, renderIngredient, localesFor } from '@2yolks/contracts';
 
 const read = (f: string) => JSON.parse(readFileSync(new URL(f, import.meta.url), 'utf8'));
-const src = new Map<string, any>(read('./wave1.json').recipes.map((r: any) => [r.id, r]));
+const src = new Map<string, any>(read('./wave1.structured.json').recipes.map((r: any) => [r.id, r]));
 const drafts: any[] = read('./wave1.translation-drafts.json').drafts;
 
 describe('wave1 translation drafts (unpublished, assistant-authored)', () => {
@@ -61,5 +61,32 @@ describe('draft slugs', () => {
     // no collision with the live source slugs either
     for (const s of src.values()) expect(seen.has(`${s.country}/${s.lang}/${s.slug}`)).toBe(false);
     expect(slugify('Tacos de bœuf æther')).toBe('tacos-de-boeuf-aether');
+  });
+});
+
+describe('drafts are aligned with the structured (live) source', () => {
+  it('structured source equals wave1.json text-for-text via the prepared diff, and drafts carry the same ref/qty/unit', () => {
+    const orig = new Map<string, any>(read('./wave1.json').recipes.map((r: any) => [r.id, r]));
+    const diff = read('./wave1.structured-diff.json');
+    for (const r of src.values()) {
+      const conv = new Map<string, any>(diff.recipes.find((x: any) => x.id === r.id).convert.map((c: any) => [c.before, c.after]));
+      orig.get(r.id).ingredients.forEach((o: string, i: number) => expect(r.ingredients[i]).toEqual(conv.get(o) ?? o));
+      for (const d of drafts.filter((x) => x.recipe_id === r.id)) {
+        r.ingredients.forEach((s: any, i: number) => {
+          const t = d.ingredients[i];
+          if (typeof s === 'string') return expect(typeof t).toBe('string');
+          expect(typeof t).toBe('object');
+          expect({ ref: t.ref, qty: t.qty, unit: t.unit, qtyEnd: t.qtyEnd }).toEqual({ ref: s.ref, qty: s.qty, unit: s.unit, qtyEnd: s.qtyEnd });
+          expect(Boolean(t.note)).toBe(Boolean(s.note));
+        });
+      }
+    }
+  });
+  it('structured draft rows render with localized wording (de / d\u2019)', () => {
+    const fr = drafts.find((d) => d.recipe_id === 'w1golumpki' && d.lang === 'fr');
+    const oil = renderIngredient(fr.ingredients[0], 'fr', 'us');
+    expect(oil).toMatch(/^1 c\. à soupe d’huile d’olive$/);
+    const es = drafts.find((d) => d.recipe_id === 'w1golumpki' && d.lang === 'es');
+    expect(renderIngredient(es.ingredients[0], 'es', 'us')).toBe('1 cucharada de aceite de oliva');
   });
 });

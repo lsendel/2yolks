@@ -9,23 +9,86 @@
    "slug": "beef-birria-tacos-with-consomme",
    "intro": "Beef slow-cooked in a chile sauce, served in crisped tacos with cheese and a consommé for dipping. Makes about 16 tacos. About 4 hours 30 minutes in total (1 hour marinating and 3 in the oven). Draft: not yet tested in a kitchen.",
    "ingredients": [
-    "1200 g beef plate or chuck, in 4 large pieces",
-    "5 guajillo chiles, stems, seeds and veins removed",
-    "2 ancho chiles, stems, seeds and veins removed",
+    "1200 g beef plate (falda) or aguayón (top sirloin), in 4 large pieces",
+    {
+     "ref": "chiles-guajillo",
+     "qty": 5.0,
+     "name": "guajillo chiles",
+     "note": "stems, seeds and veins removed"
+    },
+    {
+     "ref": "chiles-ancho",
+     "qty": 2.0,
+     "name": "ancho chiles",
+     "note": "stems, seeds and veins removed"
+    },
     "3 dried chiles de árbol (optional, for more heat)",
-    "3 roma tomatoes",
-    "1/2 onion",
-    "5 garlic cloves",
-    "2 tablespoons apple cider vinegar",
-    "1 teaspoon Mexican oregano",
-    "1/2 teaspoon ground cumin",
-    "3 whole cloves",
-    "1 small piece of cinnamon stick",
-    "2 teaspoons salt",
-    "2 bay leaves",
+    {
+     "ref": "jitomates-guaje-roma",
+     "qty": 3.0,
+     "name": "roma tomatoes"
+    },
+    {
+     "ref": "cebolla",
+     "qty": 0.5,
+     "name": "onion"
+    },
+    {
+     "ref": "dientes-de-ajo",
+     "qty": 5.0,
+     "name": "garlic cloves"
+    },
+    {
+     "ref": "vinagre-de-manzana",
+     "qty": 2.0,
+     "name": "apple cider vinegar",
+     "unit": "tbsp"
+    },
+    {
+     "ref": "oregano-mexicano",
+     "qty": 1.0,
+     "name": "Mexican oregano",
+     "unit": "tsp"
+    },
+    {
+     "ref": "comino-molido",
+     "qty": 0.5,
+     "name": "ground cumin",
+     "unit": "tsp"
+    },
+    {
+     "ref": "clavos-de-olor",
+     "qty": 3.0,
+     "name": "whole cloves"
+    },
+    {
+     "ref": "raja-pequena-de-canela",
+     "qty": 1.0,
+     "name": "small piece of cinnamon stick"
+    },
+    {
+     "ref": "sal",
+     "qty": 2.0,
+     "name": "salt",
+     "unit": "tsp"
+    },
+    {
+     "ref": "hojas-de-laurel",
+     "qty": 2.0,
+     "name": "bay leaves"
+    },
     "2 cups (500 ml) water, and 1 more cup (250 ml) for blending",
-    "16 corn tortillas",
-    "250 g shredded Oaxaca cheese",
+    {
+     "ref": "tortillas-de-maiz",
+     "qty": 16.0,
+     "name": "corn tortillas"
+    },
+    {
+     "ref": "queso-oaxaca-deshebrado",
+     "qty": 250.0,
+     "name": "shredded Oaxaca cheese",
+     "unit": "g"
+    },
     "Chopped onion and cilantro, and lime, to serve"
    ],
    "steps": [
@@ -56,23 +119,86 @@
    "slug": "tacos-de-birria-de-boeuf-avec-consomme",
    "intro": "Bœuf cuit lentement dans une sauce de piments, servi dans des tacos dorés avec du fromage et un consommé pour tremper. Donne environ 16 tacos. Environ 4 heures 30 minutes au total (1 heure de marinade et 3 au four). Brouillon : pas encore testé en cuisine.",
    "ingredients": [
-    "1200 g de flanchet ou de paleron de bœuf, en 4 gros morceaux",
-    "5 piments guajillo, sans queue, graines ni nervures",
-    "2 piments ancho, sans queue, graines ni nervures",
+    "1200 g de flanchet (falda) ou d’aguayón (rumsteck) de bœuf, en 4 gros morceaux",
+    {
+     "ref": "chiles-guajillo",
+     "qty": 5.0,
+     "name": "piments guajillo",
+     "note": "sans queue, graines ni nervures"
+    },
+    {
+     "ref": "chiles-ancho",
+     "qty": 2.0,
+     "name": "piments ancho",
+     "note": "sans queue, graines ni nervures"
+    },
     "3 piments de árbol secs (facultatif, pour plus de piquant)",
-    "3 tomates allongées (type roma)",
-    "1/2 oignon",
-    "5 gousses d’ail",
-    "2 c. à soupe de vinaigre de cidre",
-    "1 c. à café d’origan mexicain",
-    "1/2 c. à café de cumin moulu",
-    "3 clous de girofle",
-    "1 petit morceau de bâton de cannelle",
-    "2 c. à café de sel",
-    "2 feuilles de laurier",
+    {
+     "ref": "jitomates-guaje-roma",
+     "qty": 3.0,
+     "name": "tomates allongées (type roma)"
+    },
+    {
+     "ref": "cebolla",
+     "qty": 0.5,
+     "name": "oignon"
+    },
+    {
+     "ref": "dientes-de-ajo",
+     "qty": 5.0,
+     "name": "gousses d’ail"
+    },
+    {
+     "ref": "vinagre-de-manzana",
+     "qty": 2.0,
+     "name": "vinaigre de cidre",
+     "unit": "tbsp"
+    },
+    {
+     "ref": "oregano-mexicano",
+     "qty": 1.0,
+     "name": "origan mexicain",
+     "unit": "tsp"
+    },
+    {
+     "ref": "comino-molido",
+     "qty": 0.5,
+     "name": "cumin moulu",
+     "unit": "tsp"
+    },
+    {
+     "ref": "clavos-de-olor",
+     "qty": 3.0,
+     "name": "clous de girofle"
+    },
+    {
+     "ref": "raja-pequena-de-canela",
+     "qty": 1.0,
+     "name": "petit morceau de bâton de cannelle"
+    },
+    {
+     "ref": "sal",
+     "qty": 2.0,
+     "name": "sel",
+     "unit": "tsp"
+    },
+    {
+     "ref": "hojas-de-laurel",
+     "qty": 2.0,
+     "name": "feuilles de laurier"
+    },
     "2 tasses (500 ml) d’eau, et 1 tasse (250 ml) de plus pour mixer",
-    "16 tortillas de maïs",
-    "250 g de fromage Oaxaca effiloché",
+    {
+     "ref": "tortillas-de-maiz",
+     "qty": 16.0,
+     "name": "tortillas de maïs"
+    },
+    {
+     "ref": "queso-oaxaca-deshebrado",
+     "qty": 250.0,
+     "name": "fromage Oaxaca effiloché",
+     "unit": "g"
+    },
     "Oignon et coriandre hachés, et citron vert, pour servir"
    ],
    "steps": [
@@ -106,16 +232,45 @@
     "2 chicken breasts (about 600 g)",
     "1/2 onion",
     "2 garlic cloves",
-    "1 teaspoon salt, plus more to taste",
-    "5 guajillo chiles, stems, seeds and veins removed",
-    "2 ancho chiles, stems, seeds and veins removed",
-    "3 roma tomatoes",
+    {
+     "ref": "sal",
+     "qty": 1.0,
+     "name": "salt",
+     "unit": "tsp",
+     "note": "plus more to taste"
+    },
+    {
+     "ref": "chiles-guajillo",
+     "qty": 5.0,
+     "name": "guajillo chiles",
+     "note": "stems, seeds and veins removed"
+    },
+    {
+     "ref": "chiles-ancho",
+     "qty": 2.0,
+     "name": "ancho chiles",
+     "note": "stems, seeds and veins removed"
+    },
+    {
+     "ref": "jitomates-guaje-roma",
+     "qty": 3.0,
+     "name": "roma tomatoes"
+    },
     "1/4 onion",
     "1 garlic clove",
     "1 tablespoon oil, for frying the sauce",
     "1/2 cup (120 ml) oil, for dipping the tortillas",
-    "12 corn tortillas",
-    "150 g crumbled queso fresco",
+    {
+     "ref": "tortillas-de-maiz",
+     "qty": 12.0,
+     "name": "corn tortillas"
+    },
+    {
+     "ref": "queso-fresco-desmoronado",
+     "qty": 150.0,
+     "name": "crumbled queso fresco",
+     "unit": "g"
+    },
     "1/2 cup (120 ml) crema",
     "Chopped onion and lettuce, to serve"
    ],
@@ -150,16 +305,45 @@
     "2 poitrines de poulet (environ 600 g)",
     "1/2 oignon",
     "2 gousses d’ail",
-    "1 c. à café de sel, et plus selon le goût",
-    "5 piments guajillo, sans queue, graines ni nervures",
-    "2 piments ancho, sans queue, graines ni nervures",
-    "3 tomates allongées (type roma)",
+    {
+     "ref": "sal",
+     "qty": 1.0,
+     "name": "sel",
+     "unit": "tsp",
+     "note": "et plus selon le goût"
+    },
+    {
+     "ref": "chiles-guajillo",
+     "qty": 5.0,
+     "name": "piments guajillo",
+     "note": "sans queue, graines ni nervures"
+    },
+    {
+     "ref": "chiles-ancho",
+     "qty": 2.0,
+     "name": "piments ancho",
+     "note": "sans queue, graines ni nervures"
+    },
+    {
+     "ref": "jitomates-guaje-roma",
+     "qty": 3.0,
+     "name": "tomates allongées (type roma)"
+    },
     "1/4 d’oignon",
     "1 gousse d’ail",
     "1 c. à soupe d’huile, pour faire revenir la sauce",
     "1/2 tasse (120 ml) d’huile, pour passer les tortillas",
-    "12 tortillas de maïs",
-    "150 g de queso fresco émietté",
+    {
+     "ref": "tortillas-de-maiz",
+     "qty": 12.0,
+     "name": "tortillas de maïs"
+    },
+    {
+     "ref": "queso-fresco-desmoronado",
+     "qty": 150.0,
+     "name": "queso fresco émietté",
+     "unit": "g"
+    },
     "1/2 tasse (120 ml) de crème",
     "Oignon haché et laitue, pour servir"
    ],
@@ -191,20 +375,65 @@
    "slug": "sopa-golumpki-rollos-de-col-sin-enrollar",
    "intro": "Todo el sabor de los rollos de col polacos rellenos en una sola olla, sin enrollar nada. Rinde 6 porciones. Unos 25 minutos de trabajo y 70 minutos en total. Borrador: aún no probado en cocina.",
    "ingredients": [
-    "1 cucharada de aceite de oliva",
+    {
+     "ref": "olive-oil",
+     "qty": 1.0,
+     "name": "aceite de oliva",
+     "unit": "tbsp"
+    },
     "1 lb (450 g) de carne molida de res, o mitad res y mitad cerdo",
-    "1 cebolla mediana, picada",
-    "3 dientes de ajo, picados",
-    "1 cucharada de pasta de tomate",
-    "1 cucharadita de pimentón dulce",
+    {
+     "ref": "medium-onion",
+     "qty": 1.0,
+     "name": "cebolla mediana",
+     "note": "picada"
+    },
+    {
+     "ref": "garlic-cloves",
+     "qty": 3.0,
+     "name": "dientes de ajo",
+     "note": "picados"
+    },
+    {
+     "ref": "tomato-paste",
+     "qty": 1.0,
+     "name": "pasta de tomate",
+     "unit": "tbsp"
+    },
+    {
+     "ref": "sweet-paprika",
+     "qty": 1.0,
+     "name": "pimentón dulce",
+     "unit": "tsp"
+    },
     "1 col verde pequeña (unas 1.5 lb / 700 g), sin el corazón y cortada en trozos de 1 pulgada (2.5 cm)",
     "1 lata (28 oz / 800 g) de tomates triturados",
     "4 tazas (1 L) de caldo de res",
     "1/2 taza (100 g) de arroz blanco de grano largo, crudo",
-    "1 hoja de laurel",
-    "1 cucharadita de sal, y más al gusto",
-    "1/2 cucharadita de pimienta negra",
-    "1 cucharada de vinagre de manzana",
+    {
+     "ref": "bay-leaf",
+     "qty": 1.0,
+     "name": "hoja de laurel"
+    },
+    {
+     "ref": "salt",
+     "qty": 1.0,
+     "name": "sal",
+     "unit": "tsp",
+     "note": "y más al gusto"
+    },
+    {
+     "ref": "black-pepper",
+     "qty": 0.5,
+     "name": "pimienta negra",
+     "unit": "tsp"
+    },
+    {
+     "ref": "apple-cider-vinegar",
+     "qty": 1.0,
+     "name": "vinagre de manzana",
+     "unit": "tbsp"
+    },
     "Perejil picado, para servir"
    ],
    "steps": [
@@ -233,20 +462,65 @@
    "slug": "soupe-golumpki-choux-farcis-deroules",
    "intro": "Toute la saveur des choux farcis polonais dans une seule marmite, sans rouler. Pour 6 personnes. Environ 25 minutes de travail et 70 minutes au total. Brouillon : pas encore testé en cuisine.",
    "ingredients": [
-    "1 c. à soupe d’huile d’olive",
+    {
+     "ref": "olive-oil",
+     "qty": 1.0,
+     "name": "huile d’olive",
+     "unit": "tbsp"
+    },
     "1 lb (450 g) de bœuf haché, ou moitié bœuf et moitié porc",
-    "1 oignon moyen, émincé",
-    "3 gousses d’ail, hachées",
-    "1 c. à soupe de concentré de tomate",
-    "1 c. à café de paprika doux",
+    {
+     "ref": "medium-onion",
+     "qty": 1.0,
+     "name": "oignon moyen",
+     "note": "émincé"
+    },
+    {
+     "ref": "garlic-cloves",
+     "qty": 3.0,
+     "name": "gousses d’ail",
+     "note": "hachées"
+    },
+    {
+     "ref": "tomato-paste",
+     "qty": 1.0,
+     "name": "concentré de tomate",
+     "unit": "tbsp"
+    },
+    {
+     "ref": "sweet-paprika",
+     "qty": 1.0,
+     "name": "paprika doux",
+     "unit": "tsp"
+    },
     "1 petit chou vert (environ 1,5 lb / 700 g), cœur retiré et coupé en morceaux de 1 pouce (2,5 cm)",
     "1 boîte (28 oz / 800 g) de tomates concassées",
     "4 tasses (1 L) de bouillon de bœuf",
     "1/2 tasse (100 g) de riz blanc à grains longs, cru",
-    "1 feuille de laurier",
-    "1 c. à café de sel, et plus selon le goût",
-    "1/2 c. à café de poivre noir",
-    "1 c. à soupe de vinaigre de cidre",
+    {
+     "ref": "bay-leaf",
+     "qty": 1.0,
+     "name": "feuille de laurier"
+    },
+    {
+     "ref": "salt",
+     "qty": 1.0,
+     "name": "sel",
+     "unit": "tsp",
+     "note": "et plus selon le goût"
+    },
+    {
+     "ref": "black-pepper",
+     "qty": 0.5,
+     "name": "poivre noir",
+     "unit": "tsp"
+    },
+    {
+     "ref": "apple-cider-vinegar",
+     "qty": 1.0,
+     "name": "vinaigre de cidre",
+     "unit": "tbsp"
+    },
     "Persil haché, pour servir"
    ],
    "steps": [
@@ -276,18 +550,69 @@
    "intro": "Empanadillas con base crujiente y un relleno jugoso de cerdo y col. Rinden unas 30 y alcanzan para 4 a 6 personas. Unos 60 minutos. Borrador: aún no probado en cocina.",
    "ingredients": [
     "3 tazas (unos 250 g) de col napa finamente picada",
-    "1 cucharadita de sal",
+    {
+     "ref": "salt",
+     "qty": 1.0,
+     "name": "sal",
+     "unit": "tsp"
+    },
     "1 lb (450 g) de carne molida de cerdo",
-    "3 cebollitas de cambray, en rodajas finas",
-    "1 cucharada de jengibre fresco rallado",
-    "2 dientes de ajo, picados",
-    "1 cucharada de salsa de soya",
-    "1 cucharada de vino Shaoxing o jerez seco",
-    "1 cucharadita de aceite de ajonjolí tostado",
-    "1/2 cucharadita de pimienta blanca",
-    "1 cucharada de fécula de maíz",
+    {
+     "ref": "scallions",
+     "qty": 3.0,
+     "name": "cebollitas de cambray",
+     "note": "en rodajas finas"
+    },
+    {
+     "ref": "grated-fresh-ginger",
+     "qty": 1.0,
+     "name": "jengibre fresco rallado",
+     "unit": "tbsp"
+    },
+    {
+     "ref": "garlic-cloves",
+     "qty": 2.0,
+     "name": "dientes de ajo",
+     "note": "picados"
+    },
+    {
+     "ref": "soy-sauce",
+     "qty": 1.0,
+     "name": "salsa de soya",
+     "unit": "tbsp"
+    },
+    {
+     "ref": "shaoxing-wine-or-dry-she",
+     "qty": 1.0,
+     "name": "vino Shaoxing o jerez seco",
+     "unit": "tbsp"
+    },
+    {
+     "ref": "toasted-sesame-oil",
+     "qty": 1.0,
+     "name": "aceite de ajonjolí tostado",
+     "unit": "tsp"
+    },
+    {
+     "ref": "white-pepper",
+     "qty": 0.5,
+     "name": "pimienta blanca",
+     "unit": "tsp"
+    },
+    {
+     "ref": "cornstarch",
+     "qty": 1.0,
+     "name": "fécula de maíz",
+     "unit": "tbsp"
+    },
     "30 a 36 envolturas redondas para empanadillas (un paquete de 12 a 14 oz)",
-    "2 cucharadas de aceite neutro, para freír",
+    {
+     "ref": "neutral-oil",
+     "qty": 2.0,
+     "name": "aceite neutro",
+     "unit": "tbsp",
+     "note": "para freír"
+    },
     "1 taza (240 ml) de agua, para cocer al vapor, usada por tandas",
     "Salsa para mojar: 3 cucharadas de salsa de soya, 1 cucharada de vinagre de arroz, 1 cucharadita de aceite de ajonjolí"
    ],
@@ -320,18 +645,69 @@
    "intro": "Raviolis au fond croustillant et à la garniture juteuse de porc et de chou. Donne environ 30 raviolis pour 4 à 6 personnes. Environ 60 minutes. Brouillon : pas encore testé en cuisine.",
    "ingredients": [
     "3 tasses (environ 250 g) de chou chinois finement haché",
-    "1 c. à café de sel",
+    {
+     "ref": "salt",
+     "qty": 1.0,
+     "name": "sel",
+     "unit": "tsp"
+    },
     "1 lb (450 g) de porc haché",
-    "3 oignons verts, finement tranchés",
-    "1 c. à soupe de gingembre frais râpé",
-    "2 gousses d’ail, hachées",
-    "1 c. à soupe de sauce soja",
-    "1 c. à soupe de vin Shaoxing ou de xérès sec",
-    "1 c. à café d’huile de sésame grillé",
-    "1/2 c. à café de poivre blanc",
-    "1 c. à soupe de fécule de maïs",
+    {
+     "ref": "scallions",
+     "qty": 3.0,
+     "name": "oignons verts",
+     "note": "finement tranchés"
+    },
+    {
+     "ref": "grated-fresh-ginger",
+     "qty": 1.0,
+     "name": "gingembre frais râpé",
+     "unit": "tbsp"
+    },
+    {
+     "ref": "garlic-cloves",
+     "qty": 2.0,
+     "name": "gousses d’ail",
+     "note": "hachées"
+    },
+    {
+     "ref": "soy-sauce",
+     "qty": 1.0,
+     "name": "sauce soja",
+     "unit": "tbsp"
+    },
+    {
+     "ref": "shaoxing-wine-or-dry-she",
+     "qty": 1.0,
+     "name": "vin Shaoxing ou de xérès sec",
+     "unit": "tbsp"
+    },
+    {
+     "ref": "toasted-sesame-oil",
+     "qty": 1.0,
+     "name": "huile de sésame grillé",
+     "unit": "tsp"
+    },
+    {
+     "ref": "white-pepper",
+     "qty": 0.5,
+     "name": "poivre blanc",
+     "unit": "tsp"
+    },
+    {
+     "ref": "cornstarch",
+     "qty": 1.0,
+     "name": "fécule de maïs",
+     "unit": "tbsp"
+    },
     "30 à 36 pâtes à raviolis rondes (un paquet de 12 à 14 oz)",
-    "2 c. à soupe d’huile neutre, pour la poêle",
+    {
+     "ref": "neutral-oil",
+     "qty": 2.0,
+     "name": "huile neutre",
+     "unit": "tbsp",
+     "note": "pour la poêle"
+    },
     "1 tasse (240 ml) d’eau, pour la cuisson à la vapeur, utilisée par fournées",
     "Sauce à tremper : 3 c. à soupe de sauce soja, 1 c. à soupe de vinaigre de riz, 1 c. à café d’huile de sésame"
    ],
@@ -365,17 +741,55 @@
    "ingredients": [
     "1 kg pork shoulder, in 4 cm pieces",
     "2500 ml water (2.5 liters)",
-    "1/2 onion",
-    "4 garlic cloves",
-    "2 bay leaves",
-    "2 teaspoons salt, plus more to taste",
-    "4 guajillo chiles, stems, seeds and veins removed",
-    "2 ancho chiles, stems, seeds and veins removed",
+    {
+     "ref": "cebolla",
+     "qty": 0.5,
+     "name": "onion"
+    },
+    {
+     "ref": "dientes-de-ajo",
+     "qty": 4.0,
+     "name": "garlic cloves"
+    },
+    {
+     "ref": "hojas-de-laurel",
+     "qty": 2.0,
+     "name": "bay leaves"
+    },
+    {
+     "ref": "sal",
+     "qty": 2.0,
+     "name": "salt",
+     "unit": "tsp",
+     "note": "plus more to taste"
+    },
+    {
+     "ref": "chiles-guajillo",
+     "qty": 4.0,
+     "name": "guajillo chiles",
+     "note": "stems, seeds and veins removed"
+    },
+    {
+     "ref": "chiles-ancho",
+     "qty": 2.0,
+     "name": "ancho chiles",
+     "note": "stems, seeds and veins removed"
+    },
     "1/4 onion",
     "2 garlic cloves",
-    "1 teaspoon Mexican oregano",
+    {
+     "ref": "oregano-mexicano",
+     "qty": 1.0,
+     "name": "Mexican oregano",
+     "unit": "tsp"
+    },
     "1/4 teaspoon ground cumin",
-    "800 g precooked cacahuazintle hominy (cooked and drained)",
+    {
+     "ref": "maiz-cacahuazintle-preco",
+     "qty": 800.0,
+     "name": "precooked cacahuazintle hominy (cooked and drained)",
+     "unit": "g"
+    },
     "To serve: chopped lettuce or cabbage, sliced radishes, chopped onion, oregano, lime and tostadas"
    ],
    "steps": [
@@ -408,17 +822,55 @@
    "ingredients": [
     "1 kg d’épaule de porc, en morceaux de 4 cm",
     "2500 ml d’eau (2,5 litres)",
-    "1/2 oignon",
-    "4 gousses d’ail",
-    "2 feuilles de laurier",
-    "2 c. à café de sel, et plus selon le goût",
-    "4 piments guajillo, sans queue, graines ni nervures",
-    "2 piments ancho, sans queue, graines ni nervures",
+    {
+     "ref": "cebolla",
+     "qty": 0.5,
+     "name": "oignon"
+    },
+    {
+     "ref": "dientes-de-ajo",
+     "qty": 4.0,
+     "name": "gousses d’ail"
+    },
+    {
+     "ref": "hojas-de-laurel",
+     "qty": 2.0,
+     "name": "feuilles de laurier"
+    },
+    {
+     "ref": "sal",
+     "qty": 2.0,
+     "name": "sel",
+     "unit": "tsp",
+     "note": "et plus selon le goût"
+    },
+    {
+     "ref": "chiles-guajillo",
+     "qty": 4.0,
+     "name": "piments guajillo",
+     "note": "sans queue, graines ni nervures"
+    },
+    {
+     "ref": "chiles-ancho",
+     "qty": 2.0,
+     "name": "piments ancho",
+     "note": "sans queue, graines ni nervures"
+    },
     "1/4 d’oignon",
     "2 gousses d’ail",
-    "1 c. à café d’origan mexicain",
+    {
+     "ref": "oregano-mexicano",
+     "qty": 1.0,
+     "name": "origan mexicain",
+     "unit": "tsp"
+    },
     "1/4 c. à café de cumin moulu",
-    "800 g de maïs cacahuazintle précuit (cuit et égoutté)",
+    {
+     "ref": "maiz-cacahuazintle-preco",
+     "qty": 800.0,
+     "name": "maïs cacahuazintle précuit (cuit et égoutté)",
+     "unit": "g"
+    },
     "Pour servir : laitue ou chou haché, radis en rondelles, oignon haché, origan, citron vert et tostadas"
    ],
    "steps": [
