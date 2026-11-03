@@ -37,67 +37,16 @@ export function BrandMark({ large = false }: { large?: boolean }) {
 
 export function SiteHeader({ nav = [], lang = 'en' }: { nav?: SiteNavItem[]; lang?: string }) {
   const t = uiStrings(lang);
-  return (
-    <header className="site-header">
-      <a className="skip" href="#main">
-        {t.skipToContent}
-      </a>
-      <div className="header-inner">
-        <a className="brand" href="/">
-          <BrandMark />
-          <span className="brand-word">2yolks</span>
-        </a>
-        {nav.length > 0 ? (
-          <nav className="site-nav" aria-label="Site">
-            {nav.map((item) => (
-              <a key={item.href} href={item.href} aria-current={item.current ? 'page' : undefined}>
-                {item.label}
-              </a>
-            ))}
-            <a href="/how-we-test">{t.testingShort}</a>
-          </nav>
-        ) : null}
-      </div>
-    </header>
-  );
+  return <header className="site-header"><a className="skip" href="#main">{t.skipToContent}</a><div className="header-inner">
+    <a className="brand" href={`/?lang=${lang}`}><span className="brand-word">2yolks</span><span className="brand-yolks" aria-hidden="true">●●</span></a>
+    <nav className="site-nav" aria-label={lang==='es'?'Recetas':lang==='fr'?'Recettes':'Recipes'}><a href={`/?lang=${lang}#recipes`}>{lang==='es'?'Recetas':lang==='fr'?'Recettes':'Recipes'}</a><a href="/how-we-test">{t.testingShort}</a></nav>
+    <nav className="language-nav" aria-label="Language">{nav.map(item=><a key={item.href} href={item.href} aria-current={item.current?'page':undefined}>{item.label}</a>)}</nav>
+  </div></header>;
 }
-
 export function SiteFooter({ nav = [], lang = 'en' }: { nav?: SiteNavItem[]; lang?: string }) {
-  const t = uiStrings(lang);
-  return (
-    <footer className="site-footer">
-      <div className="footer-inner">
-        <div className="footer-brand-col">
-          <a className="brand" href="/">
-            <BrandMark />
-            <span className="brand-word">2yolks</span>
-          </a>
-          <p className="footer-note">{t.tagline}</p>
-        </div>
-        {nav.length > 0 ? (
-          <nav className="footer-col" aria-label={t.browseByCountry}>
-            <h4>{t.browseByCountry}</h4>
-            {nav.map((item) => (
-              <a key={item.href} href={item.href}>
-                {item.label}
-              </a>
-            ))}
-          </nav>
-        ) : null}
-        <nav className="footer-col" aria-label="2yolks">
-          <h4>2yolks</h4>
-          <a href="/about">About / Acerca de</a>
-          <a href="/how-we-test">How we test / C&oacute;mo probamos</a>
-          <a href="/privacy">Privacy / Privacidad</a>
-        </nav>
-      </div>
-      <p className="footer-fine">
-        No invented ratings or reviews: a recipe is &quot;tested&quot; only after someone cooks it. / Sin rese&ntilde;as
-        inventadas: una receta solo es &quot;probada&quot; cuando alguien la cocina.
-      </p>
-    </footer>
-  );
+  return <footer className="site-footer"><div className="footer-inner"><div><a className="brand" href={`/?lang=${lang}`}><span className="brand-word">2yolks</span><span className="brand-yolks" aria-hidden="true">●●</span></a><p>{lang==='es'?'Una cocina pequeña. Un gran apetito.':lang==='fr'?'Petite cuisine. Grand appétit.':'Small kitchen. Big appetite.'}</p></div><nav className="footer-col" aria-label="Language">{nav.map(item=><a key={item.href} href={item.href}>{item.label}</a>)}</nav><nav className="footer-col" aria-label="2yolks"><a href="/about">About / Acerca de</a><a href="/how-we-test">How we test / Cómo probamos</a><a href="/privacy">Privacy / Privacidad</a></nav></div><p className="footer-fine">{lang==='es'?'Solo marcamos una receta como probada después de cocinarla.':lang==='fr'?'Une recette est testée seulement après avoir été cuisinée.':'A recipe is marked tested only after it has been cooked.'}</p></footer>;
 }
+export function FactIcon({kind='clock'}:{kind?:string}) { return <svg className="fact-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">{kind==='servings'?<><circle cx="12" cy="7" r="4"/><path d="M4 22v-3a8 8 0 0 1 16 0v3"/></>:kind==='cook'?<><path d="M5 9h14v10H5zM2 12h3m14 0h3M8 6V3m4 3V2m4 4V3"/></>:<><circle cx="12" cy="12" r="9"/><path d="M12 6v6l4 2"/></>}</svg>; }
 
 export function Crumbs({ items }: { items: { href?: string; label: string }[] }) {
   return (
@@ -126,6 +75,7 @@ export interface RecipeRow {
   untested?: boolean;
   /** CATEGORIES slug; undefined until the additive column ships. */
   category?: string | null;
+  totalMinutes?: number | null;
 }
 
 interface RecipeGroup {
@@ -208,75 +158,29 @@ export function RecipeCard({
 export interface HomeProps {
   locales: { country: string; countryName: string; lang: string }[];
   recipes: RecipeRow[];
+  lang?: string;
+  activeCategory?: string | null;
 }
-
-export function Home({ locales, recipes }: HomeProps) {
-  const t = uiStrings('en');
-  // One entry per country that has at least one listed locale.
-  const countries: { code: string; name: string; langs: string[] }[] = [];
-  for (const l of locales) {
-    const c = countries.find((x) => x.code === l.country);
-    if (c) c.langs.push(l.lang);
-    else countries.push({ code: l.country, name: l.countryName, langs: [l.lang] });
-  }
-  const countryNames = countries.map((c) => c.name).join(' and ');
-  const langNames = [...new Set(locales.map((l) => LANG_NAMES[l.lang] ?? l.lang))].join(', ');
-  return (
-    <main className="wide" id="main">
-      <section className="hero">
-        <div className="hero-text">
-          <h1>{t.tagline}</h1>
-          <p className="lede">
-            Recipes from {countryNames || 'around the world'}, in {langNames}. Every recipe carries an honest label:
-            tested, or not yet tested.
-          </p>
-        </div>
-        <div className="hero-art" aria-hidden="true">
-          <BrandMark large />
-        </div>
-      </section>
-      <section className="section">
-        <h2>{t.browseByCountry}</h2>
-        <ul className="country-grid">
-          {countries.map((c) => {
-            const n = recipes.filter((r) => r.country === c.code && r.lang === defaultLocale(c.code)).length;
-            return (
-              <li key={c.code}>
-                <a className="country-card" href={countryPath(c.code)}>
-                  <h3>{c.name}</h3>
-                  <p className="meta">
-                    {n} {n === 1 ? t.recipeWord : t.recipesWord} · {c.langs.map((l) => LANG_NAMES[l] ?? l).join(' · ')}
-                  </p>
-                  <span className="go" aria-hidden="true">
-                    &rarr;
-                  </span>
-                </a>
-              </li>
-            );
-          })}
-        </ul>
-      </section>
-      <section className="section">
-        <h2>{t.allRecipes}</h2>
-        {countries.map((c) => {
-          const groups = groupRecipes(recipes, c.code);
-          if (groups.length === 0) return null;
-          return (
-            <div className="country-block" key={c.code}>
-              <h3 className="country-block-head">
-                <a href={countryPath(c.code)}>{c.name}</a>
-              </h3>
-              <ul className="recipe-grid">
-                {groups.map((g) => (
-                  <RecipeCard key={g.primary.id} group={g} country={c.code} pageLang="en" />
-                ))}
-              </ul>
-            </div>
-          );
-        })}
-      </section>
-    </main>
-  );
+const DISCOVERY: Record<string,{eyebrow:string;title:string;intro:string;cta:string;index:string;all:string;note:string;illustration:string;total:string;empty:string}> = {
+ en:{eyebrow:'RECIPES WITHOUT BORDERS',title:'Small kitchen. Big appetite.',intro:'Find something worth cooking. Recipes to read, make and share.',cta:"What's cooking?",index:'Find your flavor',all:'All recipes',note:'Every recipe, honestly labeled.',illustration:'AI-generated ingredient illustration, not a dish photograph',total:'Total',empty:'No recipes in this filter yet.'},
+ es:{eyebrow:'RECETAS SIN FRONTERAS',title:'Cocina pequeña. Gran apetito.',intro:'Encuentra algo que quieras cocinar. Recetas para leer, preparar y compartir.',cta:'¿Qué cocinamos?',index:'Encuentra tu sabor',all:'Todas las recetas',note:'Cada receta, con su estado real.',illustration:'Ilustración de ingredientes generada por IA, no es una foto del plato',total:'Total',empty:'Aún no hay recetas en este filtro.'},
+ fr:{eyebrow:'RECETTES SANS FRONTIÈRES',title:'Petite cuisine. Grand appétit.',intro:'Trouvez une recette à cuisiner. Des recettes à lire, préparer et partager.',cta:'On cuisine quoi ?',index:'Trouvez votre saveur',all:'Toutes les recettes',note:'Chaque recette, avec son statut réel.',illustration:"Illustration d’ingrédients générée par IA, pas une photo du plat",total:'Total',empty:'Aucune recette dans ce filtre.'}
+};
+export function discoveryRecipes(rows: RecipeRow[], lang: string): RecipeRow[] {
+ const groups = new Map<string,RecipeRow[]>();
+ for(const row of rows) groups.set(row.id,[...(groups.get(row.id)??[]),row]);
+ return [...groups.values()].map(list=>list.find(r=>r.lang===lang)??list.find(r=>r.lang==='en')??list[0]!).sort((a,b)=>a.id.localeCompare(b.id));
+}
+export function Home({ recipes, lang='en', activeCategory=null }: HomeProps) {
+ const d=DISCOVERY[lang]??DISCOVERY.en!; const selected=discoveryRecipes(recipes,lang);
+ const categories=[...new Set(selected.map(r=>r.category).filter((x):x is string=>Boolean(categoryLabel(x,lang))))].sort();
+ const filtered=activeCategory?selected.filter(r=>r.category===activeCategory):selected;
+ const featured=selected.find(r=>r.id==='w1pozole')??selected[0];
+ const href=(r:RecipeRow)=>recipePathFor(r.country,r.lang,r.id,r.slug);
+ const time=(n:number)=>n>=60?`${Math.floor(n/60)} h${n%60?' '+n%60+' min':''}`:`${n} min`;
+ return <main className="wide discovery" id="main"><section className="after-hero"><div className="after-copy"><span className="eyebrow">{d.eyebrow}</span><h1>{d.title}</h1><p>{d.intro}</p><a className="discovery-cta" href="#recipes">{d.cta}<span aria-hidden="true">↗</span></a></div><figure className="identity-art"><img src="/img/identity/after-hours.webp" alt="" width="900" height="900" fetchPriority="high"/><figcaption>{d.illustration}</figcaption></figure></section>
+ {featured?<section className="featured-recipe"><div><span className="eyebrow">{categoryLabel(featured.category,lang)??d.all}</span><h2><a href={href(featured)}>{featured.title}<span aria-hidden="true">↗</span></a></h2></div><div className="featured-facts">{featured.totalMinutes!=null?<span className="icon-stat"><FactIcon/>{d.total} · {time(featured.totalMinutes)}</span>:null}{featured.untested?<span className="status-label">{uiStrings(lang).untestedBadge}</span>:null}</div></section>:null}
+ <section id="recipes" className="discovery-index"><div className="index-heading"><h2>{d.index}</h2><p>{d.note}</p></div><nav className="cat-nav" aria-label={uiStrings(lang).categories}><a href={`/?lang=${lang}#recipes`} className="chip" aria-current={!activeCategory?'page':undefined}>{d.all}</a>{categories.map(cat=><a key={cat} className="chip" aria-current={cat===activeCategory?'page':undefined} href={`/?lang=${lang}&cat=${cat}#recipes`}>{categoryLabel(cat,lang)}</a>)}</nav><ul className="discovery-list">{filtered.map((r,i)=><li key={r.id}><span className="recipe-number">{String(i+1).padStart(2,'0')}</span><div><span className="eyebrow">{categoryLabel(r.category,lang)}</span><h3><a href={href(r)}>{r.title}</a></h3>{r.untested?<span className="status-label">{uiStrings(lang).untestedBadge}</span>:null}{r.lang!==lang?<span className="fallback-language">{LANG_NAMES[r.lang]}</span>:null}</div><div className="row-end">{r.totalMinutes!=null?<span className="icon-stat"><FactIcon/>{time(r.totalMinutes)}</span>:null}<a href={href(r)} aria-label={r.title}>↗</a></div></li>)}</ul>{filtered.length===0?<p className="empty-note">{d.empty}</p>:null}</section></main>;
 }
 
 // ---------------------------------------------------------------------------
@@ -293,53 +197,9 @@ export interface CountryHomeProps {
   activeCategory?: string | null;
 }
 
-export function CountryHome({ countryName, country, recipes, categories = [], activeCategory = null }: CountryHomeProps) {
-  const intro = COUNTRY_INTROS[country];
-  const pageLang = intro?.lang ?? defaultLocale(country) ?? 'en';
-  const t = uiStrings(pageLang);
-  const groups = groupRecipes(recipes, country);
-  return (
-    <main className="wide" id="main">
-      <Crumbs items={[{ href: '/', label: t.home }, { label: countryName }]} />
-      <header className="page-head">
-        <h1>{countryName}</h1>
-        {intro ? (
-          <p className="lede" lang={intro.lang}>
-            {intro.text}
-          </p>
-        ) : null}
-      </header>
-      {categories.length > 0 ? (
-        <nav className="cat-nav" aria-label={t.categories}>
-          <a className="chip" aria-current={activeCategory === null ? 'page' : undefined} href={countryPath(country)}>
-            {t.allCategories}
-          </a>
-          {categories.map((slug) => (
-            <a
-              key={slug}
-              className="chip"
-              aria-current={activeCategory === slug ? 'page' : undefined}
-              href={countryPath(country) + '?cat=' + slug}
-            >
-              {categoryLabel(slug, pageLang)}
-            </a>
-          ))}
-        </nav>
-      ) : null}
-      {groups.length > 0 ? (
-        <ul className="recipe-grid">
-          {groups.map((g) => (
-            <RecipeCard key={g.primary.id} group={g} country={country} pageLang={pageLang} />
-          ))}
-        </ul>
-      ) : (
-        <p className="empty-note">{t.emptyCategory}</p>
-      )}
-      <p className="langs">
-        <a href="/how-we-test">{t.howWeTest}</a>
-      </p>
-    </main>
-  );
+export function CountryHome({ country, recipes, activeCategory = null }: CountryHomeProps) {
+ const lang=defaultLocale(country)??'en';
+ return <Home locales={[]} recipes={recipes} lang={lang} activeCategory={activeCategory}/>;
 }
 
 // ---------------------------------------------------------------------------
@@ -399,11 +259,10 @@ export function RecipeView({
   if (r.restMinutes != null) timeItems.push({ label: t.timeRest, value: fmtMin(r.restMinutes) });
   if (r.totalMinutes != null) timeItems.push({ label: t.timeTotal, value: fmtMin(r.totalMinutes) });
   return (
-    <main id="main">
+    <main id="main" className="recipe-page">
       <Crumbs
         items={[
-          { href: '/', label: t.home },
-          { href: countryPath(page.locale.country), label: countryName ?? page.locale.country.toUpperCase() },
+          { href: `/?lang=${lang}`, label: t.home },
           { label: page.locale.title },
         ]}
       />
@@ -417,7 +276,7 @@ export function RecipeView({
       {timeItems.length > 0 ? (
         <p className="time-meta">
           {timeItems.map((it, i) => (
-            <span key={i} className="time-item">
+            <span key={i} className="time-item"><FactIcon kind={it.label===t.servings?'servings':it.label===t.timeCook?'cook':'clock'}/>
               <span className="time-label">{it.label}</span> {it.value}
             </span>
           ))}
@@ -437,7 +296,7 @@ export function RecipeView({
       {others.length > 0 || cat ? (
         <p className="langs">
           {cat ? (
-            <a className="chip" href={countryPath(page.locale.country) + '?cat=' + page.recipe.category}>
+            <a className="chip" href={`/?lang=${lang}&cat=${page.recipe.category}#recipes`}>
               {cat}
             </a>
           ) : null}
@@ -569,11 +428,11 @@ export function AboutView() {
   return (
     <main id="main">
       <h1>About 2yolks</h1>
-      <p>2yolks is an international recipe site. We start with the United States (English) and Mexico (Spanish) and add countries as the first two are done well.</p>
+      <p>2yolks is an international recipe site. Read the same recipes in English, Spanish or French. Language changes the reading experience, not the cuisine.</p>
       <p>Recipes are written for 2yolks in our own words, from standard, widely documented techniques. We do not copy text or photos from other sites. A recipe is only shown when its source has been cleared for use.</p>
       <p>Right now every recipe is labeled not yet tested. We will say so until a person cooks it and signs it off. <a href="/how-we-test">How we test and label recipes</a>.</p>
       <h2>Acerca de 2yolks</h2>
-      <p>2yolks es un sitio de recetas internacionales. Empezamos con Estados Unidos (ingl&eacute;s) y M&eacute;xico (espa&ntilde;ol). Escribimos las recetas con nuestras propias palabras y las marcamos como "a&uacute;n no probada" hasta que alguien las cocine.</p>
+      <p>2yolks es un sitio de recetas internacionales. Lee las mismas recetas en ingl&eacute;s, espa&ntilde;ol o franc&eacute;s. El idioma no determina la cocina. Escribimos las recetas con nuestras propias palabras y las marcamos como "a&uacute;n no probada" hasta que alguien las cocine.</p>
     </main>
   );
 }

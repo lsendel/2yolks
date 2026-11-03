@@ -49,6 +49,8 @@ interface ShellOptions {
   lang?: string;
 }
 
+import { AFTER_HOURS_CSS } from './identity';
+
 const BASE_CSS = `
 @font-face { font-family: 'Fraunces'; font-style: normal; font-weight: 300 700; font-display: swap; src: url('/fonts/fraunces-var.woff2') format('woff2'); }
 :root { color-scheme: light; --brand: #c2410c; --brand-strong: #9a3412; --yolk: #f59e0b; --ink: #1c1917; --muted: #57534e; --bg: #fffbf5; --card: #ffffff; --line: #e7e5e4; --line-strong: #d6d3d1; --amber-bg: #fffbeb; --amber-line: #fcd34d; --amber-ink: #78350f; --blue-bg: #eff6ff; --blue-line: #93c5fd; --radius: 0.875rem; --shadow: 0 1px 2px rgb(28 25 23 / 0.05), 0 12px 32px -16px rgb(28 25 23 / 0.28); --font-body: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif; --font-display: 'Fraunces', Georgia, 'Times New Roman', serif; }
@@ -204,7 +206,7 @@ function shell(body: string, { title, alternates = [], jsonLd, noindex = false, 
   const header = renderToString(<SiteHeader nav={nav} lang={lang} />);
   const footer = renderToString(<SiteFooter nav={nav} lang={lang} />);
   return `<!doctype html>
-<html>
+<html lang="${escapeHtml(lang)}">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -223,7 +225,7 @@ function shell(body: string, { title, alternates = [], jsonLd, noindex = false, 
     ${og.image ? `<meta property="og:image" content="${escapeHtml(og.image)}" />` : ''}
     <meta name="twitter:card" content="${og.image ? 'summary_large_image' : 'summary'}" />` : ''}
     ${ld}
-    <style>${BASE_CSS}</style>
+    <style>${BASE_CSS}\n${AFTER_HOURS_CSS}</style>
     ${ANALYTICS_BEACON}
   </head>
   <body>${header}${body}${footer}</body>
@@ -235,7 +237,7 @@ const ANALYTICS_BEACON =
   `<script defer src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='{"token": "24832070d4c94429a9e409048f9a6b30"}'></script>`;
 
 export function renderHome(props: HomeProps, nav?: SiteNavItem[]): string {
-  return shell(renderToString(<Home {...props} />), { title: '2yolks', nav });
+  return shell(renderToString(<Home {...props} />), { title: '2yolks', nav, lang:props.lang??'en' });
 }
 
 export function renderCountryHome(props: CountryHomeProps, nav?: SiteNavItem[]): string {

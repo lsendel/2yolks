@@ -61,19 +61,13 @@ function published(db: ReturnType<typeof createDb>, allowDemo: boolean) {
 
 const demoAllowed = (c: Context<{ Bindings: Bindings }>) => c.env.ALLOW_DEMO_SEED === 'true';
 
-/** Header/footer nav: countries that currently carry at least one published
- * recipe. Empty countries 404 on their pages, so they never appear here. */
+/** Global reading languages, drawn only from published rights-cleared content. */
 async function siteNav(db: ReturnType<typeof createDb>, allowDemo: boolean, lang: string): Promise<SiteNavItem[]> {
-  const rows = await db
-    .selectDistinct({ country: recipeLocales.country })
-    .from(recipeLocales)
-    .innerJoin(recipes, eq(recipeLocales.recipeId, recipes.id))
-    .innerJoin(sources, eq(recipes.sourceId, sources.id))
-    .where(published(db, allowDemo));
-  return rows
-    .map((r) => getCountry(r.country))
-    .filter((ct): ct is NonNullable<typeof ct> => Boolean(ct))
-    .map((ct) => ({ href: countryPath(ct.code), label: localizedCountryName(ct.code, lang) }));
+  const rows = await db.selectDistinct({lang:recipeLocales.lang}).from(recipeLocales)
+    .innerJoin(recipes,eq(recipeLocales.recipeId,recipes.id)).innerJoin(sources,eq(recipes.sourceId,sources.id))
+    .where(published(db,allowDemo));
+  const names:Record<string,string>={en:'English',es:'Español',fr:'Français'};
+  return rows.sort((a,b)=>a.lang.localeCompare(b.lang)).map(r=>({href:`/?lang=${r.lang}`,label:names[r.lang]??r.lang,current:r.lang===lang}));
 }
 
 // --- API ---------------------------------------------------------------
@@ -248,6 +242,10 @@ app.get('/img/recipe/:imageId', async (c) => {
 // --- SSR pages ----------------------------------------------------------
 
 app.get('/', async (c) => {
+  const requestedLang=c.req.query('lang');
+  const lang=['en','es','fr'].includes(requestedLang??'')?requestedLang!:'en';
+  const cat=c.req.query('cat');
+  const activeCategory=cat && isRecipeCategorySlug(cat)?cat:null;
   // Default locales are always listed (unchanged behavior); additional
   // locales appear only once they have published content, so registering a
   // locale in LOCALES alone never exposes it on the homepage.
@@ -264,17 +262,18 @@ app.get('/', async (c) => {
       .map((lang) => ({ country: ct.code, countryName: ct.name, lang })),
   );
   const recipeRows = await db
-    .select({ id: recipeLocales.recipeId, country: recipeLocales.country, lang: recipeLocales.lang, slug: recipeLocales.slug, title: recipeLocales.title, testedAt: recipes.testedAt, category: recipes.category })
+    .select({ id: recipeLocales.recipeId, country: recipeLocales.country, lang: recipeLocales.lang, slug: recipeLocales.slug, title: recipeLocales.title, testedAt: recipes.testedAt, category: recipes.category, totalMinutes:recipes.totalMinutes })
     .from(recipeLocales)
     .innerJoin(recipes, eq(recipeLocales.recipeId, recipes.id))
     .innerJoin(sources, eq(recipes.sourceId, sources.id))
     .where(published(db, demoAllowed(c)));
-  const nav = await siteNav(db, demoAllowed(c), 'en');
+  const nav = await siteNav(db, demoAllowed(c), lang);
   return c.html(
     renderHome(
       {
         locales: markets,
-        recipes: recipeRows.map((r) => ({ id: r.id, country: r.country, lang: r.lang, slug: r.slug, title: r.title, untested: isUntested({ testedAt: r.testedAt }), category: r.category })),
+        lang, activeCategory,
+        recipes: recipeRows.map((r) => ({ id: r.id, country: r.country, lang: r.lang, slug: r.slug, title: r.title, untested: isUntested({ testedAt: r.testedAt }), category: r.category, totalMinutes:r.totalMinutes })),
       },
       nav,
     ),
@@ -289,7 +288,7 @@ const countryHome = async (c: Context<{ Bindings: Bindings }>) => {
   if (!country || country.wave === 0) return c.notFound();
   const db = createDb(c.env.DB);
   const rows = await db
-    .select({ slug: recipeLocales.slug, title: recipeLocales.title, id: recipeLocales.recipeId, lang: recipeLocales.lang, testedAt: recipes.testedAt, category: recipes.category })
+    .select({ slug: recipeLocales.slug, title: recipeLocales.title, id: recipeLocales.recipeId, lang: recipeLocales.lang, testedAt: recipes.testedAt, category: recipes.category, totalMinutes:recipes.totalMinutes })
     .from(recipeLocales)
     .innerJoin(recipes, eq(recipeLocales.recipeId, recipes.id))
     .innerJoin(sources, eq(recipes.sourceId, sources.id))
@@ -306,6 +305,7 @@ const countryHome = async (c: Context<{ Bindings: Bindings }>) => {
     lang: r.lang,
     country: parsed.country,
     category: r.category ?? null,
+    totalMinutes:r.totalMinutes,
   }));
   const categories = [...new Set(mapped.map((r) => r.category).filter((x): x is string => Boolean(x)))].sort();
   const filtered = activeCategory ? mapped.filter((r) => r.category === activeCategory) : mapped;
@@ -458,7 +458,7 @@ const recipeRoute = async (c: Context<{ Bindings: Bindings }>) => {
       notes: canonical.sources.notes,
     },
   };
-  const nav = await siteNav(db, demoAllowed(c), page.locale.lang);
+  const nav = alternates.filter(a=>a.hreflang!=='x-default').map(a=>({href:a.href,label:({en:'English',es:'Español',fr:'Français'} as Record<string,string>)[a.hreflang.split('-')[0]!]??a.hreflang,current:a.hreflang.toLowerCase()===`${page.locale.lang}-${page.locale.country}`.toLowerCase()}));
   return c.html(renderRecipe(page, alternates, { nav, countryName: localizedCountryName(parsed.country, page.locale.lang) }));
 };
 app.get('/:country/recipes/:idSlug', recipeRoute);

@@ -77,7 +77,7 @@ await waitForHealth(PORT, server);
 
 try {
   let r = await get('/');
-  check('home 200 with market links', r.status === 200 && r.body.includes('/us/') && r.body.includes('/mx/'));
+  check('home 200 with language-first discovery, no country cards', r.status === 200 && r.body.includes('RECIPES WITHOUT BORDERS') && !r.body.includes('class="country-grid"'));
 
   r = await get('/us/');
   check('empty wave-1 country home is 200 + noindex header', r.status === 200 && r.headers.get('x-robots-tag') === 'noindex');
