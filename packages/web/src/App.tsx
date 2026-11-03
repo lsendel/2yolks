@@ -206,10 +206,11 @@ export function PrivacyView() {
   return (
     <main>
       <h1>Privacy</h1>
-      <p>2yolks does not ask you to sign in to read recipes and sets no cookies of its own. We measure page views and page speed with Cloudflare Web Analytics. Per Cloudflare, it does not use cookies or local storage, and does not fingerprint visitors or collect personal data for analytics.</p>
-      <p>We use the counts only to see which recipes and pages people read. Recipe links you share carry no personal information from us.</p>
+      <p>You do not need to sign in to read recipes, and 2yolks sets no cookies. If you switch between US and metric units, your choice is saved in your own browser (local storage, key &quot;2y-units&quot;) so the page remembers it. It stays on your device and is not sent to us.</p>
+      <p>We measure page views and page speed with Cloudflare Web Analytics. Per Cloudflare, this analytics service does not use cookies or local storage, does not fingerprint visitors, and does not collect personal data for analytics. We use the counts only to see which pages people read.</p>
       <h2>Privacidad</h2>
-      <p>2yolks no pide iniciar sesi&oacute;n para leer recetas y no usa cookies propias. Medimos visitas y velocidad de p&aacute;gina con Cloudflare Web Analytics, que seg&uacute;n Cloudflare no usa cookies ni almacenamiento local, ni identifica a los visitantes ni recopila datos personales para estad&iacute;sticas.</p>
+      <p>No necesitas iniciar sesi&oacute;n para leer recetas y 2yolks no usa cookies. Si cambias entre unidades de EE. UU. y m&eacute;tricas, tu elecci&oacute;n se guarda en tu propio navegador (almacenamiento local, clave &quot;2y-units&quot;) para recordarla. Se queda en tu dispositivo y no se nos env&iacute;a.</p>
+      <p>Medimos visitas y velocidad de p&aacute;gina con Cloudflare Web Analytics. Seg&uacute;n Cloudflare, este servicio de anal&iacute;tica no usa cookies ni almacenamiento local, no identifica a los visitantes y no recopila datos personales para estad&iacute;sticas.</p>
     </main>
   );
 }
