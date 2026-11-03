@@ -122,6 +122,7 @@ try {
     const get2 = async (path) => { const res = await fetch(`http://127.0.0.1:${PORT2}` + path, { redirect: 'manual' }); return { status: res.status, headers: res.headers, body: await res.text(), location: res.headers.get('location') }; };
     r = await get2('/mx/recipes/r1-huevos-rancheros');
     check('dev mode: recipe 200 with es chrome', r.status === 200 && r.body.includes('<h2>Ingredientes</h2>') && r.body.includes('Clásico'));
+    check('share links: plain, no pinterest without image, canonical + og', r.body.includes('facebook.com/sharer') && r.body.includes('wa.me') && !r.body.includes('pinterest.com') && r.body.includes('og:url') && r.body.includes('rel="canonical"') && r.body.includes('Compartir'));
     check('dev mode: demo recipe page noindex meta', r.body.includes('noindex, nofollow'));
     check('hreflang exact equivalents + x-default', r.body.includes('hreflang="es-MX"') && r.body.includes('hreflang="en-US"') && r.body.includes('hreflang="x-default"'));
     check('hreflang uses pinned canonical origin', r.body.includes('https://2yolks.com/us/recipes/r1-ranch-eggs'));

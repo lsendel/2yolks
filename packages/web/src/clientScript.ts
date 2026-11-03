@@ -37,6 +37,17 @@ export const RECIPE_CLIENT_SCRIPT = `(function () {
   // Cook mode
   var dataEl = document.getElementById('cook-data');
   var overlay = document.querySelector('[data-cook-mode]');
+  var shareNav = document.querySelector('[data-share-url]');
+  if (shareNav) {
+    var sUrl = shareNav.getAttribute('data-share-url'), sTitle = shareNav.getAttribute('data-share-title');
+    var nat = shareNav.querySelector('[data-share-native]');
+    if (nat && navigator.share) { nat.hidden = false; nat.addEventListener('click', function () { navigator.share({ title: sTitle, url: sUrl }).catch(function () {}); }); }
+    var cp = shareNav.querySelector('[data-share-copy]');
+    if (cp) cp.addEventListener('click', function () {
+      var done = function () { var o = cp.textContent; cp.textContent = cp.getAttribute('data-copied'); setTimeout(function () { cp.textContent = o; }, 1500); };
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(sUrl).then(done, function () {});
+    });
+  }
   var printBtn = document.querySelector('[data-print-open]');
   if (printBtn) printBtn.addEventListener('click', function () { window.print(); });
   var openBtn = document.querySelector('[data-cook-open]');
