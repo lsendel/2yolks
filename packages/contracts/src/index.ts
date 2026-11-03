@@ -458,6 +458,8 @@ export interface RecipeLocale {
   translationOf?: string | null;
   translationMethod?: string | null;
   translationReviewedAt?: string | null;
+  translationReviewedBy?: string | null;
+  translationReviewerKind?: string | null;
 }
 
 export interface RecipePage {
