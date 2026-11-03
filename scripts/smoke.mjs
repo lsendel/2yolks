@@ -62,6 +62,7 @@ execSync('npx wrangler d1 execute 2yolks --local --file packages/api/migrations/
 execSync('npx wrangler d1 execute 2yolks --local --file packages/api/migrations/0003_quality_translation.sql', { stdio: 'ignore' });
 execSync('npx wrangler d1 execute 2yolks --local --file packages/api/seeds/0001_demo.sql', { stdio: 'ignore' });
 execSync('npx wrangler d1 execute 2yolks --local --file packages/api/seeds/0002_demo_malicious.sql', { stdio: 'ignore' });
+execSync('npx wrangler d1 execute 2yolks --local --file packages/api/seeds/0003_demo_units.sql', { stdio: 'ignore' });
 
 const server = spawnServer(['wrangler', 'dev', '--port', String(PORT), '--local']);
 // production mode: ALLOW_DEMO_SEED defaults to false

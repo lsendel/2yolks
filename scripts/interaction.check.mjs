@@ -26,19 +26,34 @@ try {
   check('mobile: no horizontal scroll', !overflow);
 
   // serving scaler math (demo r1: "2 huevos", "2 tortillas", "salsa")
-  const q0 = await page.$eval('.qty[data-qty]', (el) => el.textContent);
-  check('scaler: initial qty is 2', q0 === '2', q0);
+  const q0 = await page.$eval('.ingredients li:first-child .line', (el) => el.textContent);
+  check('scaler: initial qty is 2', q0 === '2 huevos', q0);
   await page.click('button[data-mult="2"]');
-  const q2 = await page.$eval('.qty[data-qty]', (el) => el.textContent);
-  check('scaler: 2x doubles to 4', q2 === '4', q2);
+  const q2 = await page.$eval('.ingredients li:first-child .line', (el) => el.textContent);
+  check('scaler: 2x doubles to 4', q2 === '4 huevos', q2);
   await page.click('button[data-mult="0.5"]');
-  const qHalf = await page.$eval('.qty[data-qty]', (el) => el.textContent);
-  check('scaler: 0.5x halves to 1', qHalf === '1', qHalf);
+  const qHalf = await page.$eval('.ingredients li:first-child .line', (el) => el.textContent);
+  check('scaler: 0.5x halves to 1', qHalf === '1 huevos', qHalf);
   await page.click('button[data-mult="1"]');
+
+  // unit toggle: mx defaults to metric; US customary on request; scaler composes
+  await page.goto(`${BASE}/mx/recipes/r3-pan-de-prueba`, { waitUntil: 'networkidle0' });
+  const li = (n) => page.$eval(`.ingredients li:nth-child(${n}) .line`, (el) => el.textContent);
+  check('units: mx default metric', (await li(1)) === '250 g harina', await li(1));
+  await page.click('button[data-units="us"]');
+  check('units: toggle to US customary (g -> oz)', (await li(1)) === '9 oz harina', await li(1));
+  check('units: eggs unchanged', (await li(3)) === '3 huevos');
+  check('units: structured row + temp token in steps', (await li(4)) === '1 tbsp aceite' && (await page.$eval('ol.steps li:nth-child(3)', (e) => e.textContent)) === 'Hornear a 356\u00b0F');
+  await page.click('button[data-mult="2"]');
+  check('units: scaler composes with toggle', (await li(1)) === '1 lb harina', await li(1));
+  await page.reload({ waitUntil: 'networkidle0' });
+  check('units: choice persists across reload', (await li(1)) === '9 oz harina', await li(1));
+  await page.evaluate(() => localStorage.clear());
+  await page.goto(`${BASE}/mx/recipes/r1-huevos-rancheros`, { waitUntil: 'networkidle0' });
 
   // ingredient checkbox toggles line-through (computed style)
   await page.click('.ingredients li:first-child input[type="checkbox"]');
-  const struck = await page.$eval('.ingredients li:first-child .qty', (el) => getComputedStyle(el).textDecorationLine);
+  const struck = await page.$eval('.ingredients li:first-child .line', (el) => getComputedStyle(el).textDecorationLine);
   check('checkbox: line-through applied', struck.includes('line-through'), struck);
 
   // cook mode: open, step text, navigation, wake lock attempt does not throw

@@ -18,8 +18,8 @@ export function safeJsonLd(value: object): string {
 }
 import { Home, CountryHome, RecipeView, AboutView, HowWeTestView, NotFoundView, type HomeProps, type CountryHomeProps } from './App';
 import { RECIPE_CLIENT_SCRIPT } from './clientScript';
-import type { RecipePage } from '@2yolks/contracts';
-import { uiStrings } from '@2yolks/contracts';
+import type { RecipePage, IngredientEntry } from '@2yolks/contracts';
+import { uiStrings, renderIngredient, renderStep, defaultUnitSystem } from '@2yolks/contracts';
 
 interface ShellOptions {
   title: string;
@@ -50,6 +50,9 @@ h1 { overflow-wrap: break-word; }
 .recipe-actions .jump { font-weight: 600; }
 .recipe-actions .cook-open { margin-left: auto; background: var(--brand); color: #fff; border: 0; border-radius: 0.5rem; padding: 0.5rem 1rem; font-weight: 700; cursor: pointer; }
 .scaler { display: flex; flex-wrap: wrap; gap: 0.25rem; align-items: center; margin: 0 0 0.75rem; }
+.unit-toggle { display: flex; flex-wrap: wrap; gap: 0.25rem; align-items: center; margin: 0 0 0.75rem; }
+.unit-toggle button { border: 1px solid #e7e5e4; background: var(--card); border-radius: 0.375rem; padding: 0.25rem 0.6rem; cursor: pointer; font-weight: 600; }
+.unit-toggle button[aria-pressed="true"] { background: var(--brand); color: #fff; border-color: var(--brand); }
 .scaler-label { color: var(--muted); font-size: 0.9rem; margin-right: 0.25rem; }
 .scaler button { border: 1px solid #e7e5e4; background: var(--card); border-radius: 0.375rem; padding: 0.25rem 0.6rem; cursor: pointer; font-weight: 600; }
 .scaler button[aria-pressed="true"] { background: var(--brand); color: #fff; border-color: var(--brand); }
@@ -57,8 +60,7 @@ ul.ingredients { list-style: none; padding: 0; }
 ul.ingredients li { padding: 0.15rem 0; }
 ul.ingredients label { display: flex; gap: 0.5rem; align-items: baseline; cursor: pointer; }
 ul.ingredients input { transform: translateY(0.1em); }
-ul.ingredients input:checked ~ .qty, ul.ingredients input:checked ~ .rest { text-decoration: line-through; color: var(--muted); }
-.qty { font-weight: 600; }
+ul.ingredients input:checked ~ .line { text-decoration: line-through; color: var(--muted); }
 ol.steps li { margin: 0.5rem 0; }
 .cook-mode { position: fixed; inset: 0; background: var(--bg); z-index: 50; display: flex; }
 .cook-mode[hidden] { display: none; }
@@ -81,7 +83,7 @@ ol.steps li { margin: 0.5rem 0; }
 .share button { border: 1px solid #e7e5e4; background: var(--card); border-radius: 0.375rem; padding: 0.25rem 0.7rem; cursor: pointer; font-weight: 600; }
 .share button[hidden] { display: none; }
 .site-footer { max-width: 42rem; margin: 0 auto; padding: 1rem; color: var(--muted); font-size: 0.9rem; border-top: 1px solid #e7e5e4; }
-@media print { .share, .site-header, .site-footer, .recipe-actions, .scaler, .cook-mode, .langs { display: none !important; } body { background: #fff; } main { max-width: none; } ul.ingredients input { display: none; } }
+@media print { .share, .site-header, .site-footer, .recipe-actions, .scaler, .unit-toggle, .cook-mode, .langs { display: none !important; } body { background: #fff; } main { max-width: none; } ul.ingredients input { display: none; } }
 .timer-display { font-size: 1.4rem; font-weight: 700; font-variant-numeric: tabular-nums; }
 `;
 
@@ -146,11 +148,11 @@ export function renderRecipe(page: RecipePage, alternates: { hreflang: string; h
     inLanguage: page.locale.lang,
     ...(page.locale.intro ? { description: page.locale.intro } : {}),
     author: { '@type': 'Organization', name: '2yolks' },
-    recipeIngredient: JSON.parse(page.locale.ingredientsJson),
+    recipeIngredient: (JSON.parse(page.locale.ingredientsJson) as IngredientEntry[]).map((e) => renderIngredient(e, page.locale.lang, defaultUnitSystem(page.locale.country), 1)),
     recipeInstructions: (JSON.parse(page.locale.stepsJson) as string[]).map((s, i) => ({
       '@type': 'HowToStep',
       position: i + 1,
-      text: s,
+      text: renderStep(s, JSON.parse(page.locale.ingredientsJson) as IngredientEntry[], page.locale.lang, defaultUnitSystem(page.locale.country), 1),
     })),
   };
   const t = uiStrings(page.locale.lang);
@@ -159,7 +161,7 @@ export function renderRecipe(page: RecipePage, alternates: { hreflang: string; h
   // Title-only graphic (no food photo), built by scripts/build-pin-graphics.py. Only recipes with a built file get one.
   const imageUrl = canonicalUrl && PIN_IMAGE_KEYS.has(`${page.locale.recipeId}:${page.locale.lang}`) ? `${new URL(canonicalUrl).origin}/img/pin/${page.locale.recipeId}.${page.locale.lang}.png` : null;
   const cookData = safeJsonLd({
-    steps: JSON.parse(page.locale.stepsJson),
+    steps: (JSON.parse(page.locale.stepsJson) as string[]).map((st) => renderStep(st, JSON.parse(page.locale.ingredientsJson) as IngredientEntry[], page.locale.lang, defaultUnitSystem(page.locale.country), 1)),
     strings: { timerDone: t.timerDone },
   });
   const body =

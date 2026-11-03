@@ -141,6 +141,9 @@ export interface UiStrings {
   copyLink: string;
   linkCopied: string;
   shareEmail: string;
+  units: string;
+  unitsMetric: string;
+  unitsUs: string;
 }
 
 const UI_STRINGS: Record<string, UiStrings> = {
@@ -154,6 +157,7 @@ const UI_STRINGS: Record<string, UiStrings> = {
     about: 'About', howWeTest: 'How we test and label recipes', print: 'Print', home: 'Home',
     tagline: 'Recipes worth cracking two eggs for.',
     share: 'Share', copyLink: 'Copy link', linkCopied: 'Link copied', shareEmail: 'Email',
+    units: 'Units', unitsMetric: 'Metric', unitsUs: 'US customary',
   },
   es: {
     ingredients: 'Ingredientes', steps: 'Pasos', source: 'Fuente',
@@ -165,6 +169,7 @@ const UI_STRINGS: Record<string, UiStrings> = {
     about: 'Acerca de', howWeTest: 'C\u00f3mo probamos y etiquetamos las recetas', print: 'Imprimir', home: 'Inicio',
     tagline: 'Recetas que valen dos huevos.',
     share: 'Compartir', copyLink: 'Copiar enlace', linkCopied: 'Enlace copiado', shareEmail: 'Correo',
+    units: 'Unidades', unitsMetric: 'M\u00e9trico', unitsUs: 'EE. UU.',
   },
   fr: {
     ingredients: 'Ingr\u00e9dients', steps: '\u00c9tapes', source: 'Source',
@@ -176,6 +181,7 @@ const UI_STRINGS: Record<string, UiStrings> = {
     about: '\u00c0 propos', howWeTest: 'Comment nous testons et \u00e9tiquetons les recettes', print: 'Imprimer', home: 'Accueil',
     tagline: 'Des recettes qui valent deux \u0153ufs.',
     share: 'Partager', copyLink: 'Copier le lien', linkCopied: 'Lien copi\u00e9', shareEmail: 'E-mail',
+    units: 'Unit\u00e9s', unitsMetric: 'M\u00e9trique', unitsUs: 'Am\u00e9ricaines (US)',
   },
 };
 
@@ -513,3 +519,4 @@ export interface RecipePage {
   source: Source;
 }
 export * from './units';
+export * from './render';
