@@ -63,6 +63,7 @@ execSync('npx wrangler d1 execute 2yolks --local --file packages/api/migrations/
 execSync('npx wrangler d1 execute 2yolks --local --file packages/api/seeds/0001_demo.sql', { stdio: 'ignore' });
 execSync('npx wrangler d1 execute 2yolks --local --file packages/api/seeds/0002_demo_malicious.sql', { stdio: 'ignore' });
 execSync('npx wrangler d1 execute 2yolks --local --file packages/api/seeds/0003_demo_units.sql', { stdio: 'ignore' });
+execSync('npx wrangler d1 execute 2yolks --local --file packages/api/seeds/0004_demo_translation.sql', { stdio: 'ignore' });
 
 const server = spawnServer(['wrangler', 'dev', '--port', String(PORT), '--local']);
 // production mode: ALLOW_DEMO_SEED defaults to false
@@ -129,6 +130,10 @@ try {
     check('dev mode: demo recipe page noindex meta', r.body.includes('noindex, nofollow'));
     check('hreflang exact equivalents + x-default', r.body.includes('hreflang="es-MX"') && r.body.includes('hreflang="en-US"') && r.body.includes('hreflang="x-default"'));
     check('hreflang uses pinned canonical origin', r.body.includes('https://2yolks.com/us/recipes/r1-ranch-eggs'));
+    r = await get2('/mx/en/recipes/r1-ranch-eggs-translated');
+    check('route-loaded translated page shows machine-translation label (loader passes provenance)', r.status === 200 && r.body.includes('class="machine-note"') && r.body.includes('not reviewed by a native speaker'), r.body.slice(0, 80));
+    r = await get2('/mx/recipes/r1-huevos-rancheros');
+    check('route-loaded original page has no machine label', r.status === 200 && !r.body.includes('class="machine-note"'));
     r = await get2('/mx/recipes/r3-pan-de-prueba');
     check('units: toggle + metric default for mx, structured row rendered', r.status === 200 && r.body.includes('data-default-units="metric"') && r.body.includes('250 g harina') && r.body.includes('15 ml de aceite') && r.body.includes('180\u00b0C'));
     r = await get2('/mx/recipes/r1-huevos-rancheros');

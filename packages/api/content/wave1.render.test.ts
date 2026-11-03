@@ -33,3 +33,12 @@ describe('machine-translation label on translated pages', () => {
     expect(renderRecipe(page({ translationReviewerKind: null }), alts)).toContain('class="machine-note"');
   });
 });
+
+describe('recipe route passes translation provenance to the renderer', () => {
+  it('maps every translation field from the DB row into the page locale (the label depends on it)', () => {
+    const src = readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8');
+    for (const f of ['translationOf', 'translationMethod', 'translationReviewedAt', 'translationReviewedBy', 'translationReviewerKind']) {
+      expect(src, f).toContain(`${f}: canonical.recipe_locales.${f}`);
+    }
+  });
+});
