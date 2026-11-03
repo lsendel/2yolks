@@ -19,6 +19,7 @@ import { renderHome, renderCountryHome, renderRecipe, renderAbout, renderPrivacy
 import { isUntested, localizedCountryName } from '@2yolks/contracts';
 import { recipeSlugAliases,  createDb, recipes, recipeLocales, recipeImages, sources } from './db';
 import { mcpApp } from './mcp';
+import { accountApp, type AccountBindings } from './account';
 
 type Bindings = {
   DB: D1Database;
@@ -40,7 +41,7 @@ type Bindings = {
   MCP_READ_KEY?: string;
   /** Optional JSON array of per-agent keys: [{"name","key","role"}]. */
   MCP_NAMED_KEYS?: string;
-};
+} & AccountBindings;
 
 const DEMO_LICENSE = 'internal-demo';
 
@@ -73,6 +74,9 @@ async function siteNav(db: ReturnType<typeof createDb>, allowDemo: boolean, lang
 // --- API ---------------------------------------------------------------
 
 app.get('/api/health', (c) => c.json({ ok: true }));
+
+// Accounts + private user drafts (email-code sign-in). Registered before /:country.
+app.route('/account', accountApp);
 
 // Additive: `countries` and `locales` keep their full-catalogue shape.
 // `published` lists, per country, the locales that currently have at least
@@ -128,7 +132,7 @@ app.get('/api/v1/countries/:code/recipes', async (c) => {
 app.get('/robots.txt', (c) => {
   const origin = c.env.CANONICAL_ORIGIN ?? new URL(c.req.url).origin;
   return c.text(
-    `User-agent: *\nAllow: /\nDisallow: /api/\nSitemap: ${origin}/sitemap.xml\n`,
+    `User-agent: *\nAllow: /\nDisallow: /api/\nDisallow: /account\nSitemap: ${origin}/sitemap.xml\n`,
     200,
     { 'content-type': 'text/plain; charset=utf-8' },
   );

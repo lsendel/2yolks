@@ -121,6 +121,17 @@ try {
   r = await get('/api/v1/submissions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
   check('submissions closed by default (503)', r.status === 503);
 
+  r = await get('/account');
+  check('account sign-in page 200, noindex, no-store, form present', r.status === 200 && r.headers.get('x-robots-tag') === 'noindex' && r.headers.get('cache-control') === 'no-store' && r.body.includes('Email me a code'));
+  r = await get('/account/code', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', origin: 'https://evil.example' }, body: 'email=a%40example.com' });
+  check('cross-origin account POST blocked (403)', r.status === 403);
+  r = await get('/account/code', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', origin: `http://127.0.0.1:${PORT}` }, body: 'email=a%40example.com' });
+  check('code request without mail key answers 503, not a crash', r.status === 503);
+  r = await get('/account/recipes/new');
+  check('recipe form needs sign-in (303 to /account)', r.status === 303 && r.location === '/account');
+  r = await get('/robots.txt');
+  check('robots disallows /account', r.body.includes('Disallow: /account'));
+
   // dev mode: demo seed visible
   await stopServer(server);
   const PORT2 = PORT + 1;
