@@ -333,6 +333,8 @@ app.post('/api/v1/submissions', async (c) => {
       ingredientsJson: JSON.stringify(l.ingredients),
       stepsJson: JSON.stringify(l.steps),
       status: 'draft' as const,
+      translationOf: l.translationOf ?? null,
+      translationMethod: l.translationMethod ?? null,
     })),
   );
   return c.json({ id, status: 'draft' }, 201);

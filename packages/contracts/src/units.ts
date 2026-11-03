@@ -181,3 +181,31 @@ export function checkAllergens(sourceIngredientText: string, translatedIngredien
   }
   return { ok: problems.length === 0, problems };
 }
+
+export type IngredientEntry = string | StructuredIngredient;
+
+export function ingredientText(entries: IngredientEntry[]): string {
+  return entries.map((e) => (typeof e === 'string' ? e : `${e.name} ${e.note ?? ''}`)).join(' ; ');
+}
+
+/** For structured rows the canonical meaning (ref, qty, qtyEnd, unit) must be
+ * identical in a translation. Only name and note may change. Plain-string
+ * rows are compared by their numbers (floor check). */
+export function checkStructuredTranslation(source: IngredientEntry[], translated: IngredientEntry[]): TranslationCheck {
+  const problems: string[] = [];
+  if (source.length !== translated.length) {
+    return { ok: false, problems: [`ingredient count differs (${source.length} vs ${translated.length})`] };
+  }
+  source.forEach((s, i) => {
+    const t = translated[i]!;
+    if (typeof s === 'string' || typeof t === 'string') {
+      if (typeof s !== typeof t) { problems.push(`ingredient ${i + 1}: structured and plain forms differ`); return; }
+      if (JSON.stringify(numbersIn(s as string)) !== JSON.stringify(numbersIn(t as string))) problems.push(`ingredient ${i + 1}: numbers changed`);
+      return;
+    }
+    if (s.ref !== t.ref) problems.push(`ingredient ${i + 1}: ref changed`);
+    if (s.qty !== t.qty || (s.qtyEnd ?? null) !== (t.qtyEnd ?? null)) problems.push(`ingredient ${i + 1}: quantity changed`);
+    if ((s.unit ?? '') !== (t.unit ?? '')) problems.push(`ingredient ${i + 1}: unit changed`);
+  });
+  return { ok: problems.length === 0, problems };
+}

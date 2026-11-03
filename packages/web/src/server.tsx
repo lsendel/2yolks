@@ -27,6 +27,7 @@ interface ShellOptions {
   alternates?: { hreflang: string; href: string }[];
   jsonLd?: object;
   noindex?: boolean;
+  og?: { title: string; description?: string; url: string; locale: string; image?: string | null };
 }
 
 const BASE_CSS = `
@@ -75,12 +76,16 @@ ol.steps li { margin: 0.5rem 0; }
 .untested { background: #fffbeb; border: 1px solid #fcd34d; border-radius: 0.5rem; padding: 0.5rem 0.75rem; font-size: 0.95rem; }
 .untested .badge { margin-left: 0; }
 .recipe-actions .print-open { background: var(--card); color: var(--ink); border: 1px solid #e7e5e4; border-radius: 0.5rem; padding: 0.5rem 1rem; font-weight: 600; cursor: pointer; }
+.share { display: flex; flex-wrap: wrap; gap: 0.5rem 0.9rem; align-items: center; margin: 1.5rem 0 0; font-size: 0.95rem; }
+.share-label { color: var(--muted); }
+.share button { border: 1px solid #e7e5e4; background: var(--card); border-radius: 0.375rem; padding: 0.25rem 0.7rem; cursor: pointer; font-weight: 600; }
+.share button[hidden] { display: none; }
 .site-footer { max-width: 42rem; margin: 0 auto; padding: 1rem; color: var(--muted); font-size: 0.9rem; border-top: 1px solid #e7e5e4; }
-@media print { .site-header, .site-footer, .recipe-actions, .scaler, .cook-mode, .langs { display: none !important; } body { background: #fff; } main { max-width: none; } ul.ingredients input { display: none; } }
+@media print { .share, .site-header, .site-footer, .recipe-actions, .scaler, .cook-mode, .langs { display: none !important; } body { background: #fff; } main { max-width: none; } ul.ingredients input { display: none; } }
 .timer-display { font-size: 1.4rem; font-weight: 700; font-variant-numeric: tabular-nums; }
 `;
 
-function shell(body: string, { title, alternates = [], jsonLd, noindex = false }: ShellOptions): string {
+function shell(body: string, { title, alternates = [], jsonLd, noindex = false, og }: ShellOptions): string {
   const links = alternates
     .map((a) => `<link rel="alternate" hreflang="${escapeHtml(a.hreflang)}" href="${escapeHtml(a.href)}" />`)
     .join('\n    ');
@@ -93,6 +98,15 @@ function shell(body: string, { title, alternates = [], jsonLd, noindex = false }
     <title>${escapeHtml(title)}</title>
     ${noindex ? '<meta name="robots" content="noindex, nofollow" />' : ''}
     ${links}
+    ${og ? `<link rel="canonical" href="${escapeHtml(og.url)}" />
+    <meta property="og:type" content="article" />
+    <meta property="og:site_name" content="2yolks" />
+    <meta property="og:title" content="${escapeHtml(og.title)}" />
+    <meta property="og:url" content="${escapeHtml(og.url)}" />
+    <meta property="og:locale" content="${escapeHtml(og.locale)}" />
+    ${og.description ? `<meta property="og:description" content="${escapeHtml(og.description)}" /><meta name="description" content="${escapeHtml(og.description)}" />` : ''}
+    ${og.image ? `<meta property="og:image" content="${escapeHtml(og.image)}" />` : ''}
+    <meta name="twitter:card" content="${og.image ? 'summary_large_image' : 'summary'}" />` : ''}
     ${ld}
     <style>${BASE_CSS}</style>
   </head>
@@ -138,18 +152,21 @@ export function renderRecipe(page: RecipePage, alternates: { hreflang: string; h
     })),
   };
   const t = uiStrings(page.locale.lang);
+  const self = alternates.find((a) => a.hreflang.toLowerCase() === `${page.locale.lang}-${page.locale.country}`.toLowerCase());
+  const canonicalUrl = self?.href;
   const cookData = safeJsonLd({
     steps: JSON.parse(page.locale.stepsJson),
     strings: { timerDone: t.timerDone },
   });
   const body =
-    renderToString(<RecipeView page={page} alternates={alternates} />) +
+    renderToString(<RecipeView page={page} alternates={alternates} canonicalUrl={canonicalUrl} />) +
     `<script type="application/json" id="cook-data">${cookData}</script>` +
     `<script>${RECIPE_CLIENT_SCRIPT}</script>`;
   return shell(body, {
     title: `${page.locale.title} - 2yolks`,
     alternates,
     jsonLd,
+    og: canonicalUrl ? { title: page.locale.title, description: page.locale.intro ?? undefined, url: canonicalUrl, locale: `${page.locale.lang}_${page.locale.country.toUpperCase()}` } : undefined,
     // Synthetic/dev-only sources must never be indexed as real recipes.
     noindex: page.source.license === 'internal-demo',
   });

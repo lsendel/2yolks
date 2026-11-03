@@ -53,7 +53,24 @@ export function CountryHome({ countryName, country, recipes }: CountryHomeProps)
 
 const MULTIPLIERS = [0.5, 1, 2, 3];
 
-export function RecipeView({ page, alternates = [] }: { page: RecipePage; alternates?: { hreflang: string; href: string }[] }) {
+/** Plain share links: no SDKs, no tracking scripts. Pinterest needs a real
+ * image URL (media), so it only appears when one exists. */
+export function shareLinks(url: string, title: string, imageUrl?: string | null) {
+  const u = encodeURIComponent(url);
+  const t = encodeURIComponent(title);
+  const links = [
+    { key: 'facebook', label: 'Facebook', href: `https://www.facebook.com/sharer/sharer.php?u=${u}` },
+    { key: 'x', label: 'X', href: `https://x.com/intent/tweet?url=${u}&text=${t}` },
+    { key: 'whatsapp', label: 'WhatsApp', href: `https://wa.me/?text=${t}%20${u}` },
+    { key: 'email', label: '', href: `mailto:?subject=${t}&body=${u}` },
+  ];
+  if (imageUrl) {
+    links.splice(1, 0, { key: 'pinterest', label: 'Pinterest', href: `https://www.pinterest.com/pin/create/button/?url=${u}&media=${encodeURIComponent(imageUrl)}&description=${t}` });
+  }
+  return links;
+}
+
+export function RecipeView({ page, alternates = [], canonicalUrl, imageUrl }: { page: RecipePage; alternates?: { hreflang: string; href: string }[]; canonicalUrl?: string; imageUrl?: string | null }) {
   const t = uiStrings(page.locale.lang);
   const ingredients = (JSON.parse(page.locale.ingredientsJson) as string[]).map((raw) => ({
     raw,
@@ -138,6 +155,16 @@ export function RecipeView({ page, alternates = [] }: { page: RecipePage; altern
           ))}
         </ol>
       </section>
+      {canonicalUrl ? (
+        <nav className="share" aria-label={t.share} data-share-url={canonicalUrl} data-share-title={page.locale.title}>
+          <span className="share-label">{t.share}:</span>
+          <button type="button" className="share-native" data-share-native hidden>{t.share}</button>
+          <button type="button" className="share-copy" data-share-copy data-copied={t.linkCopied}>{t.copyLink}</button>
+          {shareLinks(canonicalUrl, page.locale.title, imageUrl).map((l) => (
+            <a key={l.key} href={l.href} target="_blank" rel="noopener noreferrer">{l.label || t.shareEmail}</a>
+          ))}
+        </nav>
+      ) : null}
       <p className="recipe-source">
         {t.source}:{' '}
         {page.source.url.startsWith('http') ? (
