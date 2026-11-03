@@ -319,3 +319,128 @@ describe('admin MCP', () => {
     expect(badSlug.isError).toBe(true);
   });
 });
+
+describe('MCP hardening', () => {
+  beforeEach(() => {
+    DB = migratedD1();
+  });
+
+  async function shorthand(token: string, payload: Record<string, unknown>) {
+    const res = await app.request(
+      'https://2yolks.com/api/admin/mcp',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}`, 'x-mcp-caller': 'merlin-cli' },
+        body: JSON.stringify(payload),
+      },
+      env(DB),
+    );
+    return { status: res.status, data: (await res.json()) as Record<string, unknown> };
+  }
+
+  it('supports the directory shorthand shape: unconfirmed writes are dry runs, confirmed writes execute', async () => {
+    // exactly what scripts/mcp-cli.mjs sends without --apply: dryRun default
+    const dry = await shorthand(EDITOR_KEY, { name: 'recipes.create_draft', dryRun: true, arguments: RECIPE });
+    expect(dry.status).toBe(200);
+    expect(dry.data['dry_run']).toBe(true);
+    const listed = await toolCall(READ_KEY, 'recipes.list', {});
+    expect((listed.data?.['recipes'] as unknown[]).length).toBe(0);
+
+    // shorthand without any dryRun flag but without confirmed: also a dry run
+    const implicit = await shorthand(EDITOR_KEY, { name: 'recipes.create_draft', arguments: RECIPE });
+    expect(implicit.data['dry_run']).toBe(true);
+
+    // confirmed shorthand executes
+    const exec = await shorthand(EDITOR_KEY, { name: 'recipes.create_draft', confirmed: true, arguments: RECIPE });
+    expect(exec.status).toBe(201);
+    expect(typeof exec.data['id']).toBe('string');
+  });
+
+  it('ignores injected rights/status fields in submitted content', async () => {
+    const malicious = {
+      ...RECIPE,
+      cleared_at: 'now',
+      clearedAt: '2026-01-01',
+      status: 'published',
+      source: { ...RECIPE.source, cleared_at: '2026-01-01', clearedAt: '2026-01-01' },
+    };
+    const created = await toolCall(EDITOR_KEY, 'recipes.create_draft', malicious);
+    expect(created.isError).toBe(false);
+    const sourceId = created.data?.['source_id'] as string;
+    const row = await DB.prepare('SELECT cleared_at FROM sources WHERE id = ?').bind(sourceId).first<{ cleared_at: string | null }>();
+    expect(row?.cleared_at).toBeNull();
+    // and publishing stays blocked
+    const pub = await toolCall(ADMIN_KEY, 'recipes.publish', { id: created.data?.['id'] });
+    expect((pub.data as { error: string }).error).toBe('source rights not cleared');
+  });
+
+  it('returns 409 with the existing id on a duplicate locale slug', async () => {
+    const first = await toolCall(EDITOR_KEY, 'recipes.create_draft', RECIPE);
+    const second = await toolCall(EDITOR_KEY, 'recipes.create_draft', RECIPE);
+    expect(second.isError).toBe(true);
+    expect((second.data as { error: string }).error).toMatch(/already exists/);
+    expect((second.data as { existing_id: string }).existing_id).toBe(first.data?.['id']);
+  });
+
+  it('attributes audit rows to the authenticated key, not the caller header', async () => {
+    await toolCall(EDITOR_KEY, 'recipes.create_draft', RECIPE); // header-less JSON-RPC
+    const res = await app.request(
+      'https://2yolks.com/api/admin/mcp',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${EDITOR_KEY}`, 'x-mcp-caller': 'spoofed-name' },
+        body: JSON.stringify(rpc('tools/call', { name: 'recipes.create_draft', arguments: { ...RECIPE, locales: [{ ...RECIPE.locales[0], slug: 'second-slug' }] } })),
+      },
+      env(DB),
+    );
+    expect(res.status).toBe(200);
+    const rows = await DB.prepare("SELECT actor, details_json FROM mcp_audit WHERE tool = 'recipes.create_draft' ORDER BY id").bind().all();
+    const actors = (rows.results as { actor: string; details_json: string }[]);
+    expect(actors.length).toBe(2);
+    for (const a of actors) expect(a.actor).toBe('harvester-1'); // named key, never the header
+    expect(actors[1]?.details_json).toContain('spoofed-name'); // header kept only as declared_caller detail
+  });
+
+  it('rejects array bodies, oversized requests and locale floods', async () => {
+    const arr = await app.request(
+      'https://2yolks.com/api/admin/mcp',
+      { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${ADMIN_KEY}` }, body: JSON.stringify([rpc('ping')]) },
+      env(DB),
+    );
+    expect(arr.status).toBe(400);
+    const big = await app.request(
+      'https://2yolks.com/api/admin/mcp',
+      { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${ADMIN_KEY}`, 'content-length': '300000' }, body: JSON.stringify(rpc('ping')) },
+      env(DB),
+    );
+    expect(big.status).toBe(413);
+    const flood = await toolCall(EDITOR_KEY, 'recipes.create_draft', {
+      ...RECIPE,
+      locales: Array.from({ length: 13 }, (_, i) => ({ ...RECIPE.locales[0], slug: `slug-${i}` })),
+    });
+    expect(flood.isError).toBe(true);
+    expect(JSON.stringify(flood.data)).toMatch(/at most 12/);
+  });
+
+  it('fails closed when a stored locale is no longer plain string arrays', async () => {
+    const created = await toolCall(EDITOR_KEY, 'recipes.create_draft', RECIPE);
+    const id = created.data?.['id'] as string;
+    await DB.prepare("UPDATE recipe_locales SET ingredients_json = ? WHERE recipe_id = ?")
+      .bind(JSON.stringify([{ qty: 2, unit: 'cups', item: 'flour' }]), id)
+      .run();
+    const upd = await toolCall(EDITOR_KEY, 'recipes.update_draft', {
+      id,
+      locales: [{ country: 'us', lang: 'en', ingredients: ['3 cups flour'] }],
+    });
+    expect(upd.isError).toBe(true);
+    expect((upd.data as { error: string }).error).toBe('stored locale shape is not editable by this tool version');
+  });
+
+  it('dry-run via JSON-RPC validates without writing', async () => {
+    const dry = await toolCall(EDITOR_KEY, 'recipes.create_draft', { ...RECIPE, dryRun: true });
+    expect(dry.isError).toBe(false);
+    expect(dry.data?.['dry_run']).toBe(true);
+    const listed = await toolCall(READ_KEY, 'recipes.list', {});
+    expect((listed.data?.['recipes'] as unknown[]).length).toBe(0);
+  });
+});

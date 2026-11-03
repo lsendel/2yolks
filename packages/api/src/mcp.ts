@@ -35,7 +35,7 @@ const ROLE_RANK: Record<Role, number> = { viewer: 0, editor: 1, admin: 2 };
 type NamedKey = { name: string; key: string; role: Role };
 
 type AuthResult =
-  | { ok: true; role: Role; actor: string }
+  | { ok: true; role: Role; actor: string; declared: string | null }
   | { ok: false; status: number; body: Record<string, unknown> };
 
 async function sha256(value: string): Promise<string> {
@@ -116,9 +116,11 @@ async function resolveAuth(c: Context<{ Bindings: McpBindings }>): Promise<AuthR
   }
   const header = c.req.header('authorization')?.trim() ?? '';
   const token = header.toLowerCase().startsWith('bearer ') ? header.slice(7).trim() : '';
-  const caller = c.req.header('x-mcp-caller')?.trim() || 'mcp-agent';
+  // Actor identity derives only from the authenticated key. X-MCP-Caller is
+  // an untrusted attribution hint, recorded as declared_caller, never actor.
+  const declared = c.req.header('x-mcp-caller')?.trim() || null;
   if (!token) {
-    await tryAudit(env.DB, { actor: caller, role: 'none', tool: 'auth', details: { reason: 'missing token' } });
+    await tryAudit(env.DB, { actor: declared ?? 'unauthenticated', role: 'none', tool: 'auth', details: { reason: 'missing token' } });
     return {
       ok: false,
       status: 401,
@@ -126,17 +128,17 @@ async function resolveAuth(c: Context<{ Bindings: McpBindings }>): Promise<AuthR
     };
   }
   if (env.ADMIN_MCP_API_KEY && (await tokenMatches(token, env.ADMIN_MCP_API_KEY))) {
-    return { ok: true, role: 'admin', actor: caller };
+    return { ok: true, role: 'admin', actor: 'shared-admin-key', declared };
   }
   if (env.MCP_READ_KEY && (await tokenMatches(token, env.MCP_READ_KEY))) {
-    return { ok: true, role: 'viewer', actor: caller };
+    return { ok: true, role: 'viewer', actor: 'shared-read-key', declared };
   }
   for (const nk of namedKeys) {
     if (await tokenMatches(token, nk.key)) {
-      return { ok: true, role: nk.role, actor: nk.name };
+      return { ok: true, role: nk.role, actor: nk.name, declared };
     }
   }
-  await tryAudit(env.DB, { actor: caller, role: 'none', tool: 'auth', details: { reason: 'invalid token' } });
+  await tryAudit(env.DB, { actor: declared ?? 'unauthenticated', role: 'none', tool: 'auth', details: { reason: 'invalid token' } });
   return {
     ok: false,
     status: 401,
@@ -319,6 +321,8 @@ const TOOLS: ToolDef[] = [
 ];
 
 const MAX_LEN = { title: 200, intro: 2000, item: 500, excerpt: 500, body: 20000, author: 100 };
+const MAX_LOCALES = 12;
+const MAX_BODY_BYTES = 262_144;
 
 // --- Helpers ----------------------------------------------------------------
 
@@ -353,7 +357,7 @@ function limitArg(v: unknown): number {
 // --- Tool handlers ------------------------------------------------------------
 // Each returns { status, data }; data is an error body when status >= 400.
 
-type CallCtx = { db: D1Database; role: Role; actor: string };
+type CallCtx = { db: D1Database; role: Role; actor: string; declaredCaller?: string | null; dryRun?: boolean };
 type CallResult = { status: number; data: unknown };
 
 async function callRecipesList(db: D1Database, args: Record<string, unknown>): Promise<CallResult> {
@@ -403,9 +407,18 @@ async function callSourcesList(db: D1Database): Promise<CallResult> {
 }
 
 async function callRecipesCreateDraft(ctx: CallCtx, args: Record<string, unknown>): Promise<CallResult> {
+  // Only validated fields are read from result.value: injected extras (e.g. a
+  // cleared_at or status field in the request body) cannot reach the insert.
+  const rawLocales = args['locales'];
+  if (Array.isArray(rawLocales) && rawLocales.length > MAX_LOCALES) {
+    return { status: 400, data: { error: `at most ${MAX_LOCALES} locales per call` } };
+  }
   const result = validateRecipeSubmission(args);
   if (!result.ok) return { status: 400, data: { error: 'validation failed', failures: result.errors } };
   const sub = result.value;
+  if (ctx.dryRun) {
+    return { status: 200, data: { dry_run: true, ok: true, locales: sub.locales.length } };
+  }
   const id = newId();
   const sourceId = `src-${id}`;
   const now = new Date().toISOString();
@@ -433,9 +446,27 @@ async function callRecipesCreateDraft(ctx: CallCtx, args: Record<string, unknown
           'draft',
         ),
     ),
+    // Audit in the same atomic batch as the write.
+    ctx.db
+      .prepare('INSERT INTO mcp_audit (actor, role, tool, entity_id, details_json) VALUES (?, ?, ?, ?, ?)')
+      .bind(ctx.actor, ctx.role, 'recipes.create_draft', id, JSON.stringify({ locales: sub.locales.length, ...(ctx.declaredCaller ? { declared_caller: ctx.declaredCaller } : {}) })),
   ];
-  await ctx.db.batch(statements);
-  return { status: 201, data: { id, source_id: sourceId, status: 'draft', locales: sub.locales.length } };
+  try {
+    await ctx.db.batch(statements);
+  } catch (e) {
+    if (String(e).includes('UNIQUE constraint')) {
+      const first = sub.locales[0];
+      const existing = first
+        ? await ctx.db
+            .prepare('SELECT recipe_id FROM recipe_locales WHERE country = ? AND lang = ? AND slug = ?')
+            .bind(first.country, first.lang, first.slug ?? slugify(first.title))
+            .first<{ recipe_id: string }>()
+        : null;
+      return { status: 409, data: { error: 'a locale with this country/lang/slug already exists', existing_id: existing?.recipe_id ?? null } };
+    }
+    throw e;
+  }
+  return { status: 201, data: { id, source_id: sourceId, status: 'draft', locales: sub.locales.length, audited_inline: true } };
 }
 
 async function callRecipesUpdateDraft(ctx: CallCtx, args: Record<string, unknown>): Promise<CallResult> {
@@ -444,6 +475,7 @@ async function callRecipesUpdateDraft(ctx: CallCtx, args: Record<string, unknown
   if (!id || !Array.isArray(locales) || locales.length === 0) {
     return { status: 400, data: { error: 'id and non-empty locales array required' } };
   }
+  if (locales.length > MAX_LOCALES) return { status: 400, data: { error: `at most ${MAX_LOCALES} locales per call` } };
   const updated: string[] = [];
   for (const entry of locales as unknown[]) {
     if (typeof entry !== 'object' || entry === null) continue;
@@ -452,12 +484,24 @@ async function callRecipesUpdateDraft(ctx: CallCtx, args: Record<string, unknown
     const lang = str(l['lang'], 8);
     if (!country || !lang) return { status: 400, data: { error: 'each locale needs country and lang' } };
     const existing = await ctx.db
-      .prepare('SELECT status FROM recipe_locales WHERE recipe_id = ? AND country = ? AND lang = ?')
+      .prepare('SELECT status, ingredients_json, steps_json FROM recipe_locales WHERE recipe_id = ? AND country = ? AND lang = ?')
       .bind(id, country, lang)
-      .first<{ status: string }>();
+      .first<{ status: string; ingredients_json: string; steps_json: string }>();
     if (!existing) return { status: 404, data: { error: 'locale not found', id, country, lang } };
     if (existing.status !== 'draft') {
       return { status: 409, data: { error: 'only draft locales are editable', country, lang, status: existing.status } };
+    }
+    // Fail closed if the stored row has moved past plain string arrays (e.g.
+    // structured quantities): this tool version must not rewrite that shape.
+    for (const stored of [existing.ingredients_json, existing.steps_json]) {
+      try {
+        const parsed: unknown = JSON.parse(stored);
+        if (!Array.isArray(parsed) || !parsed.every((x) => typeof x === 'string')) {
+          return { status: 409, data: { error: 'stored locale shape is not editable by this tool version', country, lang } };
+        }
+      } catch {
+        return { status: 409, data: { error: 'stored locale shape is not editable by this tool version', country, lang } };
+      }
     }
     const sets: string[] = [];
     const params: unknown[] = [];
@@ -483,13 +527,15 @@ async function callRecipesUpdateDraft(ctx: CallCtx, args: Record<string, unknown
       params.push(JSON.stringify(arr));
     }
     if (!sets.length) continue;
-    await ctx.db
-      .prepare(`UPDATE recipe_locales SET ${sets.join(', ')} WHERE recipe_id = ? AND country = ? AND lang = ?`)
-      .bind(...params, id, country, lang)
-      .run();
+    if (!ctx.dryRun) {
+      await ctx.db
+        .prepare(`UPDATE recipe_locales SET ${sets.join(', ')} WHERE recipe_id = ? AND country = ? AND lang = ?`)
+        .bind(...params, id, country, lang)
+        .run();
+    }
     updated.push(`${country}/${lang}`);
   }
-  return { status: 200, data: { id, updated } };
+  return { status: 200, data: { id, updated, ...(ctx.dryRun ? { dry_run: true, ok: true } : {}) } };
 }
 
 async function callStatusChange(
@@ -526,6 +572,14 @@ async function callStatusChange(
   const fk = kind === 'recipe' ? 'recipe_id' : 'post_id';
   const scope = country ? ' AND country = ? AND lang = ?' : '';
   const bind: unknown[] = country ? [target, id, country, lang] : [target, id];
+  if (ctx.dryRun) {
+    const countBind: unknown[] = country ? [id, country, lang] : [id];
+    const matched = await ctx.db
+      .prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE ${fk} = ? AND status = '${from}'${scope}`)
+      .bind(...countBind)
+      .first<{ n: number }>();
+    return { status: 200, data: { dry_run: true, ok: true, id, would_set: target, matching_locales: Number(matched?.n ?? 0) } };
+  }
   const res = await ctx.db
     .prepare(`UPDATE ${table} SET status = ? WHERE ${fk} = ? AND status = '${from}'${scope}`)
     .bind(...bind)
@@ -570,6 +624,11 @@ async function callSourcesClearRights(ctx: CallCtx, args: Record<string, unknown
     return { status: 400, data: { error: 'confirmed: true required to clear source rights' } };
   }
   if (!notes) return { status: 400, data: { error: 'notes reason required (what was reviewed)' } };
+  if (ctx.dryRun) {
+    const src = await ctx.db.prepare('SELECT id, cleared_at FROM sources WHERE id = ?').bind(id).first<{ id: string; cleared_at: string | null }>();
+    if (!src) return { status: 404, data: { error: 'source not found', id } };
+    return { status: 200, data: { dry_run: true, ok: src.cleared_at === null, id, already_cleared: src.cleared_at !== null } };
+  }
   const res = await ctx.db
     .prepare("UPDATE sources SET cleared_at = datetime('now'), notes = ? WHERE id = ? AND cleared_at IS NULL")
     .bind(notes, id)
@@ -654,8 +713,15 @@ async function callBlogGet(db: D1Database, args: Record<string, unknown>): Promi
 async function callBlogCreateDraft(ctx: CallCtx, args: Record<string, unknown>): Promise<CallResult> {
   const author = str(args['author'], MAX_LEN.author);
   if (!author) return { status: 400, data: { error: 'author required (max 100 chars)' } };
+  const rawLocales = args['locales'];
+  if (Array.isArray(rawLocales) && rawLocales.length > MAX_LOCALES) {
+    return { status: 400, data: { error: `at most ${MAX_LOCALES} locales per call` } };
+  }
   const validated = validateBlogLocales(args['locales']);
   if (!validated.ok) return { status: 400, data: { error: validated.error } };
+  if (ctx.dryRun) {
+    return { status: 200, data: { dry_run: true, ok: true, locales: validated.locales.length } };
+  }
   const id = newId();
   const statements = [
     ctx.db.prepare('INSERT INTO blog_posts (id, author) VALUES (?, ?)').bind(id, author),
@@ -666,9 +732,20 @@ async function callBlogCreateDraft(ctx: CallCtx, args: Record<string, unknown>):
         )
         .bind(id, l.country, l.lang, l.title, l.slug, l.excerpt, l.body, 'draft'),
     ),
+    // Audit in the same atomic batch as the write.
+    ctx.db
+      .prepare('INSERT INTO mcp_audit (actor, role, tool, entity_id, details_json) VALUES (?, ?, ?, ?, ?)')
+      .bind(ctx.actor, ctx.role, 'blog.create_draft', id, JSON.stringify({ locales: validated.locales.length, ...(ctx.declaredCaller ? { declared_caller: ctx.declaredCaller } : {}) })),
   ];
-  await ctx.db.batch(statements);
-  return { status: 201, data: { id, status: 'draft', locales: validated.locales.length } };
+  try {
+    await ctx.db.batch(statements);
+  } catch (e) {
+    if (String(e).includes('UNIQUE constraint')) {
+      return { status: 409, data: { error: 'a locale with this country/lang/slug already exists' } };
+    }
+    throw e;
+  }
+  return { status: 201, data: { id, status: 'draft', locales: validated.locales.length, audited_inline: true } };
 }
 
 async function callBlogUpdateDraft(ctx: CallCtx, args: Record<string, unknown>): Promise<CallResult> {
@@ -713,16 +790,18 @@ async function callBlogUpdateDraft(ctx: CallCtx, args: Record<string, unknown>):
       params.push(body);
     }
     if (!sets.length) continue;
-    await ctx.db
-      .prepare(`UPDATE blog_post_locales SET ${sets.join(', ')} WHERE post_id = ? AND country = ? AND lang = ?`)
-      .bind(...params, id, country, lang)
-      .run();
+    if (!ctx.dryRun) {
+      await ctx.db
+        .prepare(`UPDATE blog_post_locales SET ${sets.join(', ')} WHERE post_id = ? AND country = ? AND lang = ?`)
+        .bind(...params, id, country, lang)
+        .run();
+    }
     updated.push(`${country}/${lang}`);
   }
-  if (updated.length) {
+  if (updated.length && !ctx.dryRun) {
     await ctx.db.prepare("UPDATE blog_posts SET updated_at = datetime('now') WHERE id = ?").bind(id).run();
   }
-  return { status: 200, data: { id, updated } };
+  return { status: 200, data: { id, updated, ...(ctx.dryRun ? { dry_run: true, ok: true } : {}) } };
 }
 
 // --- Dispatch -----------------------------------------------------------------
@@ -786,14 +865,82 @@ mcpApp.get('/tools', async (c) => {
 async function handleRpc(c: Context<{ Bindings: McpBindings }>) {
   const auth = await resolveAuth(c);
   if (!auth.ok) return c.json(auth.body, auth.status as 401);
+  const declaredLength = Number(c.req.header('content-length') ?? 0);
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_BODY_BYTES) {
+    return c.json({ error: 'request too large', max_bytes: MAX_BODY_BYTES }, 413);
+  }
   let body: Record<string, unknown>;
   try {
-    const parsed: unknown = await c.req.json();
+    const raw = await c.req.text();
+    if (raw.length > MAX_BODY_BYTES) {
+      return c.json({ error: 'request too large', max_bytes: MAX_BODY_BYTES }, 413);
+    }
+    const parsed: unknown = JSON.parse(raw);
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error('bad');
     body = parsed as Record<string, unknown>;
   } catch {
     return c.json(rpcError(null, -32600, 'Invalid Request: single JSON-RPC object expected'), 400);
   }
+
+  const callCtx = {
+    db: c.env.DB,
+    role: auth.role,
+    actor: auth.actor,
+    declaredCaller: auth.declared,
+  };
+
+  // Audit a write call after execution. Create tools audit atomically inside
+  // their own batch and mark data.audited_inline; this path covers the rest
+  // and signals explicitly if the audit insert fails after the write.
+  const auditWrite = async (name: string, args: Record<string, unknown>, result: CallResult): Promise<string | null> => {
+    if (result.status >= 400) return null;
+    const data = result.data as Record<string, unknown> | null;
+    if (data && data['audited_inline'] === true) return null;
+    const entity = typeof args['id'] === 'string' ? args['id'] : typeof data?.['id'] === 'string' ? (data['id'] as string) : null;
+    const summary: Record<string, unknown> = { status: result.status };
+    if (typeof args['country'] === 'string') summary['country'] = args['country'];
+    if (typeof args['lang'] === 'string') summary['lang'] = args['lang'];
+    if (auth.declared) summary['declared_caller'] = auth.declared;
+    try {
+      await recordAudit(c.env.DB, { actor: auth.actor, role: auth.role, tool: name, entityId: entity, details: summary });
+      return null;
+    } catch {
+      return 'write may have applied but the audit insert failed; verify before retrying';
+    }
+  };
+
+  // Shorthand wire shape used by the directory MCP clients:
+  // { name | tool, arguments | input | params, dryRun?, confirmed? }.
+  // Mirrors the directory convention: without confirmed: true a write tool
+  // runs as a dry run (validation and guard checks only, nothing written).
+  if (body['jsonrpc'] !== '2.0' && typeof body['method'] !== 'string') {
+    const rawName = typeof body['name'] === 'string' ? body['name'] : typeof body['tool'] === 'string' ? body['tool'] : undefined;
+    if (!rawName || !TOOLS.some((t) => t.name === rawName)) {
+      return c.json({ error: 'not-registered' }, 404);
+    }
+    const rawArgs =
+      typeof body['arguments'] === 'object' && body['arguments'] !== null && !Array.isArray(body['arguments'])
+        ? (body['arguments'] as Record<string, unknown>)
+        : typeof body['input'] === 'object' && body['input'] !== null && !Array.isArray(body['input'])
+          ? (body['input'] as Record<string, unknown>)
+          : typeof body['params'] === 'object' && body['params'] !== null && !Array.isArray(body['params'])
+            ? (body['params'] as Record<string, unknown>)
+            : {};
+    const confirmed = body['confirmed'] === true || rawArgs['confirmed'] === true;
+    const dryFlag = (v: unknown) => (v === undefined ? undefined : v !== false);
+    const tool = TOOLS.find((t) => t.name === rawName)!;
+    const dryRun =
+      dryFlag(body['dryRun']) ?? dryFlag(body['dry_run']) ?? dryFlag(rawArgs['dryRun']) ?? dryFlag(rawArgs['dry_run']) ??
+      (tool.role === 'viewer' ? false : !confirmed);
+    const result = await callTool({ ...callCtx, dryRun }, rawName, rawArgs);
+    if (tool.role !== 'viewer' && !dryRun) {
+      const auditFailure = await auditWrite(rawName, rawArgs, result);
+      if (auditFailure) return c.json({ error: auditFailure, tool: rawName }, 500);
+    }
+    return c.json(result.data as Record<string, unknown>, result.status as 200);
+  }
+
+  // JSON-RPC 2.0 envelope.
   const id = body['id'] ?? null;
   const method = typeof body['method'] === 'string' ? body['method'] : '';
   const params =
@@ -833,25 +980,12 @@ async function handleRpc(c: Context<{ Bindings: McpBindings }>) {
         : {};
     const tool = TOOLS.find((t) => t.name === name);
     if (!tool) return c.json(rpcError(id, -32601, `Tool '${name}' not registered`), 404);
-    const result = await callTool({ db: c.env.DB, role: auth.role, actor: auth.actor }, name, args);
-    if (tool.role !== 'viewer') {
-      // Write tools must be audited. The audit insert runs after the write;
-      // if it fails the caller gets an explicit unconfirmed-write signal
-      // instead of a silent success.
-      const entity = typeof args['id'] === 'string' ? (args['id'] as string) : null;
-      const summary: Record<string, unknown> = { status: result.status };
-      if (typeof (result.data as Record<string, unknown> | null)?.['id'] === 'string') {
-        summary['result_id'] = (result.data as Record<string, unknown>)['id'];
-      }
-      if (typeof args['country'] === 'string') summary['country'] = args['country'];
-      if (typeof args['lang'] === 'string') summary['lang'] = args['lang'];
-      try {
-        await recordAudit(c.env.DB, { actor: auth.actor, role: auth.role, tool: name, entityId: entity ?? (summary['result_id'] as string | undefined) ?? null, details: summary });
-      } catch {
-        return c.json(
-          toolText(id, { error: 'write may have applied but the audit insert failed; verify before retrying', tool: name }, true),
-          500,
-        );
+    const dryRun = args['dryRun'] === true || args['dry_run'] === true;
+    const result = await callTool({ ...callCtx, dryRun }, name, args);
+    if (tool.role !== 'viewer' && !dryRun) {
+      const auditFailure = await auditWrite(name, args, result);
+      if (auditFailure) {
+        return c.json(toolText(id, { error: auditFailure, tool: name }, true), 500);
       }
     }
     if (result.status >= 400) {
