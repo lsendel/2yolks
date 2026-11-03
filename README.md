@@ -9,8 +9,10 @@ features off, custom domain (2yolks.com) attaches at cutover.
 
 - `packages/contracts` - shared types, the 60-country registry (seeded from
   the directory platform's country-coverage receipt), locales, and the slug
-  table (`/{country}/recipes/{id}-{slug}`; the id is stable across locales,
-  each locale adds its own translated slug beside it).
+  table (`/{country}/recipes/{slug}`; recipe ids are internal only. Legacy
+  `/{country}/recipes/{id}-{slug}` URLs 301 to the clean shape, and
+  `recipe_slug_aliases` (migration 0005) permanently reserves every slug
+  that leaves the sitemap so old URLs keep resolving).
 - `packages/api` - Hono worker: JSON API under `/api/v1`, server-rendered
   pages, D1 (Drizzle) with provenance-first schema (every recipe cites a
   licensed source).

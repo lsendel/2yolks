@@ -172,27 +172,53 @@ describe('clean and legacy recipe URLs', () => {
     R2 = makeR2();
   });
 
-  it('serves a published recipe on both URL shapes; canonical stays the legacy URL in phase 1', async () => {
+  it('serves the clean URL with a self-referencing clean canonical; legacy URL 301s to it', async () => {
     seedPublished('r1', 'us', 'en', 'test-pancakes', 'Test Pancakes');
-    const legacy = await app.request('https://2yolks.com/us/recipes/r1-test-pancakes', {}, env(DB));
-    expect(legacy.status).toBe(200);
-    const legacyHtml = await legacy.text();
-    expect(legacyHtml).toContain('Test Pancakes');
-    expect(legacyHtml).toContain('rel="canonical" href="https://2yolks.com/us/recipes/r1-test-pancakes"');
-
     const clean = await app.request('https://2yolks.com/us/recipes/test-pancakes', {}, env(DB));
     expect(clean.status).toBe(200);
     const cleanHtml = await clean.text();
     expect(cleanHtml).toContain('Test Pancakes');
-    // Phase 1: the legacy URL is still the canonical one everywhere.
-    expect(cleanHtml).toContain('rel="canonical" href="https://2yolks.com/us/recipes/r1-test-pancakes"');
+    expect(cleanHtml).toContain('rel="canonical" href="https://2yolks.com/us/recipes/test-pancakes"');
+
+    const legacy = await app.request('https://2yolks.com/us/recipes/r1-test-pancakes', {}, env(DB));
+    expect(legacy.status).toBe(301);
+    expect(legacy.headers.get('location')).toBe('/us/recipes/test-pancakes');
   });
 
-  it('legacy wrong-slug still 301s to the canonical legacy URL', async () => {
+  it('legacy wrong-slug also 301s to the clean canonical URL', async () => {
     seedPublished('r1', 'us', 'en', 'test-pancakes', 'Test Pancakes');
     const res = await app.request('https://2yolks.com/us/recipes/r1-wrong-slug', {}, env(DB));
     expect(res.status).toBe(301);
-    expect(res.headers.get('location')).toBe('/us/recipes/r1-test-pancakes');
+    expect(res.headers.get('location')).toBe('/us/recipes/test-pancakes');
+  });
+
+  it('non-default locale: clean prefixed URL serves, legacy prefixed URL 301s', async () => {
+    seedPublished('r1', 'us', 'es', 'panqueques-de-prueba', 'Panqueques de Prueba');
+    const clean = await app.request('https://2yolks.com/us/es/recipes/panqueques-de-prueba', {}, env(DB));
+    expect(clean.status).toBe(200);
+    const legacy = await app.request('https://2yolks.com/us/es/recipes/r1-panqueques-de-prueba', {}, env(DB));
+    expect(legacy.status).toBe(301);
+    expect(legacy.headers.get('location')).toBe('/us/es/recipes/panqueques-de-prueba');
+  });
+
+  it('frozen alias 301s to the current slug; dead alias 404s; live slug wins over alias', async () => {
+    seedPublished('r1', 'us', 'en', 'new-slug', 'Test Pancakes');
+    SQLITE.exec(`INSERT INTO recipe_slug_aliases (country, lang, slug, recipe_id) VALUES ('us', 'en', 'old-slug', 'r1')`);
+    SQLITE.exec(`INSERT INTO recipe_slug_aliases (country, lang, slug, recipe_id) VALUES ('us', 'en', 'new-slug', 'r1')`);
+    seedPublished('r2', 'us', 'en', 'gone-slug', 'Gone Recipe');
+    SQLITE.exec(`INSERT INTO recipe_slug_aliases (country, lang, slug, recipe_id) VALUES ('us', 'en', 'dead-slug', 'r2')`);
+    SQLITE.exec(`UPDATE recipe_locales SET status = 'draft' WHERE recipe_id = 'r2'`);
+
+    const aliasRes = await app.request('https://2yolks.com/us/recipes/old-slug', {}, env(DB));
+    expect(aliasRes.status).toBe(301);
+    expect(aliasRes.headers.get('location')).toBe('/us/recipes/new-slug');
+
+    // A live slug always wins over an alias for the same key - no loop.
+    const liveRes = await app.request('https://2yolks.com/us/recipes/new-slug', {}, env(DB));
+    expect(liveRes.status).toBe(200);
+
+    // Alias whose recipe has no published locale in this country+lang: 404.
+    expect((await app.request('https://2yolks.com/us/recipes/dead-slug', {}, env(DB))).status).toBe(404);
   });
 
   it('404s for unknown slugs and unknown legacy ids', async () => {
@@ -201,11 +227,12 @@ describe('clean and legacy recipe URLs', () => {
     expect((await app.request('https://2yolks.com/us/recipes/zz999999-test-pancakes', {}, env(DB))).status).toBe(404);
   });
 
-  it('sitemap still lists legacy URLs in phase 1', async () => {
+  it('sitemap lists clean URLs with clean hreflang alternates', async () => {
     seedPublished('r1', 'us', 'en', 'test-pancakes', 'Test Pancakes');
     const res = await app.request('https://2yolks.com/sitemap.xml', {}, env(DB));
     const xml = await res.text();
-    expect(xml).toContain('<loc>https://2yolks.com/us/recipes/r1-test-pancakes</loc>');
+    expect(xml).toContain('<loc>https://2yolks.com/us/recipes/test-pancakes</loc>');
+    expect(xml).not.toContain('r1-test-pancakes');
   });
 });
 

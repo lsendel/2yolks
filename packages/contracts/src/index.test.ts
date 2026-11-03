@@ -29,8 +29,8 @@ describe('country registry', () => {
 });
 
 describe('slug table', () => {
-  it('builds /{country}/recipes/{id}-{slug} paths with a stable id', () => {
-    expect(recipePath('mx', 'r1', 'huevos-rancheros')).toBe('/mx/recipes/r1-huevos-rancheros');
+  it('builds clean /{country}/recipes/{slug} paths', () => {
+    expect(recipePath('mx', 'huevos-rancheros')).toBe('/mx/recipes/huevos-rancheros');
     expect(countryPath('us')).toBe('/us/');
   });
   it('parses country homes and recipe paths', () => {
@@ -148,13 +148,15 @@ describe('scalingIsSafe', () => {
 
 import { recipePathFor as _rpf, parsePath as _pp, LOCALES as _LOC } from './index';
 describe('locale-aware recipe paths', () => {
-  it('default locale keeps the legacy URL', () => {
-    expect(_rpf('mx', 'es', 'abc123', 'pozole')).toBe('/mx/recipes/abc123-pozole');
-    expect(_rpf('us', 'en', 'abc123', 'soup')).toBe('/us/recipes/abc123-soup');
+  it('default locale keeps the unprefixed clean URL', () => {
+    expect(_rpf('mx', 'es', 'pozole')).toBe('/mx/recipes/pozole');
+    expect(_rpf('us', 'en', 'soup')).toBe('/us/recipes/soup');
+    expect(_pp('/mx/recipes/pozole')).toEqual({ country: 'mx', slug: 'pozole' });
+    // Legacy id-slug shape still parses, carrying both readings.
     expect(_pp('/mx/recipes/abc123-pozole')).toEqual({ country: 'mx', id: 'abc123', slug: 'abc123-pozole', legacySlug: 'pozole' });
   });
   it('non-default locale gets a prefix only when registered; unregistered/default prefixes do not parse', () => {
-    expect(_rpf('mx', 'en', 'abc123', 'pozole')).toBe('/mx/en/recipes/abc123-pozole');
+    expect(_rpf('mx', 'en', 'pozole')).toBe('/mx/en/recipes/pozole');
     expect(_pp('/mx/en/recipes/abc123-pozole')).toEqual({ country: 'mx', lang: 'en', id: 'abc123', slug: 'abc123-pozole', legacySlug: 'pozole' });
     expect(_pp('/mx/fr/recipes/abc123-pozole')).toEqual({ country: 'mx', lang: 'fr', id: 'abc123', slug: 'abc123-pozole', legacySlug: 'pozole' });
     expect(_pp('/mx/de/recipes/abc123-pozole')).toBeNull(); // unregistered

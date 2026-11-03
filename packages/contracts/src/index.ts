@@ -630,18 +630,18 @@ export function countryPath(country: string): string {
   return `/${country.toLowerCase()}/`;
 }
 
-export function recipePath(country: string, id: string, slug: string): string {
-  return `${countryPath(country)}recipes/${id.toLowerCase()}-${slug}`;
+export function recipePath(country: string, slug: string): string {
+  return `${countryPath(country)}recipes/${slug}`;
 }
 
-/** Locale-aware recipe path. The country's default locale keeps the legacy
- * URL (/{country}/recipes/...), so existing URLs never change; any other
- * registered locale lives at /{country}/{lang}/recipes/... */
-export function recipePathFor(country: string, lang: string, id: string, slug: string): string {
+/** Locale-aware recipe path. The country's default locale keeps the
+ * unprefixed URL (/{country}/recipes/...); any other registered locale lives
+ * at /{country}/{lang}/recipes/... */
+export function recipePathFor(country: string, lang: string, slug: string): string {
   const def = defaultLocale(country);
   return !def || lang.toLowerCase() === def
-    ? recipePath(country, id, slug)
-    : `${countryPath(country)}${lang.toLowerCase()}/recipes/${id.toLowerCase()}-${slug}`;
+    ? recipePath(country, slug)
+    : `${countryPath(country)}${lang.toLowerCase()}/recipes/${slug}`;
 }
 
 export interface ParsedPath {

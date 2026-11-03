@@ -31,10 +31,16 @@ describe('wave 1 editorial drafts', () => {
       }
     }
   });
-  it('has ids and slugs that round-trip through the public URL parser', () => {
+  it('has slugs that round-trip through the public URL parser', () => {
     for (const r of data.recipes) {
       expect(r.id).toMatch(/^[a-z0-9]+$/);
-      expect(parsePath(recipePath(r.country, r.id, r.slug))).toEqual({ country: r.country, id: r.id, slug: `${r.id}-${r.slug}`, legacySlug: r.slug });
+      const parsed = parsePath(recipePath(r.country, r.slug));
+      expect(parsed?.country).toBe(r.country);
+      expect(parsed?.slug).toBe(r.slug);
+      // The legacy id-slug URL for this recipe still parses for the 301 path.
+      const legacy = parsePath(`/${r.country}/recipes/${r.id}-${r.slug}`);
+      expect(legacy?.id).toBe(r.id);
+      expect(legacy?.legacySlug).toBe(r.slug);
     }
   });
   it('pairs the 145F whole-meat minimum with the 3-minute rest', () => {

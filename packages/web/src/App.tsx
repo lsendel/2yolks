@@ -124,7 +124,7 @@ export function RecipeCard({
   return (
     <li className="recipe-card">
       <h3>
-        <a className="stretched" href={recipePathFor(country, primary.lang, primary.id, primary.slug)}>
+        <a className="stretched" href={recipePathFor(country, primary.lang, primary.slug)}>
           {primary.title}
         </a>
       </h3>
@@ -141,7 +141,7 @@ export function RecipeCard({
       {others.length > 0 ? (
         <p className="chips">
           {others.map((o) => (
-            <a key={o.lang} className="chip" hrefLang={o.lang} href={recipePathFor(country, o.lang, o.id, o.slug)}>
+            <a key={o.lang} className="chip" hrefLang={o.lang} href={recipePathFor(country, o.lang, o.slug)}>
               {LANG_NAMES[o.lang] ?? o.lang}
             </a>
           ))}
@@ -176,7 +176,7 @@ export function Home({ recipes, lang='en', activeCategory=null }: HomeProps) {
  const categories=[...new Set(selected.map(r=>r.category).filter((x):x is string=>Boolean(categoryLabel(x,lang))))].sort();
  const filtered=activeCategory?selected.filter(r=>r.category===activeCategory):selected;
  const featured=selected.find(r=>r.id==='w1pozole')??selected[0];
- const href=(r:RecipeRow)=>recipePathFor(r.country,r.lang,r.id,r.slug);
+ const href=(r:RecipeRow)=>recipePathFor(r.country,r.lang,r.slug);
  const time=(n:number)=>n>=60?`${Math.floor(n/60)} h${n%60?' '+n%60+' min':''}`:`${n} min`;
  return <main className="wide discovery" id="main"><section className="after-hero"><div className="after-copy"><span className="eyebrow">{d.eyebrow}</span><h1>{d.title}</h1><p>{d.intro}</p><a className="discovery-cta" href="#recipes">{d.cta}<span aria-hidden="true">↗</span></a></div><figure className="identity-art"><img src="/img/identity/after-hours.webp" alt="" width="900" height="900" fetchPriority="high"/><figcaption>{d.illustration}</figcaption></figure></section>
  {featured?<section className="featured-recipe"><div><span className="eyebrow">{categoryLabel(featured.category,lang)??d.all}</span><h2><a href={href(featured)}>{featured.title}<span aria-hidden="true">↗</span></a></h2></div><div className="featured-facts">{featured.totalMinutes!=null?<span className="icon-stat"><FactIcon/>{d.total} · {time(featured.totalMinutes)}</span>:null}{featured.untested?<span className="status-label">{uiStrings(lang).untestedBadge}</span>:null}</div></section>:null}

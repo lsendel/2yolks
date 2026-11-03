@@ -81,6 +81,18 @@ export const recipeLocales = sqliteTable(
   ],
 );
 
+export const recipeSlugAliases = sqliteTable(
+  'recipe_slug_aliases',
+  {
+    country: text('country').notNull(),
+    lang: text('lang').notNull(),
+    slug: text('slug').notNull(),
+    recipeId: text('recipe_id').notNull(),
+    createdAt: text('created_at').notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.country, t.lang, t.slug] })],
+);
+
 export function createDb(d1: D1Database) {
-  return drizzle(d1, { schema: { sources, recipes, recipeLocales, recipeImages } });
+  return drizzle(d1, { schema: { sources, recipes, recipeLocales, recipeImages, recipeSlugAliases } });
 }

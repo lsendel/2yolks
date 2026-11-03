@@ -17,7 +17,7 @@ import {
 } from '@2yolks/contracts';
 import { renderHome, renderCountryHome, renderRecipe, renderAbout, renderPrivacy, renderHowWeTest, renderNotFound, type SiteNavItem } from '@2yolks/web/server';
 import { isUntested, localizedCountryName } from '@2yolks/contracts';
-import { createDb, recipes, recipeLocales, recipeImages, sources } from './db';
+import { recipeSlugAliases,  createDb, recipes, recipeLocales, recipeImages, sources } from './db';
 import { mcpApp } from './mcp';
 
 type Bindings = {
@@ -173,12 +173,12 @@ app.get('/sitemap.xml', async (c) => {
     const links = list
       .map(
         (a) =>
-          `    <xhtml:link rel="alternate" hreflang="${xmlEscape(`${a.lang}-${a.country.toUpperCase()}`)}" href="${xmlEscape(origin + recipePathFor(a.country, a.lang, a.recipeId, a.slug))}" />`,
+          `    <xhtml:link rel="alternate" hreflang="${xmlEscape(`${a.lang}-${a.country.toUpperCase()}`)}" href="${xmlEscape(origin + recipePathFor(a.country, a.lang, a.slug))}" />`,
       )
       .join('\n');
     for (const r of list) {
       urls.push(
-        `  <url>\n    <loc>${xmlEscape(origin + recipePathFor(r.country, r.lang, r.recipeId, r.slug))}</loc>\n${links}\n  </url>`,
+        `  <url>\n    <loc>${xmlEscape(origin + recipePathFor(r.country, r.lang, r.slug))}</loc>\n${links}\n  </url>`,
       );
     }
   }
@@ -359,7 +359,9 @@ const recipeRoute = async (c: Context<{ Bindings: Bindings }>) => {
   )[0];
 
   if (!canonical && parsed.id && parsed.legacySlug) {
-    // Legacy /{country}/recipes/{id}-{slug} shape.
+    // Legacy /{country}/recipes/{id}-{slug} shape: resolve the id and send a
+    // permanent redirect to the clean slug URL. The recipe is looked up by
+    // its immutable internal id, so every legacy URL keeps working forever.
     const legacyRows = await localeRows().where(
       and(
         eq(recipeLocales.country, parsed.country),
@@ -368,19 +370,42 @@ const recipeRoute = async (c: Context<{ Bindings: Bindings }>) => {
         published(db, demoAllowed(c)),
       ),
     );
-    canonical = legacyRows.find((r) => r.recipe_locales.slug === parsed.legacySlug);
-    if (!canonical) {
-      // Stale/wrong slug: 301 only when exactly one visible locale row exists
-      // for this recipe+country (no unordered guesses).
-      const target = legacyRows.length === 1 ? legacyRows[0] : undefined;
-      if (!target) return c.notFound();
+    // 301 only when exactly one visible locale row exists for this
+    // recipe+country (no unordered guesses). An unknown legacy id falls
+    // through to the alias map before 404ing.
+    const target = legacyRows.length === 1 ? legacyRows[0] : undefined;
+    if (target) {
       return c.redirect(
-        recipePathFor(parsed.country, target.recipe_locales.lang, parsed.id, target.recipe_locales.slug),
+        recipePathFor(parsed.country, target.recipe_locales.lang, target.recipe_locales.slug),
         301,
       );
     }
   }
-  if (!canonical) return c.notFound();
+
+  if (!canonical) {
+    // Frozen map (migration 0005): a slug that left the sitemap redirects to
+    // the recipe's current published slug in this country+lang, never to a
+    // guess. Alias rows are permanent reservations written on unpublish.
+    const alias = await db
+      .select({ recipeId: recipeSlugAliases.recipeId })
+      .from(recipeSlugAliases)
+      .where(and(eq(recipeSlugAliases.country, parsed.country), eq(recipeSlugAliases.lang, lang), eq(recipeSlugAliases.slug, parsed.slug)))
+      .limit(1);
+    const holder = alias[0];
+    if (!holder) return c.notFound();
+    const current = await localeRows().where(
+      and(
+        eq(recipeLocales.recipeId, holder.recipeId),
+        eq(recipeLocales.country, parsed.country),
+        eq(recipeLocales.lang, lang),
+        published(db, demoAllowed(c)),
+      ),
+    );
+    const first = current[0];
+    const target = current.length === 1 && first && first.recipe_locales.slug !== parsed.slug ? first : undefined;
+    if (!target) return c.notFound();
+    return c.redirect(recipePathFor(parsed.country, target.recipe_locales.lang, target.recipe_locales.slug), 301);
+  }
   const recipeId = canonical.recipe_locales.recipeId;
 
   const alternatesRows = await db
@@ -393,14 +418,14 @@ const recipeRoute = async (c: Context<{ Bindings: Bindings }>) => {
   const defaultLang = defaultLocale(parsed.country);
   const alternates = alternatesRows.map((a) => ({
     hreflang: `${a.lang}-${a.country.toUpperCase()}`,
-    href: `${origin}${recipePathFor(a.country, a.lang, recipeId, a.slug)}`,
+    href: `${origin}${recipePathFor(a.country, a.lang, a.slug)}`,
   }));
   // x-default points at the default-locale version when one exists.
   const def = alternatesRows.find((a) => a.country === parsed.country && a.lang === defaultLang);
   if (def) {
     alternates.push({
       hreflang: 'x-default',
-      href: `${origin}${recipePathFor(def.country, def.lang, recipeId, def.slug)}`,
+      href: `${origin}${recipePathFor(def.country, def.lang, def.slug)}`,
     });
   }
 
