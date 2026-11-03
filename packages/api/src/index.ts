@@ -8,6 +8,7 @@ import {
   defaultLocale,
   parsePath,
   recipePath,
+  recipePathFor,
   countryPath,
   slugify,
   validateRecipeSubmission,
@@ -144,12 +145,12 @@ app.get('/sitemap.xml', async (c) => {
     const links = list
       .map(
         (a) =>
-          `    <xhtml:link rel="alternate" hreflang="${xmlEscape(`${a.lang}-${a.country.toUpperCase()}`)}" href="${xmlEscape(origin + recipePath(a.country, a.recipeId, a.slug))}" />`,
+          `    <xhtml:link rel="alternate" hreflang="${xmlEscape(`${a.lang}-${a.country.toUpperCase()}`)}" href="${xmlEscape(origin + recipePathFor(a.country, a.lang, a.recipeId, a.slug))}" />`,
       )
       .join('\n');
     for (const r of list) {
       urls.push(
-        `  <url>\n    <loc>${xmlEscape(origin + recipePath(r.country, r.recipeId, r.slug))}</loc>\n${links}\n  </url>`,
+        `  <url>\n    <loc>${xmlEscape(origin + recipePathFor(r.country, r.lang, r.recipeId, r.slug))}</loc>\n${links}\n  </url>`,
       );
     }
   }
@@ -203,7 +204,7 @@ app.get('/how-we-test', (c) => c.html(renderHowWeTest()));
 app.get('/:country', countryHome);
 app.get('/:country/', countryHome);
 
-app.get('/:country/recipes/:idSlug', async (c) => {
+const recipeRoute = async (c: Context<{ Bindings: Bindings }>) => {
   const parsed = parsePath(c.req.path);
   if (!parsed?.id || !parsed.slug) return c.notFound();
   const db = createDb(c.env.DB);
@@ -216,6 +217,7 @@ app.get('/:country/recipes/:idSlug', async (c) => {
       and(
         eq(recipeLocales.country, parsed.country),
         eq(recipeLocales.recipeId, parsed.id),
+        eq(recipeLocales.lang, parsed.lang ?? defaultLocale(parsed.country) ?? ''),
         published(db, demoAllowed(c)),
       ),
     );
@@ -226,7 +228,7 @@ app.get('/:country/recipes/:idSlug', async (c) => {
     const target = rows.length === 1 ? rows[0] : undefined;
     if (!target) return c.notFound();
     return c.redirect(
-      recipePath(parsed.country, parsed.id, target.recipe_locales.slug),
+      recipePathFor(parsed.country, target.recipe_locales.lang, parsed.id, target.recipe_locales.slug),
       301,
     );
   }
@@ -242,14 +244,14 @@ app.get('/:country/recipes/:idSlug', async (c) => {
   const defaultLang = defaultLocale(parsed.country);
   const alternates = alternatesRows.map((a) => ({
     hreflang: `${a.lang}-${a.country.toUpperCase()}`,
-    href: `${origin}${recipePath(a.country, parsed.id ?? '', a.slug)}`,
+    href: `${origin}${recipePathFor(a.country, a.lang, parsed.id ?? '', a.slug)}`,
   }));
   // x-default points at the default-locale version when one exists.
   const def = alternatesRows.find((a) => a.country === parsed.country && a.lang === defaultLang);
   if (def) {
     alternates.push({
       hreflang: 'x-default',
-      href: `${origin}${recipePath(def.country, parsed.id ?? '', def.slug)}`,
+      href: `${origin}${recipePathFor(def.country, def.lang, parsed.id ?? '', def.slug)}`,
     });
   }
 
@@ -284,7 +286,9 @@ app.get('/:country/recipes/:idSlug', async (c) => {
     },
   };
   return c.html(renderRecipe(page, alternates));
-});
+};
+app.get('/:country/recipes/:idSlug', recipeRoute);
+app.get('/:country/:lang/recipes/:idSlug', recipeRoute);
 
 // --- Submission draft path -------------------------------------------------
 // Every ingestion path parses through validateRecipeSubmission (fail closed).

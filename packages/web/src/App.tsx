@@ -1,6 +1,6 @@
 import type { RecipePage } from '@2yolks/contracts';
 import type { IngredientEntry } from '@2yolks/contracts';
-import { SCALE_MULTIPLIERS, defaultUnitSystem, renderIngredient, renderStep, ingredientVariants, stepVariants, isConvertible, hasStepTokens, countryPath, recipePath, uiStrings, parseIngredient, formatQty, scalingIsSafe, isUntested, COUNTRY_INTROS, defaultLocale } from '@2yolks/contracts';
+import { SCALE_MULTIPLIERS, defaultUnitSystem, renderIngredient, renderStep, ingredientVariants, stepVariants, isConvertible, hasStepTokens, countryPath, recipePath, recipePathFor, uiStrings, parseIngredient, formatQty, scalingIsSafe, isUntested, COUNTRY_INTROS, defaultLocale } from '@2yolks/contracts';
 
 export interface HomeProps {
   locales: { country: string; countryName: string; lang: string }[];
@@ -40,7 +40,7 @@ export function CountryHome({ countryName, country, recipes }: CountryHomeProps)
       <ul className="cards">
         {recipes.map((r) => (
           <li key={`${r.id}-${r.slug}`}>
-            <a href={recipePath(country, r.id, r.slug)}>
+            <a href={recipePathFor(country, r.lang ?? defaultLocale(country) ?? "", r.id, r.slug)}>
               {r.title}
               {r.untested ? <span className="badge">{t.untestedBadge}</span> : null}
             </a>

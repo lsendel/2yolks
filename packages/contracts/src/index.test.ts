@@ -130,3 +130,20 @@ describe('scalingIsSafe', () => {
     expect(scalingIsSafe(['1 taza arroz'], ['Agrega 250 ml de agua'])).toBe(false);
   });
 });
+
+import { recipePathFor as _rpf, parsePath as _pp, LOCALES as _LOC } from './index';
+describe('locale-aware recipe paths', () => {
+  it('default locale keeps the legacy URL', () => {
+    expect(_rpf('mx', 'es', 'abc123', 'pozole')).toBe('/mx/recipes/abc123-pozole');
+    expect(_rpf('us', 'en', 'abc123', 'soup')).toBe('/us/recipes/abc123-soup');
+    expect(_pp('/mx/recipes/abc123-pozole')).toEqual({ country: 'mx', id: 'abc123', slug: 'pozole' });
+  });
+  it('non-default locale gets a prefix only when registered; unregistered/default prefixes do not parse', () => {
+    expect(_rpf('mx', 'en', 'abc123', 'pozole')).toBe('/mx/en/recipes/abc123-pozole');
+    // today no non-default locale is registered, so no prefixed URL resolves
+    expect(_pp('/mx/en/recipes/abc123-pozole')).toBeNull();
+    expect(_pp('/mx/fr/recipes/abc123-pozole')).toBeNull();
+    expect(_pp('/mx/es/recipes/abc123-pozole')).toBeNull(); // default locale: no duplicate URL
+    expect(Object.keys(_LOC)).toEqual(['us', 'mx']);
+  });
+});
