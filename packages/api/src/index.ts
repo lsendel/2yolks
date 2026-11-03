@@ -164,13 +164,21 @@ app.get('/sitemap.xml', async (c) => {
 
 // --- SSR pages ----------------------------------------------------------
 
-app.get('/', (c) => {
+app.get('/', async (c) => {
+  // Default locales are always listed (unchanged behavior); additional
+  // locales appear only once they have published content, so registering a
+  // locale in LOCALES alone never exposes it on the homepage.
+  const db = createDb(c.env.DB);
+  const live = await db
+    .selectDistinct({ country: recipeLocales.country, lang: recipeLocales.lang })
+    .from(recipeLocales)
+    .innerJoin(recipes, eq(recipeLocales.recipeId, recipes.id))
+    .innerJoin(sources, eq(recipes.sourceId, sources.id))
+    .where(published(db, demoAllowed(c)));
   const markets = COUNTRIES.filter((ct) => ct.wave === 1).flatMap((ct) =>
-    (LOCALES[ct.code] ?? []).map((lang) => ({
-      country: ct.code,
-      countryName: ct.name,
-      lang,
-    })),
+    (LOCALES[ct.code] ?? [])
+      .filter((lang) => lang === defaultLocale(ct.code) || live.some((l) => l.country === ct.code && l.lang === lang))
+      .map((lang) => ({ country: ct.code, countryName: ct.name, lang })),
   );
   return c.html(renderHome({ locales: markets }));
 });

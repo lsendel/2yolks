@@ -102,8 +102,11 @@ export function waveCountries(wave: number): Country[] {
 // ---------------------------------------------------------------------------
 
 export const LOCALES: Readonly<Record<string, readonly string[]>> = {
-  us: ['en'],
-  mx: ['es'],
+  // First entry is the country's default locale (keeps the legacy URL).
+  // Registering a locale does not publish anything: pages and homepage links
+  // appear only for locale rows that are actually published.
+  us: ['en', 'es', 'fr'],
+  mx: ['es', 'en', 'fr'],
 };
 
 export function localesFor(countryCode: string): readonly string[] {
