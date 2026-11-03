@@ -385,6 +385,7 @@ describe('limits and credit', () => {
     for (let i = 0; i < 48; i++) {
       await DB.prepare("INSERT INTO sources (id,name,url,license) VALUES (?, 'n','https://x.example','user-original')").bind(`ss${i}`).run();
       await DB.prepare("INSERT INTO recipes (id,source_id,created_at,owner_user_id) VALUES (?,?,'t',?)").bind(`rr${i}`, `ss${i}`, uid).run();
+      await DB.prepare("INSERT INTO recipe_locales (recipe_id,country,lang,title,slug,ingredients_json,steps_json,status) VALUES (?,'us','en','t',?,'[]','[]','draft')").bind(`rr${i}`, `t-rr${i}`).run();
     }
     const rs = await Promise.all(Array.from({ length: 6 }, (_, i) => post('/account/recipes/save', recipeForm({ title: `Race ${i}` }), { cookie })));
     expect(rs.filter((r) => r.status === 303)).toHaveLength(2);
@@ -407,6 +408,45 @@ describe('limits and credit', () => {
     expect(res.status).toBe(413);
     const chunked = await app.request(`${ORIGIN}/account/code`, { method: 'POST', headers: { origin: ORIGIN, 'content-type': 'application/x-www-form-urlencoded' }, body: 'email=' + 'a'.repeat(400_000) }, env());
     expect(chunked.status).toBe(413);
+  });
+});
+
+describe('budget order, concurrent issuance, removal frees a slot', () => {
+  it('per-email rejections do not spend the site-wide mail budget', async () => {
+    for (let i = 0; i < 3; i++) await post('/account/code', { email: 'spam@example.com' });
+    const before = (await DB.prepare('SELECT count(*) AS n FROM mail_log').first<{ n: number }>())!.n;
+    for (let i = 0; i < 10; i++) expect((await post('/account/code', { email: 'spam@example.com' })).status).toBe(429);
+    expect((await DB.prepare('SELECT count(*) AS n FROM mail_log').first<{ n: number }>())!.n).toBe(before);
+  });
+  it('when the site budget is exhausted the code is killed, not sent', async () => {
+    const now = Date.now();
+    for (let i = 0; i < 80; i++) await DB.prepare("INSERT INTO mail_log (id,kind,created_at) VALUES (?,'code',?)").bind(`b${i}`, now).run();
+    expect((await post('/account/code', { email: 'late@example.com' })).status).toBe(503);
+    expect(sent.length).toBe(0);
+    expect((await DB.prepare('SELECT used FROM auth_codes').first<{ used: number }>())!.used).toBe(1);
+  });
+  it('concurrent issuance leaves exactly one live code (the newest), never zero', async () => {
+    await Promise.all(Array.from({ length: 3 }, () => post('/account/code', { email: 'multi@example.com' })));
+    const live = await DB.prepare('SELECT count(*) AS n FROM auth_codes WHERE used = 0').first<{ n: number }>();
+    expect(live!.n).toBe(1);
+  });
+  it('removing a draft frees an active slot, with a lifetime row cap behind it', async () => {
+    const cookie = await signIn();
+    const uid = (await DB.prepare('SELECT id FROM users').first<{ id: string }>())!.id;
+    for (let i = 0; i < 50; i++) {
+      await DB.prepare("INSERT INTO sources (id,name,url,license) VALUES (?, 'n','https://x.example','user-original')").bind(`as${i}`).run();
+      await DB.prepare("INSERT INTO recipes (id,source_id,created_at,owner_user_id) VALUES (?,?,'t',?)").bind(`ar${i}`, `as${i}`, uid).run();
+      await DB.prepare("INSERT INTO recipe_locales (recipe_id,country,lang,title,slug,ingredients_json,steps_json,status) VALUES (?,'us','en','t',?,'[]','[]','draft')").bind(`ar${i}`, `t-ar${i}`).run();
+    }
+    expect((await post('/account/recipes/save', recipeForm(), { cookie })).status).toBe(400);
+    expect((await post('/account/recipes/ar0/delete', {}, { cookie })).status).toBe(303);
+    expect((await post('/account/recipes/save', recipeForm(), { cookie })).status).toBe(303);
+    await DB.prepare("UPDATE recipe_locales SET status = 'rejected'").run();
+    for (let i = 0; i < 450; i++) {
+      await DB.prepare("INSERT INTO sources (id,name,url,license) VALUES (?, 'n','https://x.example','user-original')").bind(`xs${i}`).run();
+      await DB.prepare("INSERT INTO recipes (id,source_id,created_at,owner_user_id) VALUES (?,?,'t',?)").bind(`xr${i}`, `xs${i}`, uid).run();
+    }
+    expect((await post('/account/recipes/save', recipeForm({ title: 'Over lifetime' }), { cookie })).status).toBe(400);
   });
 });
 

@@ -34,7 +34,8 @@ const MAX_ATTEMPTS = 5;
 const CODES_PER_EMAIL_10MIN = 3;
 const CODES_PER_DAY = 80; // login codes: headroom under the Resend free 100/day cap
 const MAIL_PER_DAY = 95; // all mail incl. review notices; hard ceiling below 100/day
-const MAX_DRAFTS_PER_USER = 50;
+const MAX_DRAFTS_PER_USER = 50; // active (not removed) drafts
+const MAX_ROWS_PER_USER = 500; // lifetime rows incl. removed ones, so remove/recreate loops cannot grow storage forever
 
 export const accountApp = new Hono<{ Bindings: AccountBindings; Variables: { user: { id: string; email: string; displayName: string | null } } }>();
 type Ctx = Context<{ Bindings: AccountBindings; Variables: { user: { id: string; email: string; displayName: string | null } } }>;
@@ -159,16 +160,20 @@ accountApp.post('/code', async (c) => {
   if (!c.env.RESEND_API_KEY) return page(c, 'Sign in', signInForm(banner('err', 'Sign-in email is not switched on yet.')), 503);
   const now = Date.now();
   await cleanupExpired(c.env.DB, now);
-  if (!(await reserveMail(c.env.DB, 'code', CODES_PER_DAY))) return page(c, 'Busy', signInForm(banner('err', 'Sign-in is busy right now. Please try again tomorrow.')), 503);
   const code = randomCode();
   const id = newId();
-  // One atomic statement: the per-email budget check and the insert cannot interleave.
+  // Per-email budget first (atomic INSERT ... SELECT ... WHERE count<3) so rejected retries never spend site budget.
   const ins = await c.env.DB.prepare(
     'INSERT INTO auth_codes (id,email,code_hash,expires_at,attempts,used,created_at) SELECT ?,?,?,?,0,0,? WHERE (SELECT count(*) FROM auth_codes WHERE email = ? AND created_at > ?) < ?',
   ).bind(id, email, await sha256Hex(`${email}:${code}`), now + CODE_TTL_MS, now, email, now - CODE_TTL_MS, CODES_PER_EMAIL_10MIN).run();
   if (ins.meta.changes !== 1) return page(c, 'Slow down', signInForm(banner('err', 'Too many codes requested for this email. Try again in a few minutes.')), 429);
-  // Only the newest code stays valid, so guesses cannot be spread over several live codes.
-  await c.env.DB.prepare('UPDATE auth_codes SET used = 1 WHERE email = ? AND id <> ? AND used = 0').bind(email, id).run();
+  // Then the site-wide daily mail budget (atomic conditional INSERT). No budget: the code is never sent, so kill it.
+  if (!(await reserveMail(c.env.DB, 'code', CODES_PER_DAY))) {
+    await c.env.DB.prepare('UPDATE auth_codes SET used = 1 WHERE id = ?').bind(id).run();
+    return page(c, 'Busy', signInForm(banner('err', 'Sign-in is busy right now. Please try again tomorrow.')), 503);
+  }
+  // Only the newest code stays valid. Order by insertion (rowid), so a concurrently issued newer code is never invalidated by an older request.
+  await c.env.DB.prepare('UPDATE auth_codes SET used = 1 WHERE email = ? AND used = 0 AND rowid < (SELECT rowid FROM auth_codes WHERE id = ?)').bind(email, id).run();
   const sent = await sendMail(c.env, { to: email, subject: `Your 2yolks code: ${code}`, text: `Your 2yolks sign-in code is ${code}.\n\nIt expires in 10 minutes. If you did not ask for it, ignore this email.\n` });
   if (!sent) {
     // No refund: delivery state is ambiguous, so the budget slot and per-email slot stay used. Invalidate the code.
@@ -185,7 +190,7 @@ accountApp.post('/verify', async (c) => {
   const code = str(form['code'], 12).trim();
   if (!email || !/^\d{6}$/.test(code)) return page(c, 'Check your email', codeForm(email ?? '', banner('err', 'Enter the 6-digit code.')), 400);
   const now = Date.now();
-  const row = await c.env.DB.prepare('SELECT id, code_hash AS hash FROM auth_codes WHERE email = ? AND used = 0 AND expires_at > ? AND attempts < ? ORDER BY created_at DESC LIMIT 1')
+  const row = await c.env.DB.prepare('SELECT id, code_hash AS hash FROM auth_codes WHERE email = ? AND used = 0 AND expires_at > ? AND attempts < ? ORDER BY rowid DESC LIMIT 1')
     .bind(email, now, MAX_ATTEMPTS).first<{ id: string; hash: string }>();
   if (!row) return page(c, 'Sign in', signInForm(banner('err', 'That code expired or was used up. Request a new one.')), 400);
   // Claim one attempt atomically; concurrent guesses cannot exceed the cap.
@@ -383,8 +388,6 @@ accountApp.post('/recipes/save', async (c) => {
     if (!owned) return page(c, 'Not found', banner('err', 'Draft not found.'), 404);
     if (owned.r.submittedAt || owned.l.status === 'published') return page(c, 'Submitted', banner('err', 'This recipe was already sent in for review.'), 409);
   } else {
-    const count = await D.prepare('SELECT count(*) AS n FROM recipes WHERE owner_user_id = ?').bind(user.id).first<{ n: number }>();
-    if ((count?.n ?? 0) >= MAX_DRAFTS_PER_USER) return page(c, 'Add a recipe', rf(c, s, [`You can keep up to ${MAX_DRAFTS_PER_USER} drafts. Remove one first.`]), 400);
     id = newId();
   }
   // Unique suffix is reserved first; the readable part is truncated, never the id. Titles that cannot slugify fall back to 'recipe'.
@@ -410,10 +413,10 @@ accountApp.post('/recipes/save', async (c) => {
     const sourceId = `src-${id}`;
     // The draft-count cap is checked inside the inserts themselves (same transaction), so
     // concurrent creates cannot overshoot it. Nothing is written when the cap is hit.
-    const room = '(SELECT count(*) FROM recipes WHERE owner_user_id = ?) < ?';
+    const room = "(SELECT count(*) FROM recipes r JOIN recipe_locales l ON l.recipe_id = r.id WHERE r.owner_user_id = ? AND l.status <> 'rejected') < ? AND (SELECT count(*) FROM recipes WHERE owner_user_id = ?) < ?";
     const res = await D.batch([
-      D.prepare(`INSERT INTO sources (id,name,url,license,cleared_at,notes) SELECT ?,?,?,?,NULL,? WHERE ${room}`).bind(sourceId, sub.source.name, sub.source.url, sub.source.license, 'user submission - rights review pending', user.id, MAX_DRAFTS_PER_USER),
-      D.prepare(`INSERT INTO recipes (id,source_id,origin_country,image_key,created_at,prep_minutes,cook_minutes,base_servings,owner_user_id,attested_at,author_name) SELECT ?,?,?,NULL,?,?,?,?,?,?,? WHERE ${room}`).bind(id, sourceId, sub.originCountry ?? null, now, prep, cook, serv, user.id, s.attest ? now : null, s.displayName, user.id, MAX_DRAFTS_PER_USER),
+      D.prepare(`INSERT INTO sources (id,name,url,license,cleared_at,notes) SELECT ?,?,?,?,NULL,? WHERE ${room}`).bind(sourceId, sub.source.name, sub.source.url, sub.source.license, 'user submission - rights review pending', user.id, MAX_DRAFTS_PER_USER, user.id, MAX_ROWS_PER_USER),
+      D.prepare(`INSERT INTO recipes (id,source_id,origin_country,image_key,created_at,prep_minutes,cook_minutes,base_servings,owner_user_id,attested_at,author_name) SELECT ?,?,?,NULL,?,?,?,?,?,?,? WHERE ${room}`).bind(id, sourceId, sub.originCountry ?? null, now, prep, cook, serv, user.id, s.attest ? now : null, s.displayName, user.id, MAX_DRAFTS_PER_USER, user.id, MAX_ROWS_PER_USER),
       D.prepare("INSERT INTO recipe_locales (recipe_id,country,lang,title,slug,intro,ingredients_json,steps_json,status) SELECT ?,?,?,?,?,?,?,?,'draft' WHERE EXISTS (SELECT 1 FROM recipes WHERE id = ?)").bind(id, loc.country, loc.lang, loc.title, slug, loc.intro ?? null, ing, stp, id),
       D.prepare('UPDATE users SET display_name = ? WHERE id = ?').bind(s.displayName, user.id),
     ]);
