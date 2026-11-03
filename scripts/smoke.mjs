@@ -127,7 +127,10 @@ try {
     check('dev mode: demo recipe page noindex meta', r.body.includes('noindex, nofollow'));
     check('hreflang exact equivalents + x-default', r.body.includes('hreflang="es-MX"') && r.body.includes('hreflang="en-US"') && r.body.includes('hreflang="x-default"'));
     check('hreflang uses pinned canonical origin', r.body.includes('https://2yolks.com/us/recipes/r1-ranch-eggs'));
-    check('interactive: scaler rendered with qty data', r.body.includes('class="scaler"') && r.body.includes('data-qty=') && r.body.includes('data-mult="0.5"'));
+    r = await get2('/mx/recipes/r3-pan-de-prueba');
+    check('units: toggle + metric default for mx, structured row rendered', r.status === 200 && r.body.includes('data-default-units="metric"') && r.body.includes('250 g harina') && r.body.includes('15 ml aceite') && r.body.includes('180\u00b0C'));
+    r = await get2('/mx/recipes/r1-huevos-rancheros');
+    check('interactive: scaler rendered with pre-rendered variants', r.body.includes('class="scaler"') && r.body.includes('class="line" data-v=') && r.body.includes('data-mult="0.5"'));
     check('interactive: ingredient checkboxes', r.body.includes('<input type="checkbox"'));
     check('interactive: cook mode overlay + data + client script', r.body.includes('data-cook-mode') && r.body.includes('id="cook-data"') && r.body.includes('wakeLock'));
     check('interactive: es cook-mode chrome', r.body.includes('Modo cocina') && r.body.includes('Ir a la receta'));
