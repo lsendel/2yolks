@@ -20,15 +20,24 @@ const ALIASES: Record<string, string> = {
   qt: 'qt', quart: 'qt', quarts: 'qt',
 };
 
-const LABELS: Record<string, Record<string, string>> = {
+const LABELS: Record<string, Record<string, [string, string]>> = {
   en: {},
-  es: { cup: 'taza', tbsp: 'cda.', tsp: 'cdta.', oz: 'oz', lb: 'lb' },
-  fr: { cup: 'tasse', tbsp: 'c. \u00e0 s.', tsp: 'c. \u00e0 c.' },
+  es: { cup: ['taza', 'tazas'], tbsp: ['cucharada', 'cucharadas'], tsp: ['cucharadita', 'cucharaditas'], oz: ['oz', 'oz'], lb: ['lb', 'lb'] },
+  fr: { cup: ['tasse', 'tasses'], tbsp: ['c. \u00e0 soupe', 'c. \u00e0 soupe'], tsp: ['c. \u00e0 caf\u00e9', 'c. \u00e0 caf\u00e9'] },
 };
 
 function label(unit: string, lang: string, qty = 1): string {
-  if (unit === 'cup' && qty > 1) return lang === 'es' ? 'tazas' : lang === 'fr' ? 'tasses' : 'cups';
-  return LABELS[lang]?.[unit] ?? unitInfo(unit)?.label ?? unit;
+  if (unit === 'cup' && qty > 1 && !LABELS[lang]?.cup) return 'cups';
+  const l = LABELS[lang]?.[unit];
+  if (l) return qty > 1 ? l[1] : l[0];
+  return unitInfo(unit)?.label ?? unit;
+}
+
+/** Spanish joins a measure and its ingredient with "de" ("2 cucharaditas de sal").
+ * Written-out text rows already carry it; structured names do not. */
+function joinText(lang: string, text: string): string {
+  if (lang !== 'es' || !text) return text;
+  return /^(de|del)\s/i.test(text) ? text : `de ${text}`;
 }
 
 /** Split a leading unit word off "cups all-purpose flour". */
@@ -59,7 +68,8 @@ function toLine(entry: IngredientEntry): Line {
   return { qty: s.qty, qtyEnd: s.qtyEnd ?? null, unit: s.unit && unitInfo(s.unit) ? s.unit : null, written: s.unit ?? '', text };
 }
 
-function asWritten(l: Line, mult: number): string {
+function asWritten(l: Line, mult: number, structured = false, lang = 'en'): string {
+  if (structured && l.unit) return label(l.unit, lang, (l.qtyEnd ?? l.qty ?? 1) * mult);
   const q = (l.qtyEnd ?? l.qty ?? 1) * mult;
   if (l.unit === 'cup' && /^(cup|taza|tasse)$/i.test(l.written)) return label('cup', /^taza$/i.test(l.written) ? 'es' : /^tasse$/i.test(l.written) ? 'fr' : 'en', q);
   return l.written || label(l.unit!, 'en');
@@ -80,14 +90,14 @@ export function renderIngredient(entry: IngredientEntry, lang: string, system: U
     return `${fmtRange(l.qty * mult, l.qtyEnd === null ? null : l.qtyEnd * mult)}${unitPart} ${l.text}`.trim();
   }
   const a = convertQuantity({ qty: l.qty * mult, unit: l.unit }, system);
-  if (!a) return `${fmtRange(l.qty * mult, l.qtyEnd === null ? null : l.qtyEnd * mult)} ${asWritten(l, mult)} ${l.text}`.trim();
+  if (!a) return `${fmtRange(l.qty * mult, l.qtyEnd === null ? null : l.qtyEnd * mult)} ${asWritten(l, mult, typeof entry !== 'string', lang)} ${typeof entry !== 'string' ? joinText(lang, l.text) : l.text}`.trim();
   if (l.qtyEnd !== null) {
     const b = convertQuantity({ qty: l.qtyEnd * mult, unit: l.unit }, system)!;
-    if (b.unit === a.unit) return `${fmtRange(a.qty, b.qty, system === 'metric')} ${label(a.unit, lang)} ${l.text}`.trim();
+    if (b.unit === a.unit) return `${fmtRange(a.qty, b.qty, system === 'metric')} ${label(a.unit, lang, b.qty)} ${typeof entry !== 'string' ? joinText(lang, l.text) : l.text}`.trim();
     // Range straddles two display units: keep the unit as written.
     return `${fmtRange(l.qty * mult, l.qtyEnd * mult)} ${l.written} ${l.text}`.trim();
   }
-  return `${system === 'metric' ? fmtRange(a.qty, null, true) : formatQty(a.qty)} ${label(a.unit, lang, a.qty)} ${l.text}`.trim();
+  return `${system === 'metric' ? fmtRange(a.qty, null, true) : formatQty(a.qty)} ${label(a.unit, lang, a.qty)} ${typeof entry !== 'string' ? joinText(lang, l.text) : l.text}`.trim();
 }
 
 export function isConvertible(entry: IngredientEntry, system: UnitSystem): boolean {
