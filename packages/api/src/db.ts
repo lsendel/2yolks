@@ -41,6 +41,8 @@ export const recipeLocales = sqliteTable(
     translationOf: text('translation_of'),
     translationMethod: text('translation_method'),
     translationReviewedAt: text('translation_reviewed_at'),
+    translationReviewedBy: text('translation_reviewed_by'),
+    translationReviewerKind: text('translation_reviewer_kind'),
   },
   (t) => [
     primaryKey({ columns: [t.country, t.lang, t.slug] }),

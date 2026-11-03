@@ -9,3 +9,7 @@ ALTER TABLE recipes ADD COLUMN tested_by TEXT;
 ALTER TABLE recipe_locales ADD COLUMN translation_of TEXT;
 ALTER TABLE recipe_locales ADD COLUMN translation_method TEXT;
 ALTER TABLE recipe_locales ADD COLUMN translation_reviewed_at TEXT;
+-- Who reviewed, derived server-side from the authenticated key (never caller-supplied), and the
+-- reviewer kind: 'human' or 'agent'. Reviews do not imply kitchen testing.
+ALTER TABLE recipe_locales ADD COLUMN translation_reviewed_by TEXT;
+ALTER TABLE recipe_locales ADD COLUMN translation_reviewer_kind TEXT;
