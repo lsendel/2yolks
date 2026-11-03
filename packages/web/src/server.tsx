@@ -85,7 +85,7 @@ ol.steps li { margin: 0.5rem 0; }
 .timer-display { font-size: 1.4rem; font-weight: 700; font-variant-numeric: tabular-nums; }
 `;
 
-const PIN_IMAGE_IDS = new Set<string>(["w1golumpki", "w1potsticker", "w1pozole", "w1enchiladas", "w1birria"]);
+const PIN_IMAGE_KEYS = new Set<string>(["w1golumpki:en", "w1potsticker:en", "w1pozole:es", "w1enchiladas:es", "w1birria:es"]);
 
 function shell(body: string, { title, alternates = [], jsonLd, noindex = false, og }: ShellOptions): string {
   const links = alternates
@@ -157,7 +157,7 @@ export function renderRecipe(page: RecipePage, alternates: { hreflang: string; h
   const self = alternates.find((a) => a.hreflang.toLowerCase() === `${page.locale.lang}-${page.locale.country}`.toLowerCase());
   const canonicalUrl = self?.href;
   // Title-only graphic (no food photo), built by scripts/build-pin-graphics.py. Only recipes with a built file get one.
-  const imageUrl = canonicalUrl && PIN_IMAGE_IDS.has(page.locale.recipeId) ? `${new URL(canonicalUrl).origin}/img/pin/${page.locale.recipeId}.png` : null;
+  const imageUrl = canonicalUrl && PIN_IMAGE_KEYS.has(`${page.locale.recipeId}:${page.locale.lang}`) ? `${new URL(canonicalUrl).origin}/img/pin/${page.locale.recipeId}.${page.locale.lang}.png` : null;
   const cookData = safeJsonLd({
     steps: JSON.parse(page.locale.stepsJson),
     strings: { timerDone: t.timerDone },

@@ -6,7 +6,8 @@ W, H = 1000, 1500
 data = json.load(open('packages/api/content/wave1.json'))
 FONT = '/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf'
 REG = '/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf'
-LABEL = {'en': 'NOT YET TESTED', 'es': 'AÚN NO PROBADA'}
+LABEL = {'en': 'NOT YET TESTED', 'es': 'AÚN NO PROBADA', 'fr': 'PAS ENCORE TESTÉE'}
+FOOT = {'en': 'This recipe has not been kitchen-tested by 2yolks.', 'es': 'Esta receta aún no ha sido probada en cocina por 2yolks.', 'fr': "Cette recette n’a pas encore été testée en cuisine par 2yolks."}
 COUNTRY = {'us': 'United States', 'mx': 'México'}
 for r in data['recipes']:
     img = Image.new('RGB', (W, H), '#fffbf5')
@@ -26,7 +27,9 @@ for r in data['recipes']:
     tw = d.textlength(lab, font=lf)
     d.rounded_rectangle([80, H - 400, 80 + tw + 64, H - 320], radius=40, fill='#fef3c7', outline='#fcd34d', width=3)
     d.text((112, H - 390), lab, font=lf, fill='#78350f')
-    d.text((80, H - 260), 'Written for 2yolks. No photo: nobody has cooked this yet.' if r['lang'] == 'en' else 'Escrita para 2yolks. Sin foto: aún nadie la ha cocinado.', font=ImageFont.truetype(REG, 34), fill='#57534e')
+    sf = ImageFont.truetype(REG, 34)
+    foot = FOOT.get(r['lang'], FOOT['en'])
+    d.text((80, H - 260), FOOT.get(r['lang'], FOOT['en']), font=ImageFont.truetype(REG, 34), fill='#57534e')
     d.text((80, H - 140), '2yolks.com', font=ImageFont.truetype(FONT, 64), fill='#c2410c')
-    img.save(f"packages/web/public/img/pin/{r['id']}.png", optimize=True)
+    img.save(f"packages/web/public/img/pin/{r['id']}.{r['lang']}.png", optimize=True)
     print(r['id'], len(lines), size)
