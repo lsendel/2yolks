@@ -37,3 +37,12 @@ describe('units', () => {
     expect(checkAllergens('2 eggs, 1 tbsp soy sauce', '2 huevos, 1 cucharada de salsa').ok).toBe(false);
   });
 });
+
+import { isUntested } from './index';
+describe('quality state', () => {
+  it('is untested unless a tested date is recorded', () => {
+    expect(isUntested({})).toBe(true);
+    expect(isUntested({ testedAt: null })).toBe(true);
+    expect(isUntested({ testedAt: '2026-11-20' })).toBe(false);
+  });
+});

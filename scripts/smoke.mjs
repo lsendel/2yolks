@@ -59,6 +59,7 @@ async function get(path, init) {
 // fresh local D1: migration + demo seeds
 execSync('rm -rf .wrangler');
 execSync('npx wrangler d1 execute 2yolks --local --file packages/api/migrations/0001_init.sql', { stdio: 'ignore' });
+execSync('npx wrangler d1 execute 2yolks --local --file packages/api/migrations/0003_quality_translation.sql', { stdio: 'ignore' });
 execSync('npx wrangler d1 execute 2yolks --local --file packages/api/seeds/0001_demo.sql', { stdio: 'ignore' });
 execSync('npx wrangler d1 execute 2yolks --local --file packages/api/seeds/0002_demo_malicious.sql', { stdio: 'ignore' });
 

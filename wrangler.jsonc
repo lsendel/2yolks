@@ -4,6 +4,7 @@
   "main": "packages/api/src/index.ts",
   "compatibility_date": "2026-10-30",
   "workers_dev": true,
+  "preview_urls": false,
   "vars": {
     "ALLOW_DEMO_SEED": "false",
     "CANONICAL_ORIGIN": "https://2yolks.com"

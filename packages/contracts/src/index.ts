@@ -180,10 +180,10 @@ export const COUNTRY_INTROS: Readonly<Record<string, { lang: string; text: strin
   mx: { lang: 'es', text: 'Recetas mexicanas escritas en espa\u00f1ol, con medidas en m\u00e9trico. Cada receta indica con claridad si ya se prob\u00f3 en cocina.' },
 };
 
-/** A recipe counts as untested until its source is a person-verified one.
- * Editorial drafts (license internal-original) have not been cooked. */
-export function isUntested(source: { license: string }): boolean {
-  return source.license === 'internal-original';
+/** Quality state is explicit per recipe: tested only when a person recorded
+ * a tested_at date. Never inferred from the source license. */
+export function isUntested(recipe: { testedAt?: string | null }): boolean {
+  return !recipe.testedAt;
 }
 
 // ---------------------------------------------------------------------------
@@ -439,6 +439,8 @@ export interface Recipe {
   originCountry: string | null;
   imageKey: string | null;
   createdAt: string;
+  testedAt?: string | null;
+  testedBy?: string | null;
 }
 
 export interface RecipeLocale {
@@ -453,6 +455,9 @@ export interface RecipeLocale {
   /** JSON array of step strings, in order. */
   stepsJson: string;
   status: RecipeStatus;
+  translationOf?: string | null;
+  translationMethod?: string | null;
+  translationReviewedAt?: string | null;
 }
 
 export interface RecipePage {

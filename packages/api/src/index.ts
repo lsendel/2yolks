@@ -175,7 +175,7 @@ const countryHome = async (c: Context<{ Bindings: Bindings }>) => {
   if (!country || country.wave === 0) return c.notFound();
   const db = createDb(c.env.DB);
   const rows = await db
-    .select({ slug: recipeLocales.slug, title: recipeLocales.title, id: recipeLocales.recipeId, lang: recipeLocales.lang, license: sources.license })
+    .select({ slug: recipeLocales.slug, title: recipeLocales.title, id: recipeLocales.recipeId, lang: recipeLocales.lang, testedAt: recipes.testedAt })
     .from(recipeLocales)
     .innerJoin(recipes, eq(recipeLocales.recipeId, recipes.id))
     .innerJoin(sources, eq(recipes.sourceId, sources.id))
@@ -184,7 +184,7 @@ const countryHome = async (c: Context<{ Bindings: Bindings }>) => {
     renderCountryHome({
       countryName: country.name,
       country: parsed.country,
-      recipes: rows.map((r) => ({ id: r.id, slug: r.slug, title: r.title, untested: isUntested({ license: r.license }), lang: r.lang })),
+      recipes: rows.map((r) => ({ id: r.id, slug: r.slug, title: r.title, untested: isUntested({ testedAt: r.testedAt }), lang: r.lang })),
     }),
     // Empty listings must not be indexed (thin-page gate).
     rows.length === 0 ? 200 : 200,
@@ -253,6 +253,8 @@ app.get('/:country/recipes/:idSlug', async (c) => {
       originCountry: canonical.recipes.originCountry,
       imageKey: canonical.recipes.imageKey,
       createdAt: canonical.recipes.createdAt,
+      testedAt: canonical.recipes.testedAt,
+      testedBy: canonical.recipes.testedBy,
     },
     locale: {
       recipeId: canonical.recipe_locales.recipeId,

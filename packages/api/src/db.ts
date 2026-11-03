@@ -18,6 +18,8 @@ export const recipes = sqliteTable('recipes', {
   originCountry: text('origin_country'),
   imageKey: text('image_key'),
   createdAt: text('created_at').notNull(),
+  testedAt: text('tested_at'),
+  testedBy: text('tested_by'),
 });
 
 export const recipeLocales = sqliteTable(
@@ -36,6 +38,9 @@ export const recipeLocales = sqliteTable(
     status: text('status', { enum: ['draft', 'published', 'rejected'] })
       .notNull()
       .default('draft'),
+    translationOf: text('translation_of'),
+    translationMethod: text('translation_method'),
+    translationReviewedAt: text('translation_reviewed_at'),
   },
   (t) => [
     primaryKey({ columns: [t.country, t.lang, t.slug] }),

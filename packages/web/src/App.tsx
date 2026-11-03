@@ -67,7 +67,7 @@ export function RecipeView({ page, alternates = [] }: { page: RecipePage; altern
   return (
     <main>
       <h1>{page.locale.title}</h1>
-      {isUntested(page.source) ? (
+      {isUntested(page.recipe) ? (
         <p className="untested" role="note">
           <span className="badge">{t.untestedBadge}</span> {t.untestedNote}{' '}
           <a href="/how-we-test">{t.howWeTest}</a>
