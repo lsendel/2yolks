@@ -648,32 +648,59 @@ export interface ParsedPath {
   country: string;
   /** Present only for explicit /{country}/{lang}/ paths of a registered, non-default locale. */
   lang?: string;
+  /** Legacy opaque id prefix; present only for the legacy
+   * /{country}/recipes/{id}-{slug} shape, never for clean slug-only URLs. */
   id?: string;
+  /** Full trailing recipe segment: the public slug on clean URLs, the whole
+   * {id}-{slug} segment on legacy URLs. */
   slug?: string;
+  /** The slug portion of a legacy {id}-{slug} path; undefined on clean URLs. */
+  legacySlug?: string;
 }
 
-/** Parse /{country}/ or /{country}/recipes/{id}-{slug}. Returns null when the
- * country is not registered or the shape does not match. */
+/** Split a recipe path segment into its clean and legacy readings. Every
+ * valid segment yields the full segment as `slug` (the clean-URL reading);
+ * segments with a hyphen additionally yield the legacy {id}-{slug} reading.
+ * Which reading applies is decided by lookup, not by the regex: the router
+ * tries the live slug first, then the legacy id. */
+function parseRecipeSegment(country: string, lang: string | undefined, segment: string): ParsedPath | null {
+  if (!SLUG_PATTERN.test(segment)) return null;
+  const base: ParsedPath = lang === undefined ? { country } : { country, lang };
+  const legacy = /^([a-z0-9]+)-([a-z0-9-]+)$/.exec(segment);
+  if (legacy) {
+    base.id = legacy[1];
+    base.slug = segment;
+    base.legacySlug = legacy[2];
+  } else {
+    base.slug = segment;
+  }
+  return base;
+}
+
+/** Parse /{country}/, /{country}/recipes/{slug} and the legacy
+ * /{country}/recipes/{id}-{slug} (plus the non-default-locale prefixed
+ * variants). Returns null when the country is not registered or the shape
+ * does not match. */
 export function parsePath(pathname: string): ParsedPath | null {
   const home = /^\/([a-z]{2})\/?$/.exec(pathname);
   if (home) {
     const country = home[1];
     return country && getCountry(country) ? { country } : null;
   }
-  const loc = /^\/([a-z]{2})\/([a-z]{2})\/recipes\/([a-z0-9]+)-([a-z0-9-]+)\/?$/.exec(pathname);
+  const loc = /^\/([a-z]{2})\/([a-z]{2})\/recipes\/([a-z0-9]+(?:-[a-z0-9]+)*)\/?$/.exec(pathname);
   if (loc) {
-    const [, country, lang, id, slug] = loc;
-    if (!country || !lang || !id || !slug || !getCountry(country)) return null;
+    const [, country, lang, segment] = loc;
+    if (!country || !lang || !segment || !getCountry(country)) return null;
     // Only registered, non-default locales have a prefixed URL; the default
-    // locale lives at the legacy path (no duplicate URLs).
+    // locale lives at the unprefixed path (no duplicate URLs).
     if (!localesFor(country).includes(lang) || lang === defaultLocale(country)) return null;
-    return { country, lang, id, slug };
+    return parseRecipeSegment(country, lang, segment);
   }
-  const rec = /^\/([a-z]{2})\/recipes\/([a-z0-9]+)-([a-z0-9-]+)\/?$/.exec(pathname);
+  const rec = /^\/([a-z]{2})\/recipes\/([a-z0-9]+(?:-[a-z0-9]+)*)\/?$/.exec(pathname);
   if (!rec) return null;
-  const [, country, id, slug] = rec;
-  if (!country || !id || !slug || !getCountry(country)) return null;
-  return { country, id, slug };
+  const [, country, segment] = rec;
+  if (!country || !segment || !getCountry(country)) return null;
+  return parseRecipeSegment(country, undefined, segment);
 }
 
 // ---------------------------------------------------------------------------

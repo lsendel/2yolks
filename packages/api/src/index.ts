@@ -335,52 +335,72 @@ app.get('/:country/', countryHome);
 
 const recipeRoute = async (c: Context<{ Bindings: Bindings }>) => {
   const parsed = parsePath(c.req.path);
-  if (!parsed?.id || !parsed.slug) return c.notFound();
+  if (!parsed?.slug) return c.notFound();
   const db = createDb(c.env.DB);
-  const rows = await db
-    .select()
-    .from(recipeLocales)
-    .innerJoin(recipes, eq(recipeLocales.recipeId, recipes.id))
-    .innerJoin(sources, eq(recipes.sourceId, sources.id))
-    .where(
+  const lang = parsed.lang ?? defaultLocale(parsed.country) ?? '';
+  const localeRows = () =>
+    db
+      .select()
+      .from(recipeLocales)
+      .innerJoin(recipes, eq(recipeLocales.recipeId, recipes.id))
+      .innerJoin(sources, eq(recipes.sourceId, sources.id));
+
+  // Clean slug-only URLs (/{country}/recipes/{slug}) resolve against the live
+  // slug table first: the full trailing segment is the slug.
+  let canonical = (
+    await localeRows().where(
+      and(
+        eq(recipeLocales.country, parsed.country),
+        eq(recipeLocales.slug, parsed.slug),
+        eq(recipeLocales.lang, lang),
+        published(db, demoAllowed(c)),
+      ),
+    )
+  )[0];
+
+  if (!canonical && parsed.id && parsed.legacySlug) {
+    // Legacy /{country}/recipes/{id}-{slug} shape.
+    const legacyRows = await localeRows().where(
       and(
         eq(recipeLocales.country, parsed.country),
         eq(recipeLocales.recipeId, parsed.id),
-        eq(recipeLocales.lang, parsed.lang ?? defaultLocale(parsed.country) ?? ''),
+        eq(recipeLocales.lang, lang),
         published(db, demoAllowed(c)),
       ),
     );
-  const canonical = rows.find((r) => r.recipe_locales.slug === parsed.slug);
-  if (!canonical) {
-    // Stale/wrong slug: 301 only when exactly one visible locale row exists
-    // for this recipe+country (no unordered guesses).
-    const target = rows.length === 1 ? rows[0] : undefined;
-    if (!target) return c.notFound();
-    return c.redirect(
-      recipePathFor(parsed.country, target.recipe_locales.lang, parsed.id, target.recipe_locales.slug),
-      301,
-    );
+    canonical = legacyRows.find((r) => r.recipe_locales.slug === parsed.legacySlug);
+    if (!canonical) {
+      // Stale/wrong slug: 301 only when exactly one visible locale row exists
+      // for this recipe+country (no unordered guesses).
+      const target = legacyRows.length === 1 ? legacyRows[0] : undefined;
+      if (!target) return c.notFound();
+      return c.redirect(
+        recipePathFor(parsed.country, target.recipe_locales.lang, parsed.id, target.recipe_locales.slug),
+        301,
+      );
+    }
   }
+  if (!canonical) return c.notFound();
+  const recipeId = canonical.recipe_locales.recipeId;
 
-  // hreflang alternates: exact content equivalents of this same recipe only.
   const alternatesRows = await db
     .select({ country: recipeLocales.country, lang: recipeLocales.lang, slug: recipeLocales.slug })
     .from(recipeLocales)
     .innerJoin(recipes, eq(recipeLocales.recipeId, recipes.id))
     .innerJoin(sources, eq(recipes.sourceId, sources.id))
-    .where(and(eq(recipeLocales.recipeId, parsed.id), published(db, demoAllowed(c))));
+    .where(and(eq(recipeLocales.recipeId, recipeId), published(db, demoAllowed(c))));
   const origin = c.env.CANONICAL_ORIGIN ?? new URL(c.req.url).origin;
   const defaultLang = defaultLocale(parsed.country);
   const alternates = alternatesRows.map((a) => ({
     hreflang: `${a.lang}-${a.country.toUpperCase()}`,
-    href: `${origin}${recipePathFor(a.country, a.lang, parsed.id ?? '', a.slug)}`,
+    href: `${origin}${recipePathFor(a.country, a.lang, recipeId, a.slug)}`,
   }));
   // x-default points at the default-locale version when one exists.
   const def = alternatesRows.find((a) => a.country === parsed.country && a.lang === defaultLang);
   if (def) {
     alternates.push({
       hreflang: 'x-default',
-      href: `${origin}${recipePathFor(def.country, def.lang, parsed.id ?? '', def.slug)}`,
+      href: `${origin}${recipePathFor(def.country, def.lang, recipeId, def.slug)}`,
     });
   }
 
@@ -391,14 +411,14 @@ const recipeRoute = async (c: Context<{ Bindings: Bindings }>) => {
   const heroRows = await db
     .select({ id: recipeImages.id, style: recipeImages.style })
     .from(recipeImages)
-    .where(and(eq(recipeImages.recipeId, parsed.id), eq(recipeImages.kind, 'hero'), isNotNull(recipeImages.clearedAt)))
+    .where(and(eq(recipeImages.recipeId, recipeId), eq(recipeImages.kind, 'hero'), isNotNull(recipeImages.clearedAt)))
     .orderBy(desc(recipeImages.createdAt))
     .limit(1);
   // Cleared step images, latest first so the newest row per step wins.
   const stepRows = await db
     .select({ id: recipeImages.id, style: recipeImages.style, stepIndex: recipeImages.stepIndex })
     .from(recipeImages)
-    .where(and(eq(recipeImages.recipeId, parsed.id), eq(recipeImages.kind, 'step'), isNotNull(recipeImages.clearedAt)))
+    .where(and(eq(recipeImages.recipeId, recipeId), eq(recipeImages.kind, 'step'), isNotNull(recipeImages.clearedAt)))
     .orderBy(desc(recipeImages.createdAt));
   // Aligned to the page locale's steps array by 0-based index; steps without
   // an image stay null.

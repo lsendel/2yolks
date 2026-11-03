@@ -34,7 +34,7 @@ describe('wave 1 editorial drafts', () => {
   it('has ids and slugs that round-trip through the public URL parser', () => {
     for (const r of data.recipes) {
       expect(r.id).toMatch(/^[a-z0-9]+$/);
-      expect(parsePath(recipePath(r.country, r.id, r.slug))).toEqual({ country: r.country, id: r.id, slug: r.slug });
+      expect(parsePath(recipePath(r.country, r.id, r.slug))).toEqual({ country: r.country, id: r.id, slug: `${r.id}-${r.slug}`, legacySlug: r.slug });
     }
   });
   it('pairs the 145F whole-meat minimum with the 3-minute rest', () => {

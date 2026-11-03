@@ -987,6 +987,18 @@ function newId(): string {
   return crypto.randomUUID().slice(0, 8).toLowerCase();
 }
 
+/** Frozen-map guard (migration 0005): a slug that ever served publicly stays
+ * reserved for that recipe permanently - never updated, never deleted, and
+ * never claimable by another recipe. Returns the reserving recipe id when a
+ * different recipe holds it, else null. */
+async function slugReservedByOther(ctx: CallCtx, country: string, lang: string, slug: string, recipeId: string): Promise<string | null> {
+  const row = await ctx.db
+    .prepare('SELECT recipe_id FROM recipe_slug_aliases WHERE country = ? AND lang = ? AND slug = ?')
+    .bind(country, lang, slug)
+    .first<{ recipe_id: string }>();
+  return row && row.recipe_id !== recipeId ? row.recipe_id : null;
+}
+
 function str(v: unknown, max: number): string | null {
   return typeof v === 'string' && v.length > 0 && v.length <= max ? v : null;
 }
@@ -1090,6 +1102,18 @@ async function callRecipesCreateDraft(ctx: CallCtx, args: Record<string, unknown
     return { status: 200, data: { dry_run: true, ok: true, locales: sub.locales.length } };
   }
   const id = newId();
+  // Frozen-map reservation (migration 0005): a slug that served publicly for
+  // another recipe can never be claimed again.
+  for (const l of sub.locales) {
+    const claimSlug = l.slug ?? slugify(l.title);
+    const holder = await slugReservedByOther(ctx, l.country, l.lang, claimSlug, id);
+    if (holder) {
+      return {
+        status: 409,
+        data: { error: 'slug is reserved by an earlier public URL of another recipe', country: l.country, lang: l.lang, slug: claimSlug },
+      };
+    }
+  }
   const sourceId = `src-${id}`;
   const now = new Date().toISOString();
   const statements = [
@@ -1383,6 +1407,14 @@ async function callRecipesAddLocale(ctx: CallCtx, args: Record<string, unknown>)
   const slug = str(l['slug'], 200) ?? slugify(title);
   if (!SLUG_PATTERN.test(slug)) return { status: 400, data: { error: 'invalid slug' } };
   if (ctx.dryRun) return { status: 200, data: { dry_run: true, ok: true, id, locale: `${country}/${lang}` } };
+  // Frozen-map reservation (migration 0005), same rule as create_draft.
+  const aliasHolder = await slugReservedByOther(ctx, country, lang, slug, id);
+  if (aliasHolder) {
+    return {
+      status: 409,
+      data: { error: 'slug is reserved by an earlier public URL of another recipe', country, lang, slug },
+    };
+  }
   try {
     await ctx.db.batch([
       ctx.db
@@ -1553,15 +1585,30 @@ async function callStatusChange(
     return { status: 200, data: { dry_run: true, ok: true, id, would_set: target, matching_locales: matchedCount } };
   }
   const bind: unknown[] = country ? [target, id, country, lang] : [target, id];
+  const statements = [];
+  if (kind === 'recipe' && target === 'draft') {
+    // Frozen map (migration 0005): slugs leaving the sitemap are reserved
+    // permanently so their old URLs keep resolving and can never be claimed
+    // by another recipe. Runs before the status update inside the same
+    // atomic batch so it reads the pre-update published slugs.
+    statements.push(
+      ctx.db
+        .prepare(
+          `INSERT OR IGNORE INTO recipe_slug_aliases (country, lang, slug, recipe_id) SELECT country, lang, slug, recipe_id FROM recipe_locales WHERE recipe_id = ? AND status = '${from}'${scope}`,
+        )
+        .bind(...countBind),
+    );
+  }
   // Content mutation and audit row commit in one atomic batch.
-  await ctx.db.batch([
+  statements.push(
     ctx.db.prepare(`UPDATE ${table} SET status = ? WHERE ${fk} = ? AND status = '${from}'${scope}`).bind(...bind),
     auditStmt(ctx, tool, id, {
       locales_changed: matchedCount,
       ...(country ? { country, lang } : {}),
       ...(kind === 'blog' && target === 'published' ? { review: args['review'] } : {}),
     }),
-  ]);
+  );
+  await ctx.db.batch(statements);
   return { status: 200, data: { id, status: target, locales_changed: matchedCount } };
 }
 
