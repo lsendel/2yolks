@@ -70,6 +70,8 @@ export function shareLinks(url: string, title: string, imageUrl?: string | null)
   return links;
 }
 
+const LANG_NAMES: Record<string, string> = { en: 'English', es: 'Espa\u00f1ol', fr: 'Fran\u00e7ais' };
+
 export function RecipeView({ page, alternates = [], canonicalUrl, imageUrl }: { page: RecipePage; alternates?: { hreflang: string; href: string }[]; canonicalUrl?: string; imageUrl?: string | null }) {
   const t = uiStrings(page.locale.lang);
   const entries = JSON.parse(page.locale.ingredientsJson) as IngredientEntry[];
@@ -102,7 +104,7 @@ export function RecipeView({ page, alternates = [], canonicalUrl, imageUrl }: { 
         <p className="langs">
           {others.map((a) => (
             <a key={a.hreflang} href={a.href} hrefLang={a.hreflang}>
-              {a.hreflang}
+              {LANG_NAMES[a.hreflang.split('-')[0]] ?? a.hreflang}
             </a>
           ))}
         </p>

@@ -43,7 +43,8 @@ main { max-width: 42rem; margin: 0 auto; padding: 1.5rem 1rem 3rem; }
 .cards a { display: block; background: var(--card); border: 1px solid #e7e5e4; border-radius: 0.5rem; padding: 0.75rem 1rem; text-decoration: none; color: var(--ink); font-weight: 600; }
 .cards a:hover { border-color: var(--brand); }
 .recipe-source { color: var(--muted); font-size: 0.9rem; border-top: 1px solid #e7e5e4; margin-top: 2rem; padding-top: 1rem; }
-.langs { font-size: 0.9rem; color: var(--muted); }
+.langs { font-size: 0.9rem; color: var(--muted); display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; }
+.langs a { display: inline-flex; align-items: center; min-height: 44px; }
 .recipe-actions { display: flex; flex-wrap: wrap; gap: 0.5rem 0.75rem; align-items: center; margin: 0.5rem 0 1rem; }
 main img { max-width: 100%; height: auto; }
 h1 { overflow-wrap: break-word; }
