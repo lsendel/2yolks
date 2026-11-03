@@ -674,6 +674,14 @@ export interface RecipeLocale {
   translationReviewerKind?: string | null;
 }
 
+/** A served recipe image reference: absolute URL on this origin plus the
+ * honest-imagery label. Only rights-confirmed (cleared_at) images are ever
+ * resolved into these refs. */
+export interface RecipeImageRef {
+  url: string;
+  style: RecipeImageStyle;
+}
+
 export interface RecipePage {
   recipe: Recipe;
   locale: RecipeLocale;
@@ -681,7 +689,11 @@ export interface RecipePage {
   /** Rights-tracked hero image (recipe_images, migration 0004), already
    * resolved to an absolute serving URL. null when none is set; renderers
    * fall back to the title graphic or no image. */
-  heroImage?: { url: string; style: RecipeImageStyle } | null;
+  heroImage?: RecipeImageRef | null;
+  /** Rights-tracked step images (migration 0004), aligned to the locale's
+   * steps array by 0-based index; null entries are steps without an image.
+   * Same serving URL shape as heroImage. */
+  stepImages?: (RecipeImageRef | null)[];
 }
 export * from './units';
 export * from './render';

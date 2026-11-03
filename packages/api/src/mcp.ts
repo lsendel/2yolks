@@ -317,7 +317,7 @@ const TOOLS: ToolDef[] = [
   {
     name: 'recipes.set_image',
     description:
-      'Attach a rights-tracked image to a recipe: hero (default) or one step (kind + stepIndex). Binary upload only via imageBase64 - jpeg/png/webp, max ~3MB, type and dimensions verified server-side; no SVG, no URL fetching. Rights metadata required: sourceName, sourceUrl (https://), license, and style (photo|illustration|graphic) as the honest-imagery label. A new hero replaces the current hero (nothing is deleted; latest wins) and updates recipes.image_key. Served at /img/recipe/<image_id> only while the recipe has a published, rights-cleared locale. Executes only with confirmed: true; otherwise validates as a dry run.',
+      'Attach a rights-tracked image to a recipe: hero (default) or one step (kind + stepIndex). Binary upload only via imageBase64 - jpeg/png/webp, max ~3MB, 4096px and 16MP; the file must parse end-to-end as its type (full JPEG marker walk to a terminal EOI, PNG chunk CRCs plus a capped IDAT inflate, exact WebP RIFF length), so truncated, malformed and polyglot files are rejected; no SVG, no URL fetching. Provenance metadata required: sourceName, sourceUrl (https://), license, and style (photo|illustration|graphic) as the honest-imagery label. Provenance is NOT clearance: the call must also carry rightsConfirmed: true, asserting the license was actually verified to permit this use; the image is stamped cleared_at and served at /img/recipe/<image_id> only while cleared AND the recipe has a published, rights-cleared locale. A new hero replaces the current hero (nothing is deleted; latest wins) and updates recipes.image_key. Executes only with confirmed: true; otherwise validates as a dry run.',
     role: 'admin',
     inputSchema: {
       type: 'object',
@@ -330,8 +330,9 @@ const TOOLS: ToolDef[] = [
         sourceUrl: { type: 'string' },
         license: { type: 'string' },
         style: { type: 'string' },
+        rightsConfirmed: { type: 'boolean' },
       },
-      required: ['id', 'imageBase64', 'sourceName', 'sourceUrl', 'license', 'style'],
+      required: ['id', 'imageBase64', 'sourceName', 'sourceUrl', 'license', 'style', 'rightsConfirmed'],
     },
   },
   {
@@ -517,13 +518,18 @@ function readProvenance(l: Record<string, unknown>): { of?: string; method?: str
 // --- Image validation (recipes.set_image) -------------------------------------
 // Bytes arrive base64 inside the JSON-RPC call; there is deliberately no
 // URL-fetch mode, so the worker never makes a server-side request to a
-// caller-supplied address (no SSRF). The image type is detected from magic
-// bytes and dimensions are parsed from headers - caller-asserted mime is
-// never trusted, and types we cannot verify (SVG, avif, gif, ...) are
-// rejected rather than passed through.
+// caller-supplied address (no SSRF). Validation is structural, not a
+// magic-byte sniff: an accepted file must parse END-TO-END as its detected
+// type - JPEG markers walked to a terminal EOI, PNG chunks walked with CRC32
+// verification to a final IEND with the IDAT stream inflated within a
+// computed size cap (decompression bombs fail here), WebP RIFF length
+// reconciled exactly. Truncated, malformed, dimension-capped, or
+// trailing-byte (polyglot) files are rejected, as are types we cannot
+// verify (SVG, avif, gif, ...).
 const MAX_IMAGE_BASE64 = 4_200_000; // ~3.1 MB decoded
 const MAX_IMAGE_BYTES = 3 * 1024 * 1024;
-const MAX_IMAGE_DIM = 8000;
+const MAX_IMAGE_DIM = 4096;
+const MAX_IMAGE_PIXELS = 16_777_216; // bounds any decoder to ~64 MB RGBA
 const IMAGE_STYLES = new Set(['photo', 'illustration', 'graphic']);
 
 function decodeBase64(b64: string): Uint8Array | null {
@@ -541,60 +547,224 @@ function decodeBase64(b64: string): Uint8Array | null {
 
 type ImageInfo = { mime: string; ext: string; width: number; height: number };
 
-function sniffImage(b: Uint8Array): ImageInfo | null {
-  // PNG: signature + IHDR width/height (big-endian) at bytes 16-24.
-  if (b.length > 24 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47 && b[4] === 0x0d && b[5] === 0x0a && b[6] === 0x1a && b[7] === 0x0a) {
-    const width = ((b[16]! << 24) | (b[17]! << 16) | (b[18]! << 8) | b[19]!) >>> 0;
-    const height = ((b[20]! << 24) | (b[21]! << 16) | (b[22]! << 8) | b[23]!) >>> 0;
-    return width > 0 && height > 0 ? { mime: 'image/png', ext: 'png', width, height } : null;
+function dimsOk(width: number, height: number): boolean {
+  return (
+    Number.isInteger(width) &&
+    Number.isInteger(height) &&
+    width > 0 &&
+    height > 0 &&
+    width <= MAX_IMAGE_DIM &&
+    height <= MAX_IMAGE_DIM &&
+    width * height <= MAX_IMAGE_PIXELS
+  );
+}
+
+// PNG CRC-32 (ISO-HDLC), table-driven.
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? (0xedb88320 ^ (c >>> 1)) >>> 0 : c >>> 1;
+    t[n] = c >>> 0;
   }
-  // JPEG: FFD8FF, then scan segments for a start-of-frame marker.
-  if (b.length > 4 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) {
-    let i = 2;
-    while (i + 9 < b.length) {
-      if (b[i] !== 0xff) return null;
-      const marker = b[i + 1]!;
-      if (marker === 0xd8 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) {
-        i += 2;
-        continue;
+  return t;
+})();
+
+function crc32(b: Uint8Array): number {
+  let c = 0xffffffff;
+  for (let i = 0; i < b.length; i++) c = (CRC_TABLE[(c ^ b[i]!) & 0xff]! ^ (c >>> 8)) >>> 0;
+  return (c ^ 0xffffffff) >>> 0;
+}
+
+// Inflate a zlib stream, answering false on any stream error or the moment
+// the decoded size passes cap - a bomb never gets to expand fully.
+async function inflateWithinCap(deflated: Uint8Array, cap: number): Promise<boolean> {
+  try {
+    const ds = new DecompressionStream('deflate');
+    const stream = new Blob([deflated as BlobPart]).stream().pipeThrough(ds);
+    const reader = stream.getReader();
+    let total = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) return true;
+      total += (value as Uint8Array).byteLength;
+      if (total > cap) {
+        await reader.cancel('decompressed size cap exceeded');
+        return false;
       }
-      const len = (b[i + 2]! << 8) | b[i + 3]!;
-      if (len < 2) return null;
-      const isSof = marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc;
-      if (isSof) {
-        const height = (b[i + 5]! << 8) | b[i + 6]!;
-        const width = (b[i + 7]! << 8) | b[i + 8]!;
-        return width > 0 && height > 0 ? { mime: 'image/jpeg', ext: 'jpg', width, height } : null;
-      }
-      i += 2 + len;
     }
-    return null;
+  } catch {
+    return false;
   }
-  // WebP: RIFF....WEBP with VP8 / VP8L / VP8X dimension encodings.
-  if (
-    b.length > 30 &&
-    b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 &&
-    b[8] === 0x57 && b[9] === 0x45 && b[10] === 0x42 && b[11] === 0x50
-  ) {
-    const fourcc = String.fromCharCode(b[12]!, b[13]!, b[14]!, b[15]!);
+}
+
+// JPEG: SOI, marker segments (in any order), SOS entropy scans, terminal
+// EOI with zero trailing bytes. One frame (SOF) only.
+function validateJpeg(b: Uint8Array): ImageInfo | null {
+  if (b.length < 4 || b[0] !== 0xff || b[1] !== 0xd8) return null;
+  let i = 2;
+  let info: ImageInfo | null = null;
+  let markers = 0;
+  while (i < b.length) {
+    if (++markers > 10000) return null;
+    if (b[i] !== 0xff) return null;
+    while (i < b.length && b[i] === 0xff) i++; // fill bytes before a marker
+    if (i >= b.length) return null;
+    const marker = b[i]!;
+    i++;
+    if (marker === 0x00) return null; // stuffed byte outside entropy data
+    if (marker === 0xd9) return i === b.length ? info : null; // EOI: terminal only
+    if (marker === 0xd8 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) continue; // standalone
+    if (i + 2 > b.length) return null;
+    const len = (b[i]! << 8) | b[i + 1]!;
+    if (len < 2 || i + len > b.length) return null;
+    if (marker === 0xda) {
+      // SOS: header, then entropy-coded data until the next real marker.
+      i += len;
+      for (;;) {
+        if (i >= b.length) return null; // truncated entropy data
+        if (b[i] !== 0xff) {
+          i++;
+          continue;
+        }
+        let j = i + 1;
+        while (j < b.length && b[j] === 0xff) j++;
+        if (j >= b.length) return null;
+        const m = b[j]!;
+        if (m === 0x00 || (m >= 0xd0 && m <= 0xd7)) {
+          i = j + 1; // stuffed 0xFF00 or restart marker: still entropy data
+          continue;
+        }
+        i = j - 1; // real marker: resume marker parsing at its 0xFF prefix
+        break;
+      }
+      continue;
+    }
+    const isSof = marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc;
+    if (isSof) {
+      if (info) return null; // exactly one frame
+      if (len < 8) return null;
+      const height = (b[i + 3]! << 8) | b[i + 4]!;
+      const width = (b[i + 5]! << 8) | b[i + 6]!;
+      if (!dimsOk(width, height)) return null;
+      info = { mime: 'image/jpeg', ext: 'jpg', width, height };
+    }
+    i += len;
+  }
+  return null; // end of data without EOI
+}
+
+const PNG_SIG = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+const PNG_CHANNELS: Record<number, number> = { 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 };
+const PNG_DEPTHS: Record<number, number[]> = { 0: [1, 2, 4, 8, 16], 2: [8, 16], 3: [1, 2, 4, 8], 4: [8, 16], 6: [8, 16] };
+
+// PNG: signature, chunk walk with per-chunk CRC32, IHDR first and exactly
+// once, at least one IDAT, IEND last with zero trailing bytes, and the
+// concatenated IDAT zlib stream must inflate within the computed bound.
+async function validatePng(b: Uint8Array): Promise<ImageInfo | null> {
+  if (b.length < 8 || !PNG_SIG.every((v, k) => b[k] === v)) return null;
+  let pos = 8;
+  let info: ImageInfo | null = null;
+  let idatCap = 0;
+  let sawIdat = false;
+  const idatParts: Uint8Array[] = [];
+  let chunks = 0;
+  for (;;) {
+    if (++chunks > 10000) return null;
+    if (pos + 12 > b.length) return null; // truncated chunk
+    const len = ((b[pos]! << 24) | (b[pos + 1]! << 16) | (b[pos + 2]! << 8) | b[pos + 3]!) >>> 0;
+    if (len > b.length - pos - 12) return null;
+    const type = String.fromCharCode(b[pos + 4]!, b[pos + 5]!, b[pos + 6]!, b[pos + 7]!);
+    if (!/^[A-Za-z]{4}$/.test(type)) return null;
+    const crc = ((b[pos + 8 + len]! << 24) | (b[pos + 9 + len]! << 16) | (b[pos + 10 + len]! << 8) | b[pos + 11 + len]!) >>> 0;
+    if (crc32(b.subarray(pos + 4, pos + 8 + len)) !== crc) return null; // CRC covers type + data
+    if (type === 'IHDR') {
+      if (info !== null || pos !== 8 || len !== 13) return null; // first chunk, exactly once
+      const width = ((b[pos + 8]! << 24) | (b[pos + 9]! << 16) | (b[pos + 10]! << 8) | b[pos + 11]!) >>> 0;
+      const height = ((b[pos + 12]! << 24) | (b[pos + 13]! << 16) | (b[pos + 14]! << 8) | b[pos + 15]!) >>> 0;
+      const depth = b[pos + 16]!;
+      const color = b[pos + 17]!;
+      if (b[pos + 18]! !== 0 || b[pos + 19]! !== 0 || b[pos + 20]! > 1) return null; // compression/filter/interlace
+      const channels = PNG_CHANNELS[color];
+      const depths = PNG_DEPTHS[color];
+      if (!channels || !depths?.includes(depth)) return null;
+      if (!dimsOk(width, height)) return null;
+      // Decoded bound: height * (1 filter byte + rowBytes), plus slack for
+      // Adam7's extra per-pass filter bytes. Past this is a bomb.
+      const rowBytes = Math.ceil((width * channels * depth) / 8);
+      idatCap = rowBytes * height + 8 * height + 64;
+      info = { mime: 'image/png', ext: 'png', width, height };
+    } else if (type === 'IDAT') {
+      if (!info) return null;
+      sawIdat = true;
+      idatParts.push(b.subarray(pos + 8, pos + 8 + len));
+    } else if (type === 'IEND') {
+      if (!info || !sawIdat || len !== 0) return null;
+      if (pos + 12 !== b.length) return null; // trailing bytes: polyglot
+      let total = 0;
+      for (const p of idatParts) total += p.length;
+      const idat = new Uint8Array(total);
+      let off = 0;
+      for (const p of idatParts) {
+        idat.set(p, off);
+        off += p.length;
+      }
+      return (await inflateWithinCap(idat, idatCap)) ? info : null;
+    }
+    pos += 12 + len;
+  }
+}
+
+// WebP: RIFF size must equal the file size exactly, chunks walk with
+// even-byte padding, exactly one still-image stream (VP8/VP8L) or a VP8X
+// canvas; animated files (ANIM/ANMF) are not stills and are rejected.
+function validateWebp(b: Uint8Array): ImageInfo | null {
+  if (b.length < 20 || b[0] !== 0x52 || b[1] !== 0x49 || b[2] !== 0x46 || b[3] !== 0x46) return null;
+  const riffLen = (b[4]! | (b[5]! << 8) | (b[6]! << 16) | (b[7]! << 24)) >>> 0;
+  if (riffLen !== b.length - 8) return null; // exact size: no trailing/polyglot
+  if (b[8] !== 0x57 || b[9] !== 0x45 || b[10] !== 0x42 || b[11] !== 0x50) return null;
+  let pos = 12;
+  let info: ImageInfo | null = null;
+  let chunks = 0;
+  while (pos < b.length) {
+    if (++chunks > 1000) return null;
+    if (pos + 8 > b.length) return null;
+    const fourcc = String.fromCharCode(b[pos]!, b[pos + 1]!, b[pos + 2]!, b[pos + 3]!);
+    const size = (b[pos + 4]! | (b[pos + 5]! << 8) | (b[pos + 6]! << 16) | (b[pos + 7]! << 24)) >>> 0;
+    if (pos + 8 + size > b.length) return null;
+    const d = pos + 8;
     if (fourcc === 'VP8 ') {
-      const width = (b[26]! | (b[27]! << 8)) & 0x3fff;
-      const height = (b[28]! | (b[29]! << 8)) & 0x3fff;
-      return width > 0 && height > 0 ? { mime: 'image/webp', ext: 'webp', width, height } : null;
-    }
-    if (fourcc === 'VP8L') {
-      const bits = (b[21]! | (b[22]! << 8) | (b[23]! << 16) | (b[24]! << 24)) >>> 0;
+      if (info || size < 10) return null;
+      if (b[d + 3] !== 0x9d || b[d + 4] !== 0x01 || b[d + 5] !== 0x2a) return null; // frame start code
+      const width = (b[d + 6]! | (b[d + 7]! << 8)) & 0x3fff;
+      const height = (b[d + 8]! | (b[d + 9]! << 8)) & 0x3fff;
+      if (!dimsOk(width, height)) return null;
+      info = { mime: 'image/webp', ext: 'webp', width, height };
+    } else if (fourcc === 'VP8L') {
+      if (info || size < 5 || b[d] !== 0x2f) return null; // signature byte
+      const bits = (b[d + 1]! | (b[d + 2]! << 8) | (b[d + 3]! << 16) | (b[d + 4]! << 24)) >>> 0;
       const width = (bits & 0x3fff) + 1;
       const height = ((bits >>> 14) & 0x3fff) + 1;
-      return width > 0 && height > 0 ? { mime: 'image/webp', ext: 'webp', width, height } : null;
+      if (!dimsOk(width, height)) return null;
+      info = { mime: 'image/webp', ext: 'webp', width, height };
+    } else if (fourcc === 'VP8X') {
+      if (info || size < 10) return null;
+      const width = (b[d + 4]! | (b[d + 5]! << 8) | (b[d + 6]! << 16)) + 1;
+      const height = (b[d + 7]! | (b[d + 8]! << 8) | (b[d + 9]! << 16)) + 1;
+      if (!dimsOk(width, height)) return null;
+      info = { mime: 'image/webp', ext: 'webp', width, height };
+    } else if (fourcc === 'ANIM' || fourcc === 'ANMF') {
+      return null;
     }
-    if (fourcc === 'VP8X') {
-      const width = (b[24]! | (b[25]! << 8) | (b[26]! << 16)) + 1;
-      const height = (b[27]! | (b[28]! << 8) | (b[29]! << 16)) + 1;
-      return width > 0 && height > 0 ? { mime: 'image/webp', ext: 'webp', width, height } : null;
-    }
-    return null;
+    pos = d + size + (size % 2);
   }
+  return info;
+}
+
+async function validateImage(b: Uint8Array): Promise<ImageInfo | null> {
+  if (b.length > 2 && b[0] === 0xff && b[1] === 0xd8) return validateJpeg(b);
+  if (b.length > 8 && b[0] === 0x89 && b[1] === 0x50) return validatePng(b);
+  if (b.length > 12 && b[0] === 0x52 && b[1] === 0x49) return validateWebp(b);
   return null;
 }
 
@@ -637,12 +807,15 @@ async function callRecipesSetImage(ctx: CallCtx, args: Record<string, unknown>):
   const bytes = decodeBase64(b64);
   if (!bytes || bytes.length === 0) return { status: 400, data: { error: 'imageBase64 is not valid base64' } };
   if (bytes.length > MAX_IMAGE_BYTES) return { status: 400, data: { error: 'image too large', max_bytes: MAX_IMAGE_BYTES } };
-  const info = sniffImage(bytes);
+  const info = await validateImage(bytes);
   if (!info) {
-    return { status: 400, data: { error: 'unsupported or unreadable image: jpeg/png/webp with readable dimensions required; SVG and other unverifiable types are rejected' } };
-  }
-  if (info.width > MAX_IMAGE_DIM || info.height > MAX_IMAGE_DIM) {
-    return { status: 400, data: { error: 'image dimensions too large', max_dim: MAX_IMAGE_DIM, width: info.width, height: info.height } };
+    return {
+      status: 400,
+      data: {
+        error:
+          'unsupported or unreadable image: a well-formed jpeg/png/webp within 4096px and 16MP is required; the file must parse end-to-end as its type (truncated, malformed, CRC-bad, oversized and trailing-byte polyglot files are rejected); SVG and other unverifiable types are rejected',
+      },
+    };
   }
 
   // Rights metadata is mandatory, mirroring the text-source model. The
@@ -656,6 +829,20 @@ async function callRecipesSetImage(ctx: CallCtx, args: Record<string, unknown>):
   }
   if (!style || !IMAGE_STYLES.has(style)) {
     return { status: 400, data: { error: "style must be 'photo', 'illustration' or 'graphic'" } };
+  }
+  // Provenance metadata records where the image came from; it is NOT
+  // clearance. Serving additionally requires this explicit assertion that
+  // someone verified the license permits this use. The stamp (cleared_at)
+  // is what the public route gates on.
+  const rightsConfirmed = args['rightsConfirmed'] ?? args['rights_confirmed'];
+  if (rightsConfirmed !== true) {
+    return {
+      status: 400,
+      data: {
+        error:
+          'rightsConfirmed: true required - provenance metadata is not clearance; assert that the license was actually verified to permit serving this image',
+      },
+    };
   }
 
   if (ctx.dryRun) {
@@ -674,7 +861,7 @@ async function callRecipesSetImage(ctx: CallCtx, args: Record<string, unknown>):
   const stmts = [
     ctx.db
       .prepare(
-        'INSERT INTO recipe_images (id, recipe_id, kind, step_index, r2_key, mime, bytes, width, height, style, source_name, source_url, license) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO recipe_images (id, recipe_id, kind, step_index, r2_key, mime, bytes, width, height, style, source_name, source_url, license, cleared_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime(\'now\'))',
       )
       .bind(imageId, id, kind, stepIndex, r2Key, info.mime, bytes.length, info.width, info.height, style, sourceName, sourceUrl, license),
     // A new hero becomes the recipe's current hero; older rows stay (nothing
@@ -701,7 +888,7 @@ async function callRecipesSetImage(ctx: CallCtx, args: Record<string, unknown>):
       height: info.height,
       style,
       url_path: `/img/recipe/${imageId}`,
-      note: 'served publicly only while the recipe has a published, rights-cleared locale',
+      note: 'served publicly only while rights-cleared (cleared_at) and the recipe has a published, rights-cleared locale; edge/browser caches may keep it up to 5 minutes after unpublish',
     },
   };
 }
@@ -905,6 +1092,10 @@ async function callRecipesUpdateDraft(ctx: CallCtx, args: Record<string, unknown
   const id = str(args['id'], 64);
   const locales = args['locales'];
   if (!id) return { status: 400, data: { error: 'id required' } };
+  // Fail loudly on an unknown recipe so a mistyped backfill id can never
+  // report success on a no-op write.
+  const recipeExists = await ctx.db.prepare('SELECT id FROM recipes WHERE id = ?').bind(id).first();
+  if (!recipeExists) return { status: 404, data: { error: 'recipe not found', id } };
   const hasLocaleUpdates = Array.isArray(locales) && locales.length > 0;
   if (!hasLocaleUpdates) {
     // A call without locale edits is valid only when it carries recipe-level

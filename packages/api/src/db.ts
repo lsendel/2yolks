@@ -46,6 +46,7 @@ export const recipeImages = sqliteTable(
     sourceName: text('source_name').notNull(),
     sourceUrl: text('source_url').notNull(),
     license: text('license').notNull(),
+    clearedAt: text('cleared_at'),
     createdAt: text('created_at').notNull(),
   },
   (t) => [index('idx_recipe_images_recipe').on(t.recipeId)],

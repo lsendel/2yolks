@@ -72,17 +72,26 @@ Both shapes are accepted and behave identically:
 
 - `recipes.set_image` (admin, `confirmed: true`): attaches a rights-tracked
   image to a recipe. `kind` is `hero` (default) or `step` (with `stepIndex`).
-  Binary upload only via `imageBase64`: jpeg/png/webp, max ~3 MB, type and
-  dimensions verified server-side from magic bytes and headers - no SVG, and
-  no URL-fetch mode, so the worker never makes a server-side request to a
-  caller-supplied address.
-- Rights metadata is mandatory: `sourceName`, `sourceUrl` (https://),
+  Binary upload only via `imageBase64`: jpeg/png/webp, max ~3 MB, 4096px and
+  16MP. Validation is structural, not a magic-byte sniff: the file must parse
+  end-to-end as its type (full JPEG marker walk to a terminal EOI, PNG chunk
+  CRC32 checks plus a capped IDAT inflate so decompression bombs fail, exact
+  WebP RIFF length) - truncated, malformed and trailing-byte polyglot files
+  are rejected, as is SVG, and there is no URL-fetch mode, so the worker
+  never makes a server-side request to a caller-supplied address.
+- Provenance metadata is mandatory: `sourceName`, `sourceUrl` (https://),
   `license`, plus `style` (`photo` | `illustration` | `graphic`) as the
-  honest-imagery label. A new hero replaces the current hero (nothing is
-  deleted; the latest hero wins) and updates `recipes.image_key`.
-- Images are served at `/img/recipe/<image_id>` (long-cache) only while the
-  recipe has at least one published, rights-cleared locale - the same public
-  visibility rule as the recipe page. `recipes.get` returns a recipe's image
+  honest-imagery label. Provenance is NOT clearance: the call must also carry
+  `rightsConfirmed: true`, asserting the license was actually verified to
+  permit this use; the row is then stamped `cleared_at`. A new hero replaces
+  the current hero (nothing is deleted; the latest hero wins) and updates
+  `recipes.image_key`.
+- Images are served at `/img/recipe/<image_id>` only while the image is
+  rights-cleared (`cleared_at` set) AND the recipe has at least one
+  published, rights-cleared locale - the same public visibility rule as the
+  recipe page. Responses cache for 5 minutes (`public, max-age=300`), so an
+  unpublish takes effect within that bound; 404s are `no-store`. `recipes.get`
+  returns a recipe's image
   rows.
 
 ## Rules

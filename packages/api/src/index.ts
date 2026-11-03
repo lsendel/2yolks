@@ -182,22 +182,26 @@ app.get('/sitemap.xml', async (c) => {
 
 // --- Recipe images (migration 0004) ------------------------------------------
 // Registered before the /:country catch-alls so they cannot shadow it.
-// Serves rights-tracked R2 images by their recipe_images row id. Same public
-// visibility rule as the recipe page itself: only while the recipe has at
-// least one published, rights-cleared locale. No arbitrary R2 keys: only rows
-// recorded through recipes.set_image are served. Plain 404s (never the
-// HTML/ASSETS not-found path): this is a binary endpoint.
+// Serves rights-tracked R2 images by their recipe_images row id. Two gates,
+// both mandatory: the image row itself must be rights-cleared (cleared_at -
+// recorded provenance alone is NOT clearance) AND the recipe must have at
+// least one published, rights-cleared locale (same visibility rule as the
+// recipe page). No arbitrary R2 keys: only rows recorded through
+// recipes.set_image are served. Plain 404s (never the HTML/ASSETS not-found
+// path): this is a binary endpoint.
 app.get('/img/recipe/:imageId', async (c) => {
+  // 404s are never cached: a visibility flip must not stick at the edge.
+  const notFound = () => c.text('not found', 404, { 'cache-control': 'no-store' });
   const images = c.env.IMAGES;
-  if (!images) return c.text('not found', 404);
+  if (!images) return notFound();
   const db = createDb(c.env.DB);
   const rows = await db
-    .select({ r2Key: recipeImages.r2Key, mime: recipeImages.mime, recipeId: recipeImages.recipeId })
+    .select({ r2Key: recipeImages.r2Key, mime: recipeImages.mime, recipeId: recipeImages.recipeId, clearedAt: recipeImages.clearedAt })
     .from(recipeImages)
     .where(eq(recipeImages.id, c.req.param('imageId')))
     .limit(1);
   const img = rows[0];
-  if (!img) return c.text('not found', 404);
+  if (!img || !img.clearedAt) return notFound();
   const visible = await db
     .select({ slug: recipeLocales.slug })
     .from(recipeLocales)
@@ -205,13 +209,17 @@ app.get('/img/recipe/:imageId', async (c) => {
     .innerJoin(sources, eq(recipes.sourceId, sources.id))
     .where(and(eq(recipeLocales.recipeId, img.recipeId), published(db, demoAllowed(c))))
     .limit(1);
-  if (visible.length === 0) return c.text('not found', 404);
+  if (visible.length === 0) return notFound();
   const obj = await images.get(img.r2Key);
-  if (!obj) return c.text('not found', 404);
+  if (!obj) return notFound();
   return new Response(obj.body, {
     headers: {
       'content-type': img.mime,
-      'cache-control': 'public, max-age=31536000, immutable',
+      // Content for an image id never changes (a new upload is a new id), but
+      // visibility flips with publish state - an immutable year-long cache
+      // would keep serving unpublished images. max-age=300 bounds staleness
+      // to 5 minutes, matching the draft/private visibility promise.
+      'cache-control': 'public, max-age=300',
     },
   });
 });
@@ -318,14 +326,37 @@ const recipeRoute = async (c: Context<{ Bindings: Bindings }>) => {
     });
   }
 
-  // Latest rights-tracked hero image, if any (migration 0004). The page
-  // renderer falls back to the title graphic when this is null.
+  // Latest rights-cleared hero image, if any (migration 0004). The page
+  // renderer falls back to the title graphic when this is null. Uncleared
+  // rows (recorded provenance without the rightsConfirmed stamp) never reach
+  // the page.
   const heroRows = await db
     .select({ id: recipeImages.id, style: recipeImages.style })
     .from(recipeImages)
-    .where(and(eq(recipeImages.recipeId, parsed.id), eq(recipeImages.kind, 'hero')))
+    .where(and(eq(recipeImages.recipeId, parsed.id), eq(recipeImages.kind, 'hero'), isNotNull(recipeImages.clearedAt)))
     .orderBy(desc(recipeImages.createdAt))
     .limit(1);
+  // Cleared step images, latest first so the newest row per step wins.
+  const stepRows = await db
+    .select({ id: recipeImages.id, style: recipeImages.style, stepIndex: recipeImages.stepIndex })
+    .from(recipeImages)
+    .where(and(eq(recipeImages.recipeId, parsed.id), eq(recipeImages.kind, 'step'), isNotNull(recipeImages.clearedAt)))
+    .orderBy(desc(recipeImages.createdAt));
+  // Aligned to the page locale's steps array by 0-based index; steps without
+  // an image stay null.
+  let stepCount = 0;
+  try {
+    const stepsParsed: unknown = JSON.parse(canonical.recipe_locales.stepsJson);
+    stepCount = Array.isArray(stepsParsed) ? stepsParsed.length : 0;
+  } catch {
+    stepCount = 0;
+  }
+  const stepImages: NonNullable<RecipePage['stepImages']> = Array.from({ length: stepCount }, () => null);
+  for (const row of stepRows) {
+    const idx = row.stepIndex ?? -1;
+    if (idx < 0 || idx >= stepCount || stepImages[idx]) continue;
+    stepImages[idx] = { url: `${origin}/img/recipe/${row.id}`, style: row.style };
+  }
   const page: RecipePage = {
     recipe: {
       id: canonical.recipes.id,
@@ -343,6 +374,7 @@ const recipeRoute = async (c: Context<{ Bindings: Bindings }>) => {
       category: (canonical.recipes.category ?? null) as RecipePage['recipe']['category'],
     },
     heroImage: heroRows[0] ? { url: `${origin}/img/recipe/${heroRows[0].id}`, style: heroRows[0].style } : null,
+    stepImages,
     locale: {
       recipeId: canonical.recipe_locales.recipeId,
       country: canonical.recipe_locales.country,

@@ -824,7 +824,31 @@ describe('MCP structured ingredients and translation provenance (contracts, migr
 // and dimensions from headers, never the caller's claim).
 const PNG_1X1 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
 const GIF_1X1 = 'R0lGODdhAQABAIAAAP///////ywAAAAAAQABAAACAkQBADs=';
-const IMAGE_META = { sourceName: '2yolks test', sourceUrl: 'https://example.com/img', license: 'CC0-1.0', style: 'graphic' };
+// 2x2 red jpeg and lossy webp, produced by ffmpeg.
+const JPG_2X2 =
+  '/9j/4AAQSkZJRgABAgAAAQABAAD//gARTGF2YzU4LjEzNC4xMDAA/9sAQwAIBAQEBAQFBQUFBQUGBgYGBgYGBgYGBgYGBwcHCAgIBwcHBgYHBwgICAgJCQkICAgICQkKCgoMDAsLDg4OEREU/8QATAABAQAAAAAAAAAAAAAAAAAAAAYBAQEAAAAAAAAAAAAAAAAAAAYHEAEAAAAAAAAAAAAAAAAAAAAAEQEAAAAAAAAAAAAAAAAAAAAA/8AAEQgAAgACAwEiAAIRAAMRAP/aAAwDAQACEQMRAD8AiwBRf3//2Q==';
+const WEBP_2X2 = 'UklGRjwAAABXRUJQVlA4IDAAAADQAQCdASoCAAIAAgA0JaACdLoB+AADsAD+8Oj3/yC5YXXI1/8gP+QH/ID/+PIAAAA=';
+const IMAGE_META = { sourceName: '2yolks test', sourceUrl: 'https://example.com/img', license: 'CC0-1.0', style: 'graphic', rightsConfirmed: true };
+
+function b64bytes(b64: string): Uint8Array {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function bytesB64(b: Uint8Array): string {
+  let s = '';
+  for (const x of b) s += String.fromCharCode(x);
+  return btoa(s);
+}
+/** Concatenated copy, for trailing-bytes (polyglot) variants. */
+function withTrailing(b64: string, trailing: number[]): string {
+  const b = b64bytes(b64);
+  const out = new Uint8Array(b.length + trailing.length);
+  out.set(b);
+  out.set(trailing, b.length);
+  return bytesB64(out);
+}
 
 describe('structured times, servings and category (migration 0004)', () => {
   beforeEach(() => {
@@ -892,6 +916,12 @@ describe('structured times, servings and category (migration 0004)', () => {
     const recipe2 = got2.data?.['recipe'] as Record<string, unknown>;
     expect(recipe2['prep_minutes']).toBeNull();
     expect(recipe2['category']).toBeNull();
+  });
+
+  it('404s update_draft on an unknown recipe id instead of a silent no-op', async () => {
+    const res = await toolCall(EDITOR_KEY, 'recipes.update_draft', { id: 'recipe-nope', confirmed: true, prepMinutes: 5 });
+    expect(res.isError).toBe(true);
+    expect((res.data as { error: string }).error).toBe('recipe not found');
   });
 
   it('accepts {d:} duration tokens in steps and rejects malformed ones', async () => {
@@ -966,7 +996,7 @@ describe('recipes.set_image (migration 0004)', () => {
     const served = await app.request(`https://2yolks.com/img/recipe/${imageId}`, {}, env(DB));
     expect(served.status).toBe(200);
     expect(served.headers.get('content-type')).toBe('image/png');
-    expect(served.headers.get('cache-control')).toContain('immutable');
+    expect(served.headers.get('cache-control')).toBe('public, max-age=300');
     const body = new Uint8Array(await served.arrayBuffer());
     expect(body.length).toBeGreaterThan(0);
   });
@@ -990,5 +1020,73 @@ describe('recipes.set_image (migration 0004)', () => {
     // step images do not touch the hero pointer
     const got = await toolCall(READ_KEY, 'recipes.get', { id });
     expect((got.data?.['recipe'] as Record<string, unknown>)['image_key']).toBeNull();
+  });
+
+  it('rejects provenance without the explicit rightsConfirmed assertion', async () => {
+    const id = await draftId();
+    const meta = { sourceName: IMAGE_META.sourceName, sourceUrl: IMAGE_META.sourceUrl, license: IMAGE_META.license, style: IMAGE_META.style };
+    const missing = await toolCall(ADMIN_KEY, 'recipes.set_image', { id, imageBase64: PNG_1X1, ...meta, confirmed: true });
+    expect(missing.isError).toBe(true);
+    expect(JSON.stringify(missing.data)).toMatch(/rightsConfirmed/);
+    const explicitFalse = await toolCall(ADMIN_KEY, 'recipes.set_image', { id, imageBase64: PNG_1X1, ...meta, rightsConfirmed: false, confirmed: true });
+    expect(explicitFalse.isError).toBe(true);
+    const dryMissing = await toolCall(ADMIN_KEY, 'recipes.set_image', { id, imageBase64: PNG_1X1, ...meta });
+    expect(dryMissing.isError).toBe(true);
+    expect(R2.objects.size).toBe(0);
+    const rows = await DB.prepare('SELECT count(*) AS n FROM recipe_images').first<{ n: number }>();
+    expect(rows?.n).toBe(0);
+  });
+
+  it('validates jpeg and webp structure end-to-end and rejects polyglots', async () => {
+    const id = await draftId();
+    const jpg = await toolCall(ADMIN_KEY, 'recipes.set_image', { id, imageBase64: JPG_2X2, ...IMAGE_META, confirmed: true });
+    expect(jpg.isError).toBe(false);
+    expect(jpg.data?.['mime']).toBe('image/jpeg');
+    expect(jpg.data?.['width']).toBe(2);
+    const webp = await toolCall(ADMIN_KEY, 'recipes.set_image', { id, kind: 'step', stepIndex: 0, imageBase64: WEBP_2X2, ...IMAGE_META, confirmed: true });
+    expect(webp.isError).toBe(false);
+    expect(webp.data?.['mime']).toBe('image/webp');
+
+    // trailing payload after a terminal EOI / RIFF end: polyglot, rejected
+    const jpgPoly = await toolCall(ADMIN_KEY, 'recipes.set_image', { id, imageBase64: withTrailing(JPG_2X2, [0x3c, 0x73, 0x63, 0x72, 0x69, 0x70, 0x74, 0x3e]), ...IMAGE_META, confirmed: true });
+    expect(jpgPoly.isError).toBe(true);
+    expect(JSON.stringify(jpgPoly.data)).toMatch(/unsupported or unreadable/);
+    const webpPoly = await toolCall(ADMIN_KEY, 'recipes.set_image', { id, imageBase64: withTrailing(WEBP_2X2, [0x00]), ...IMAGE_META, confirmed: true });
+    expect(webpPoly.isError).toBe(true);
+    // truncated jpeg (EOI stripped): malformed, rejected
+    const truncated = b64bytes(JPG_2X2).slice(0, -2);
+    const jpgTrunc = await toolCall(ADMIN_KEY, 'recipes.set_image', { id, imageBase64: bytesB64(truncated), ...IMAGE_META, confirmed: true });
+    expect(jpgTrunc.isError).toBe(true);
+  });
+
+  it('rejects png trailing bytes and crc-corrupted chunks', async () => {
+    const id = await draftId();
+    const poly = await toolCall(ADMIN_KEY, 'recipes.set_image', { id, imageBase64: withTrailing(PNG_1X1, [0x3c, 0x73, 0x63, 0x72, 0x69, 0x70, 0x74, 0x3e]), ...IMAGE_META, confirmed: true });
+    expect(poly.isError).toBe(true);
+    expect(JSON.stringify(poly.data)).toMatch(/unsupported or unreadable/);
+    // flip one byte inside the IDAT data (offset 45 of the 70-byte fixture): CRC mismatch
+    const corrupted = b64bytes(PNG_1X1);
+    corrupted[45] = corrupted[45]! ^ 0xff;
+    const badCrc = await toolCall(ADMIN_KEY, 'recipes.set_image', { id, imageBase64: bytesB64(corrupted), ...IMAGE_META, confirmed: true });
+    expect(badCrc.isError).toBe(true);
+    expect(JSON.stringify(badCrc.data)).toMatch(/unsupported or unreadable/);
+  });
+
+  it('never serves an image whose rights were not confirmed, even once published', async () => {
+    const id = await draftId();
+    // an uncleared row (no cleared_at) with real bytes in the bucket
+    await R2.put('recipes/uncleared.png', b64bytes(PNG_1X1));
+    await DB.prepare(
+      "INSERT INTO recipe_images (id, recipe_id, kind, r2_key, mime, bytes, width, height, style, source_name, source_url, license) VALUES ('img-uncleared', ?, 'hero', 'recipes/uncleared.png', 'image/png', 70, 1, 1, 'graphic', '2yolks test', 'https://example.com/img', 'CC0-1.0')",
+    )
+      .bind(id)
+      .run();
+    const list = await toolCall(READ_KEY, 'recipes.get', { id });
+    const sourceId = (list.data?.['source'] as Record<string, unknown>)['id'] as string;
+    await toolCall(ADMIN_KEY, 'sources.clear_rights', { id: sourceId, confirmed: true, notes: 'CC0 verified' });
+    await toolCall(ADMIN_KEY, 'recipes.publish', { id, confirmed: true });
+    const res = await app.request('https://2yolks.com/img/recipe/img-uncleared', {}, env(DB));
+    expect(res.status).toBe(404);
+    expect(res.headers.get('cache-control')).toBe('no-store');
   });
 });

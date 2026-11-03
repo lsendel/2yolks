@@ -18,6 +18,9 @@ ALTER TABLE recipes ADD COLUMN category TEXT;
 -- the honest-imagery distinction (photo of a real dish vs labeled generated
 -- illustration vs text-only graphic). Nothing is deleted: a replacement
 -- image is a new row; the latest row per (recipe, kind[, step]) wins.
+-- Recorded provenance is NOT clearance: an image is served publicly only
+-- while cleared_at is set (recipes.set_image rightsConfirmed assertion) AND
+-- the recipe has a published, rights-cleared locale.
 CREATE TABLE recipe_images (
   id          TEXT PRIMARY KEY,
   recipe_id   TEXT NOT NULL REFERENCES recipes(id),
@@ -32,6 +35,7 @@ CREATE TABLE recipe_images (
   source_name TEXT NOT NULL,
   source_url  TEXT NOT NULL,
   license     TEXT NOT NULL,              -- SPDX id, or 'unknown' / 'proprietary'
+  cleared_at  TEXT,                         -- rightsConfirmed stamp; NULL = recorded, not cleared to serve
   created_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX idx_recipe_images_recipe ON recipe_images(recipe_id);
