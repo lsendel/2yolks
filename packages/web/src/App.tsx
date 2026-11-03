@@ -1,5 +1,6 @@
 import type { RecipePage } from '@2yolks/contracts';
-import { countryPath, recipePath, uiStrings, parseIngredient, formatQty, scalingIsSafe, isUntested, COUNTRY_INTROS, defaultLocale } from '@2yolks/contracts';
+import type { IngredientEntry } from '@2yolks/contracts';
+import { SCALE_MULTIPLIERS, defaultUnitSystem, renderIngredient, renderStep, ingredientVariants, stepVariants, isConvertible, hasStepTokens, countryPath, recipePath, uiStrings, parseIngredient, formatQty, scalingIsSafe, isUntested, COUNTRY_INTROS, defaultLocale } from '@2yolks/contracts';
 
 export interface HomeProps {
   locales: { country: string; countryName: string; lang: string }[];
@@ -51,7 +52,6 @@ export function CountryHome({ countryName, country, recipes }: CountryHomeProps)
   );
 }
 
-const MULTIPLIERS = [0.5, 1, 2, 3];
 
 /** Plain share links: no SDKs, no tracking scripts. Pinterest needs a real
  * image URL (media), so it only appears when one exists. */
@@ -72,19 +72,22 @@ export function shareLinks(url: string, title: string, imageUrl?: string | null)
 
 export function RecipeView({ page, alternates = [], canonicalUrl, imageUrl }: { page: RecipePage; alternates?: { hreflang: string; href: string }[]; canonicalUrl?: string; imageUrl?: string | null }) {
   const t = uiStrings(page.locale.lang);
-  const ingredients = (JSON.parse(page.locale.ingredientsJson) as string[]).map((raw) => ({
-    raw,
-    parsed: parseIngredient(raw),
-  }));
+  const entries = JSON.parse(page.locale.ingredientsJson) as IngredientEntry[];
   const steps = JSON.parse(page.locale.stepsJson) as string[];
+  const lang = page.locale.lang;
+  const sys = defaultUnitSystem(page.locale.country);
+  const plainIngredients = entries.map((e) => (typeof e === 'string' ? e : e.name));
   const others = alternates.filter((a) => a.hreflang !== 'x-default' && !a.hreflang.startsWith(page.locale.lang + '-'));
   const hasQty =
-    ingredients.some((i) => i.parsed.qty !== null) &&
-    scalingIsSafe(ingredients.map((i) => i.raw), steps);
+    entries.some((e) => (typeof e === 'string' ? parseIngredient(e).qty !== null : e.qty !== null)) &&
+    scalingIsSafe(plainIngredients, steps.filter((s) => !/\{[ti]:/.test(s)));
+  const mults = hasQty ? SCALE_MULTIPLIERS : ([1] as const);
+  const unitsMatter =
+    entries.some((e) => isConvertible(e, 'metric') || isConvertible(e, 'us')) || hasStepTokens(steps);
   return (
     <main>
       <h1>{page.locale.title}</h1>
-      {isUntested(page.source) ? (
+      {isUntested(page.recipe) ? (
         <p className="untested" role="note">
           <span className="badge">{t.untestedBadge}</span> {t.untestedNote}{' '}
           <a href="/how-we-test">{t.howWeTest}</a>
@@ -116,7 +119,7 @@ export function RecipeView({ page, alternates = [], canonicalUrl, imageUrl }: { 
         {hasQty ? (
           <div className="scaler" role="group" aria-label={t.servings}>
             <span className="scaler-label">{t.servings}:</span>
-            {MULTIPLIERS.map((m) => (
+            {SCALE_MULTIPLIERS.map((m) => (
               <button
                 key={m}
                 type="button"
@@ -128,30 +131,31 @@ export function RecipeView({ page, alternates = [], canonicalUrl, imageUrl }: { 
             ))}
           </div>
         ) : null}
+        {unitsMatter ? (
+          <div className="unit-toggle" role="group" aria-label={t.units} data-default-units={sys}>
+            <span className="scaler-label">{t.units}:</span>
+            <button type="button" data-units="metric">{t.unitsMetric}</button>
+            <button type="button" data-units="us">{t.unitsUs}</button>
+          </div>
+        ) : null}
         <ul className="ingredients">
-          {ingredients.map(({ raw, parsed }) => (
-            <li key={raw}>
+          {entries.map((e, i) => (
+            <li key={i}>
               <label>
                 <input type="checkbox" />
-                {parsed.qty !== null ? (
-                  <>
-                    <span className="qty" data-qty={parsed.qty} data-qty-end={parsed.qtyEnd ?? ''}>
-                      {formatQty(parsed.qty)}
-                      {parsed.qtyEnd !== null ? `-${formatQty(parsed.qtyEnd)}` : ''}
-                    </span>{' '}
-                    <span className="rest">{parsed.rest}</span>
-                  </>
-                ) : (
-                  <span className="rest">{raw}</span>
-                )}
+                <span className="line" data-v={JSON.stringify(ingredientVariants(e, lang, mults))}>
+                  {renderIngredient(e, lang, sys, 1)}
+                </span>
               </label>
             </li>
           ))}
         </ul>
         <h2>{t.steps}</h2>
         <ol className="steps">
-          {steps.map((s) => (
-            <li key={s}>{s}</li>
+          {steps.map((st, i) => (
+            <li key={i} data-v={hasStepTokens([st]) ? JSON.stringify(stepVariants(st, entries, lang, mults)) : undefined}>
+              {renderStep(st, entries, lang, sys, 1)}
+            </li>
           ))}
         </ol>
       </section>

@@ -16,6 +16,7 @@ import {
 import { renderHome, renderCountryHome, renderRecipe, renderAbout, renderHowWeTest, renderNotFound } from '@2yolks/web/server';
 import { isUntested } from '@2yolks/contracts';
 import { createDb, recipes, recipeLocales, sources } from './db';
+import { mcpApp } from './mcp';
 
 type Bindings = {
   DB: D1Database;
@@ -29,6 +30,12 @@ type Bindings = {
   /** Pinned canonical origin for absolute URLs (hreflang, JSON-LD).
    * Never derive from the request Host header. */
   CANONICAL_ORIGIN?: string;
+  /** Admin MCP bearer (shared directory admin key). Unset = MCP closed (503). */
+  ADMIN_MCP_API_KEY?: string;
+  /** Optional read-only MCP bearer. */
+  MCP_READ_KEY?: string;
+  /** Optional JSON array of per-agent keys: [{"name","key","role"}]. */
+  MCP_NAMED_KEYS?: string;
 };
 
 const DEMO_LICENSE = 'internal-demo';
@@ -175,7 +182,7 @@ const countryHome = async (c: Context<{ Bindings: Bindings }>) => {
   if (!country || country.wave === 0) return c.notFound();
   const db = createDb(c.env.DB);
   const rows = await db
-    .select({ slug: recipeLocales.slug, title: recipeLocales.title, id: recipeLocales.recipeId, lang: recipeLocales.lang, license: sources.license })
+    .select({ slug: recipeLocales.slug, title: recipeLocales.title, id: recipeLocales.recipeId, lang: recipeLocales.lang, testedAt: recipes.testedAt })
     .from(recipeLocales)
     .innerJoin(recipes, eq(recipeLocales.recipeId, recipes.id))
     .innerJoin(sources, eq(recipes.sourceId, sources.id))
@@ -184,7 +191,7 @@ const countryHome = async (c: Context<{ Bindings: Bindings }>) => {
     renderCountryHome({
       countryName: country.name,
       country: parsed.country,
-      recipes: rows.map((r) => ({ id: r.id, slug: r.slug, title: r.title, untested: isUntested({ license: r.license }), lang: r.lang })),
+      recipes: rows.map((r) => ({ id: r.id, slug: r.slug, title: r.title, untested: isUntested({ testedAt: r.testedAt }), lang: r.lang })),
     }),
     // Empty listings must not be indexed (thin-page gate).
     rows.length === 0 ? 200 : 200,
@@ -253,6 +260,8 @@ app.get('/:country/recipes/:idSlug', async (c) => {
       originCountry: canonical.recipes.originCountry,
       imageKey: canonical.recipes.imageKey,
       createdAt: canonical.recipes.createdAt,
+      testedAt: canonical.recipes.testedAt,
+      testedBy: canonical.recipes.testedBy,
     },
     locale: {
       recipeId: canonical.recipe_locales.recipeId,
@@ -324,10 +333,16 @@ app.post('/api/v1/submissions', async (c) => {
       ingredientsJson: JSON.stringify(l.ingredients),
       stepsJson: JSON.stringify(l.steps),
       status: 'draft' as const,
+      translationOf: l.translationOf ?? null,
+      translationMethod: l.translationMethod ?? null,
     })),
   );
   return c.json({ id, status: 'draft' }, 201);
 });
+
+// --- Admin MCP (agent content tools) -----------------------------------------
+// Fail-closed: with no keys configured the mount answers 503. See mcp.ts.
+app.route('/api/admin/mcp', mcpApp);
 
 app.all('/api/*', (c) => c.json({ error: 'not found' }, 404));
 

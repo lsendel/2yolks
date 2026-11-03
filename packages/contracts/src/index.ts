@@ -12,6 +12,8 @@
 // approved platform plan; wave 0 = registered, not yet scheduled.
 // ---------------------------------------------------------------------------
 
+import { isStructured, unitInfo, checkTranslation, checkStructuredTranslation, checkAllergens, ingredientText, type IngredientEntry } from './units';
+
 export interface Country {
   /** ISO 3166-1 alpha-2, lowercase. Used as the first URL segment. */
   code: string;
@@ -139,6 +141,9 @@ export interface UiStrings {
   copyLink: string;
   linkCopied: string;
   shareEmail: string;
+  units: string;
+  unitsMetric: string;
+  unitsUs: string;
 }
 
 const UI_STRINGS: Record<string, UiStrings> = {
@@ -152,6 +157,7 @@ const UI_STRINGS: Record<string, UiStrings> = {
     about: 'About', howWeTest: 'How we test and label recipes', print: 'Print', home: 'Home',
     tagline: 'Recipes worth cracking two eggs for.',
     share: 'Share', copyLink: 'Copy link', linkCopied: 'Link copied', shareEmail: 'Email',
+    units: 'Units', unitsMetric: 'Metric', unitsUs: 'US customary',
   },
   es: {
     ingredients: 'Ingredientes', steps: 'Pasos', source: 'Fuente',
@@ -163,6 +169,19 @@ const UI_STRINGS: Record<string, UiStrings> = {
     about: 'Acerca de', howWeTest: 'C\u00f3mo probamos y etiquetamos las recetas', print: 'Imprimir', home: 'Inicio',
     tagline: 'Recetas que valen dos huevos.',
     share: 'Compartir', copyLink: 'Copiar enlace', linkCopied: 'Enlace copiado', shareEmail: 'Correo',
+    units: 'Unidades', unitsMetric: 'M\u00e9trico', unitsUs: 'EE. UU.',
+  },
+  fr: {
+    ingredients: 'Ingr\u00e9dients', steps: '\u00c9tapes', source: 'Source',
+    jumpToRecipe: 'Aller \u00e0 la recette', servings: 'Portions', cookMode: 'Mode cuisine',
+    exitCookMode: 'Quitter le mode cuisine', previousStep: 'Retour', nextStep: 'Suivant',
+    startTimer: 'D\u00e9marrer le minuteur', timerDone: 'Termin\u00e9 !',
+    untestedBadge: 'Pas encore test\u00e9e',
+    untestedNote: 'Pas encore test\u00e9e en cuisine. \u00c9crite \u00e0 partir de techniques courantes ; nous ne l\u2019avons pas encore cuisin\u00e9e.',
+    about: '\u00c0 propos', howWeTest: 'Comment nous testons et \u00e9tiquetons les recettes', print: 'Imprimer', home: 'Accueil',
+    tagline: 'Des recettes qui valent deux \u0153ufs.',
+    share: 'Partager', copyLink: 'Copier le lien', linkCopied: 'Lien copi\u00e9', shareEmail: 'E-mail',
+    units: 'Unit\u00e9s', unitsMetric: 'M\u00e9trique', unitsUs: 'Am\u00e9ricaines (US)',
   },
 };
 
@@ -176,10 +195,10 @@ export const COUNTRY_INTROS: Readonly<Record<string, { lang: string; text: strin
   mx: { lang: 'es', text: 'Recetas mexicanas escritas en espa\u00f1ol, con medidas en m\u00e9trico. Cada receta indica con claridad si ya se prob\u00f3 en cocina.' },
 };
 
-/** A recipe counts as untested until its source is a person-verified one.
- * Editorial drafts (license internal-original) have not been cooked. */
-export function isUntested(source: { license: string }): boolean {
-  return source.license === 'internal-original';
+/** Quality state is explicit per recipe: tested only when a person recorded
+ * a tested_at date. Never inferred from the source license. */
+export function isUntested(recipe: { testedAt?: string | null }): boolean {
+  return !recipe.testedAt;
 }
 
 // ---------------------------------------------------------------------------
@@ -195,8 +214,12 @@ export interface RecipeLocaleInput {
   title: string;
   slug?: string;
   intro?: string;
-  ingredients: string[];
+  ingredients: IngredientEntry[];
   steps: string[];
+  /** "country/lang" of the locale this one was translated from. Exactly one
+   * locale per multi-locale submission (the original) leaves this unset. */
+  translationOf?: string;
+  translationMethod?: 'human' | 'machine';
 }
 
 export interface RecipeSubmission {
@@ -269,11 +292,43 @@ export function validateRecipeSubmission(input: unknown): ValidationResult {
         fail(`locales[${i}].slug`, 'must match slug pattern');
       if (lc['intro'] !== undefined && (typeof lc['intro'] !== 'string' || lc['intro'].length > MAX_LEN.intro))
         fail(`locales[${i}].intro`, 'max 2000 chars');
-      const arrOk = (v: unknown): v is string[] =>
-        Array.isArray(v) && v.length > 0 && v.every((x) => typeof x === 'string' && x.length > 0 && x.length <= MAX_LEN.item);
-      if (!arrOk(lc['ingredients'])) fail(`locales[${i}].ingredients`, 'non-empty string array required');
-      if (!arrOk(lc['steps'])) fail(`locales[${i}].steps`, 'non-empty string array required');
+      const strOk = (x: unknown): x is string => typeof x === 'string' && x.length > 0 && x.length <= MAX_LEN.item;
+      const ingOk = (x: unknown): boolean =>
+        strOk(x) || (isStructured(x) && x.name.length > 0 && x.name.length <= MAX_LEN.item &&
+          (x.qty === null || (Number.isFinite(x.qty) && x.qty > 0)) &&
+          (x.unit === undefined || x.unit === '' || unitInfo(x.unit) !== undefined || x.qty === null || /^[a-z]+$/.test(x.unit)));
+      if (!Array.isArray(lc['ingredients']) || lc['ingredients'].length === 0 || !lc['ingredients'].every(ingOk))
+        fail(`locales[${i}].ingredients`, 'non-empty array of strings or structured ingredients required');
+      if (!Array.isArray(lc['steps']) || lc['steps'].length === 0 || !lc['steps'].every(strOk))
+        fail(`locales[${i}].steps`, 'non-empty string array required');
+      if (lc['translationOf'] !== undefined && typeof lc['translationOf'] !== 'string')
+        fail(`locales[${i}].translationOf`, 'must be a country/lang string');
+      if (lc['translationMethod'] !== undefined && lc['translationMethod'] !== 'human' && lc['translationMethod'] !== 'machine')
+        fail(`locales[${i}].translationMethod`, "must be 'human' or 'machine'");
     });
+
+    // Translation rules (fail closed). A single locale is an original. With
+    // several, exactly one is the original and every other points at a locale
+    // in this submission and declares how it was produced.
+    if (errors.length === 0 && locs.length > 1) {
+      const rows = locs as RecipeLocaleInput[];
+      const key = (r: RecipeLocaleInput) => `${r.country}/${r.lang}`;
+      const originals = rows.filter((r) => r.translationOf === undefined);
+      if (originals.length !== 1) fail('locales', 'exactly one locale must be the original (no translationOf)');
+      rows.forEach((r, i) => {
+        if (r.translationOf === undefined) return;
+        const src = rows.find((x) => key(x) === r.translationOf);
+        if (!src || key(src) === key(r)) return fail(`locales[${i}].translationOf`, 'must name a different locale in this submission');
+        if (src.translationOf !== undefined) return fail(`locales[${i}].translationOf`, 'must name the original locale, not another translation');
+        if (!r.translationMethod) fail(`locales[${i}].translationMethod`, 'required for translated locales');
+        const steps = checkTranslation(src, r);
+        const ing = checkStructuredTranslation(src.ingredients, r.ingredients);
+        const alg = checkAllergens(ingredientText(src.ingredients), ingredientText(r.ingredients));
+        for (const p of [...steps.problems, ...ing.problems, ...alg.problems]) fail(`locales[${i}]`, `translation check: ${p}`);
+      });
+    } else if (errors.length === 0 && locs.length === 1 && (locs[0] as RecipeLocaleInput).translationOf !== undefined) {
+      fail('locales[0].translationOf', 'a single locale cannot be a translation');
+    }
   }
 
   if (errors.length > 0) return { ok: false, errors };
@@ -435,6 +490,8 @@ export interface Recipe {
   originCountry: string | null;
   imageKey: string | null;
   createdAt: string;
+  testedAt?: string | null;
+  testedBy?: string | null;
 }
 
 export interface RecipeLocale {
@@ -449,6 +506,11 @@ export interface RecipeLocale {
   /** JSON array of step strings, in order. */
   stepsJson: string;
   status: RecipeStatus;
+  translationOf?: string | null;
+  translationMethod?: string | null;
+  translationReviewedAt?: string | null;
+  translationReviewedBy?: string | null;
+  translationReviewerKind?: string | null;
 }
 
 export interface RecipePage {
@@ -456,3 +518,5 @@ export interface RecipePage {
   locale: RecipeLocale;
   source: Source;
 }
+export * from './units';
+export * from './render';

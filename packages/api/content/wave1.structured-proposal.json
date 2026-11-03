@@ -1,0 +1,963 @@
+{
+ "stats": {
+  "structured": 62,
+  "held": 15
+ },
+ "recipes": [
+  {
+   "id": "w1golumpki",
+   "lang": "en",
+   "title": "Golumpki (Unstuffed Cabbage Roll) Soup",
+   "ingredients": [
+    {
+     "source": "1 tbsp olive oil",
+     "status": "structured",
+     "alt_in_source": null,
+     "proposed": {
+      "ref": "olive-oil",
+      "qty": 1.0,
+      "name": "olive oil",
+      "unit": "tbsp"
+     }
+    },
+    {
+     "source": "1 lb (450 g) ground beef, or half beef and half pork",
+     "status": "structured",
+     "alt_in_source": [
+      450.0,
+      "g"
+     ],
+     "proposed": {
+      "ref": "ground-beef",
+      "qty": 1.0,
+      "name": "ground beef",
+      "unit": "lb",
+      "note": "or half beef and half pork"
+     }
+    },
+    {
+     "source": "1 medium onion, diced",
+     "status": "structured",
+     "alt_in_source": null,
+     "proposed": {
+      "ref": "medium-onion",
+      "qty": 1.0,
+      "name": "medium onion",
+      "note": "diced"
+     }
+    },
+    {
+     "source": "3 garlic cloves, minced",
+     "status": "structured",
+     "alt_in_source": null,
+     "proposed": {
+      "ref": "garlic-cloves",
+      "qty": 3.0,
+      "name": "garlic cloves",
+      "note": "minced"
+     }
+    },
+    {
+     "source": "1 tbsp tomato paste",
+     "status": "structured",
+     "alt_in_source": null,
+     "proposed": {
+      "ref": "tomato-paste",
+      "qty": 1.0,
+      "name": "tomato paste",
+      "unit": "tbsp"
+     }
+    },
+    {
+     "source": "1 tsp sweet paprika",
+     "status": "structured",
+     "alt_in_source": null,
+     "proposed": {
+      "ref": "sweet-paprika",
+      "qty": 1.0,
+      "name": "sweet paprika",
+      "unit": "tsp"
+     }
+    },
+    {
+     "source": "1 small green cabbage (about 1.5 lb / 700 g), cored and cut into 1-inch (2.5 cm) pieces",
+     "status": "held",
+     "reason": "extra number in text (second amount or size)",
+     "proposed": "1 small green cabbage (about 1.5 lb / 700 g), cored and cut into 1-inch (2.5 cm) pieces"
+    },
+    {
+     "source": "1 can (28 oz / 800 g) crushed tomatoes",
+     "status": "held",
+     "reason": "extra number in text (second amount or size)",
+     "proposed": "1 can (28 oz / 800 g) crushed tomatoes"
+    },
+    {
+     "source": "4 cups (1 L) beef broth",
+     "status": "structured",
+     "alt_in_source": [
+      1.0,
+      "l"
+     ],
+     "proposed": {
+      "ref": "beef-broth",
+      "qty": 4.0,
+      "name": "beef broth",
+      "unit": "cup"
+     }
+    },
+    {
+     "source": "1/2 cup (100 g) long-grain white rice, uncooked",
+     "status": "held",
+     "reason": "alt amount in other dimension",
+     "proposed": "1/2 cup (100 g) long-grain white rice, uncooked"
+    },
+    {
+     "source": "1 bay leaf",
+     "status": "structured",
+     "alt_in_source": null,
+     "proposed": {
+      "ref": "bay-leaf",
+      "qty": 1.0,
+      "name": "bay leaf"
+     }
+    },
+    {
+     "source": "1 tsp salt, plus more to taste",
+     "status": "structured",
+     "alt_in_source": null,
+     "proposed": {
+      "ref": "salt",
+      "qty": 1.0,
+      "name": "salt",
+      "unit": "tsp",
+      "note": "plus more to taste"
+     }
+    },
+    {
+     "source": "1/2 tsp black pepper",
+     "status": "structured",
+     "alt_in_source": null,
+     "proposed": {
+      "ref": "black-pepper",
+      "qty": 0.5,
+      "name": "black pepper",
+      "unit": "tsp"
+     }
+    },
+    {
+     "source": "1 tbsp apple cider vinegar",
+     "status": "structured",
+     "alt_in_source": null,
+     "proposed": {
+      "ref": "apple-cider-vinegar",
+      "qty": 1.0,
+      "name": "apple cider vinegar",
+      "unit": "tbsp"
+     }
+    },
+    {
+     "source": "Chopped parsley, to serve",
+     "status": "held",
+     "reason": "no leading quantity",
+     "proposed": "Chopped parsley, to serve"
+    }
+   ],
+   "steps": [
+    {
+     "source": "Heat the oil in a large pot over medium-high heat. Add the meat and cook, breaking it up, 6 to 8 minutes, until no pink remains and it reaches 160°F (71°C). Spoon off excess fat.",
+     "status": "ok"
+    },
+    {
+     "source": "Add the onion and cook 4 minutes until soft. Stir in the garlic, tomato paste and paprika and cook 1 minute.",
+     "status": "ok"
+    },
+    {
+     "source": "Add the cabbage, crushed tomatoes, broth, bay leaf, salt and pepper. Bring to a boil, then lower the heat, cover and simmer 15 minutes.",
+     "status": "ok"
+    },
+    {
+     "source": "Stir in the rice. Cover and simmer 20 minutes more, until the rice and cabbage are tender. If the soup gets too thick, add 1/2 cup (120 ml) water.",
+     "status": "held-amount"
+    },
+    {
+     "source": "Remove the bay leaf. Stir in the vinegar, taste, and add salt if needed. Serve hot with parsley. Refrigerate leftovers within 2 hours.",
+     "status": "ok"
+    }
+   ]
+  },
+  {
+   "id": "w1potsticker",
+   "lang": "en",
+   "title": "Pork and Cabbage Potstickers",
+   "ingredients": [
+    {
+     "source": "3 cups (about 250 g) finely chopped napa cabbage",
+     "status": "held",
+     "reason": "alt amount in other dimension",
+     "proposed": "3 cups (about 250 g) finely chopped napa cabbage"
+    },
+    {
+     "source": "1 tsp salt",
+     "status": "structured",
+     "alt_in_source": null,
+     "proposed": {
+      "ref": "salt",
+      "qty": 1.0,
+      "name": "salt",
+      "unit": "tsp"
+     }
+    },
+    {
+     "source": "1 lb (450 g) ground pork",
+     "status": "structured",
+     "alt_in_source": [
+      450.0,
+      "g"
+     ],
+     "proposed": {
+      "ref": "ground-pork",
+      "qty": 1.0,
+      "name": "ground pork",
+      "unit": "lb"
+     }
+    },
+    {
+     "source": "3 scallions, thinly sliced",
+     "status": "structured",
+     "alt_in_source": null,
+     "proposed": {
+      "ref": "scallions",
+      "qty": 3.0,
+      "name": "scallions",
+      "note": "thinly sliced"
+     }
+    },
+    {
+     "source": "1 tbsp grated fresh ginger",
+     "status": "structured",
+     "alt_in_source": null,
+     "proposed": {
+      "ref": "grated-fresh-ginger",
+      "qty": 1.0,
+      "name": "grated fresh ginger",
+      "unit": "tbsp"
+     }
+    },
+    {
+     "source": "2 garlic cloves, minced",
+     "status": "structured",
+     "alt_in_source": null,
+     "proposed": {
+      "ref": "garlic-cloves",
+      "qty": 2.0,
+      "name": "garlic cloves",
+      "note": "minced"
+     }
+    },
+    {
+     "source": "1 tbsp soy sauce",
+     "status": "structured",
+     "alt_in_source": null,
+     "proposed": {
+      "ref": "soy-sauce",
+      "qty": 1.0,
+      "name": "soy sauce",
+      "unit": "tbsp"
+     }
+    },
+    {
+     "source": "1 tbsp Shaoxing wine or dry sherry",
+     "status": "structured",
+     "alt_in_source": null,
+     "proposed": {
+      "ref": "shaoxing-wine-or-dry-she",
+      "qty": 1.0,
+      "name": "Shaoxing wine or dry sherry",
+      "unit": "tbsp"
+     }
+    },
+    {
+     "source": "1 tsp toasted sesame oil",
+     "status": "structured",
+     "alt_in_source": null,
+     "proposed": {
+      "ref": "toasted-sesame-oil",
+      "qty": 1.0,
+      "name": "toasted sesame oil",
+      "unit": "tsp"
+     }
+    },
+    {
+     "source": "1/2 tsp white pepper",
+     "status": "structured",
+     "alt_in_source": null,
+     "proposed": {
+      "ref": "white-pepper",
+      "qty": 0.5,
+      "name": "white pepper",
+      "unit": "tsp"
+     }
+    },
+    {
+     "source": "1 tbsp cornstarch",
+     "status": "structured",
+     "alt_in_source": null,
+     "proposed": {
+      "ref": "cornstarch",
+      "qty": 1.0,
+      "name": "cornstarch",
+      "unit": "tbsp"
+     }
+    },
+    {
+     "source": "30 to 36 round dumpling wrappers (one 12 to 14 oz package)",
+     "status": "held",
+     "reason": "extra number in text (second amount or size)",
+     "proposed": "30 to 36 round dumpling wrappers (one 12 to 14 oz package)"
+    },
+    {
+     "source": "2 tbsp neutral oil, for pan-frying",
+     "status": "structured",
+     "alt_in_source": null,
+     "proposed": {
+      "ref": "neutral-oil",
+      "qty": 2.0,
+      "name": "neutral oil",
+      "unit": "tbsp",
+      "note": "for pan-frying"
+     }
+    },
+    {
+     "source": "1 cup (240 ml) water, for steaming, used in batches",
+     "status": "structured",
+     "alt_in_source": [
+      240.0,
+      "ml"
+     ],
+     "proposed": {
+      "ref": "water",
+      "qty": 1.0,
+      "name": "water",
+      "unit": "cup",
+      "note": "for steaming, used in batches"
+     }
+    },
+    {
+     "source": "Dipping sauce: 3 tbsp soy sauce, 1 tbsp rice vinegar, 1 tsp sesame oil",
+     "status": "held",
+     "reason": "no leading quantity",
+     "proposed": "Dipping sauce: 3 tbsp soy sauce, 1 tbsp rice vinegar, 1 tsp sesame oil"
+    }
+   ],
+   "steps": [
+    {
+     "source": "Toss the cabbage with the salt and let it sit 15 minutes. Squeeze it dry in a clean towel.",
+     "status": "ok"
+    },
+    {
+     "source": "Mix the cabbage with the pork, scallions, ginger, garlic, soy sauce, wine, sesame oil, white pepper and cornstarch. Stir in one direction for about 1 minute until the mixture holds together.",
+     "status": "ok"
+    },
+    {
+     "source": "To check the seasoning, cook a small spoonful in a pan until no pink remains (160°F / 71°C), taste, and adjust.",
+     "status": "ok"
+    },
+    {
+     "source": "Put a heaped tablespoon of filling in the center of a wrapper. Wet the edge, fold in half and pleat to seal. Keep filled dumplings covered with a damp towel.",
+     "status": "ok"
+    },
+    {
+     "source": "Heat 2 teaspoons of oil in a large nonstick skillet with a lid over medium-high heat. Add about 10 dumplings flat side down and cook 2 to 3 minutes until golden underneath.",
+     "status": "ok"
+    },
+    {
+     "source": "Add 1/3 cup (80 ml) water, cover and steam 6 to 7 minutes, until the filling reaches 160°F (71°C). Uncover and cook 1 minute until the water is gone. Repeat with the remaining dumplings in two more batches.",
+     "status": "held-amount"
+    },
+    {
+     "source": "Stir the dipping sauce ingredients together and serve with the hot dumplings. Refrigerate leftovers within 2 hours.",
+     "status": "ok"
+    }
+   ]
+  },
+  {
+   "id": "w1pozole",
+   "lang": "es",
+   "title": "Pozole rojo de cerdo",
+   "ingredients": [
+    {
+     "source": "1 kg de espaldilla de cerdo, en trozos de 4 cm",
+     "status": "held",
+     "reason": "extra number in text (second amount or size)",
+     "proposed": "1 kg de espaldilla de cerdo, en trozos de 4 cm"
+    },
+    {
+     "source": "2500 ml de agua (2.5 litros)",
+     "status": "held",
+     "reason": "extra number in text (second amount or size)",
+     "proposed": "2500 ml de agua (2.5 litros)"
+    },
+    {
+     "source": "1/2 cebolla",
+     "status": "structured",
+     "alt_in_source": null,
+     "proposed": {
+      "ref": "cebolla",
+      "qty": 0.5,
+      "name": "cebolla"
+     }
+    },
+    {
+     "source": "4 dientes de ajo",
+     "status": "structured",
+     "alt_in_source": null,
+     "proposed": {
+      "ref": "dientes-de-ajo",
+      "qty": 4.0,
+      "name": "dientes de ajo"
+     }
+    },
+    {
+     "source": "2 hojas de laurel",
+     "status": "structured",
+     "alt_in_source": null,
+     "proposed": {
+      "ref": "hojas-de-laurel",
+      "qty": 2.0,
+      "name": "hojas de laurel"
+     }
+    },
+    {
+     "source": "2 cucharaditas de sal, y más al gusto",
+     "status": "structured",
+     "alt_in_source": null,
+     "proposed": {
+      "ref": "sal",
+      "qty": 2.0,
+      "name": "sal",
+      "unit": "tsp",
+      "note": "y más al gusto"
+     }
+    },
+    {
+     "source": "4 chiles guajillo, sin rabo, semillas ni venas",
+     "status": "structured",
+     "alt_in_source": null,
+     "proposed": {
+      "ref": "chiles-guajillo",
+      "qty": 4.0,
+      "name": "chiles guajillo",
+      "note": "sin rabo, semillas ni venas"
+     }
+    },
+    {
+     "source": "2 chiles ancho, sin rabo, semillas ni venas",
+     "status": "structured",
+     "alt_in_source": null,
+     "proposed": {
+      "ref": "chiles-ancho",
+      "qty": 2.0,
+      "name": "chiles ancho",
+      "note": "sin rabo, semillas ni venas"
+     }
+    },
+    {
+     "source": "1/4 de cebolla",
+     "status": "structured",
+     "alt_in_source": null,
+     "proposed": {
+      "ref": "cebolla-2",
+      "qty": 0.25,
+      "name": "cebolla"
+     }
+    },
+    {
+     "source": "2 dientes de ajo",
+     "status": "structured",
+     "alt_in_source": null,
+     "proposed": {
+      "ref": "dientes-de-ajo-2",
+      "qty": 2.0,
+      "name": "dientes de ajo"
+     }
+    },
+    {
+     "source": "1 cucharadita de orégano mexicano",
+     "status": "structured",
+     "alt_in_source": null,
+     "proposed": {
+      "ref": "oregano-mexicano",
+      "qty": 1.0,
+      "name": "orégano mexicano",
+      "unit": "tsp"
+     }
+    },
+    {
+     "source": "1/4 de cucharadita de comino molido",
+     "status": "structured",
+     "alt_in_source": null,
+     "proposed": {
+      "ref": "cucharadita-de-comino-mo",
+      "qty": 0.25,
+      "name": "cucharadita de comino molido"
+     }
+    },
+    {
+     "source": "800 g de maíz cacahuazintle precocido (cocido y escurrido)",
+     "status": "structured",
+     "alt_in_source": null,
+     "proposed": {
+      "ref": "maiz-cacahuazintle-preco",
+      "qty": 800.0,
+      "name": "maíz cacahuazintle precocido (cocido y escurrido)",
+      "unit": "g"
+     }
+    },
+    {
+     "source": "Para servir: lechuga o repollo picado, rábanos en rodajas, cebolla picada, orégano, limón y tostadas",
+     "status": "held",
+     "reason": "no leading quantity",
+     "proposed": "Para servir: lechuga o repollo picado, rábanos en rodajas, cebolla picada, orégano, limón y tostadas"
+    }
+   ],
+   "steps": [
+    {
+     "source": "Pon el cerdo en una olla grande con el agua, la 1/2 cebolla, los 4 dientes de ajo, el laurel y la sal. Hierve y retira la espuma de la superficie.",
+     "status": "ok"
+    },
+    {
+     "source": "Baja el fuego, tapa y cuece 1 hora y 15 minutos a 1 hora y 30 minutos, hasta que la carne esté muy suave. Debe marcar al menos 63°C (145°F) en el centro; con esta cocción larga suele superarla por mucho.",
+     "status": "ok"
+    },
+    {
+     "source": "Mientras tanto, tuesta los chiles en un comal 20 a 30 segundos por lado, sin quemarlos. Remójalos 15 minutos en agua caliente que los cubra.",
+     "status": "ok"
+    },
+    {
+     "source": "Licúa los chiles con 1 taza (250 ml) de su agua de remojo, el 1/4 de cebolla, los 2 dientes de ajo, el orégano y el comino hasta que quede liso. Cuela la salsa.",
+     "status": "held-amount"
+    },
+    {
+     "source": "Retira la carne y déjala reposar al menos 3 minutos. Escurre y enjuaga el maíz. Regresa la carne a la olla y agrega el maíz y la salsa colada.",
+     "status": "ok"
+    },
+    {
+     "source": "Hierve suavemente 30 minutos, hasta que el caldo tome sabor. Prueba y ajusta la sal.",
+     "status": "ok"
+    },
+    {
+     "source": "Sirve caliente con lechuga o repollo, rábano, cebolla, orégano, limón y tostadas. Refrigera las sobras dentro de 2 horas.",
+     "status": "ok"
+    }
+   ]
+  },
+  {
+   "id": "w1enchiladas",
+   "lang": "es",
+   "title": "Enchiladas rojas de pollo",
+   "ingredients": [
+    {
+     "source": "2 pechugas de pollo (unos 600 g)",
+     "status": "held",
+     "reason": "extra number in text (second amount or size)",
+     "proposed": "2 pechugas de pollo (unos 600 g)"
+    },
+    {
+     "source": "1/2 cebolla",
+     "status": "structured",
+     "alt_in_source": null,
+     "proposed": {
+      "ref": "cebolla",
+      "qty": 0.5,
+      "name": "cebolla"
+     }
+    },
+    {
+     "source": "2 dientes de ajo",
+     "status": "structured",
+     "alt_in_source": null,
+     "proposed": {
+      "ref": "dientes-de-ajo",
+      "qty": 2.0,
+      "name": "dientes de ajo"
+     }
+    },
+    {
+     "source": "1 cucharadita de sal, y más al gusto",
+     "status": "structured",
+     "alt_in_source": null,
+     "proposed": {
+      "ref": "sal",
+      "qty": 1.0,
+      "name": "sal",
+      "unit": "tsp",
+      "note": "y más al gusto"
+     }
+    },
+    {
+     "source": "5 chiles guajillo, sin rabo, semillas ni venas",
+     "status": "structured",
+     "alt_in_source": null,
+     "proposed": {
+      "ref": "chiles-guajillo",
+      "qty": 5.0,
+      "name": "chiles guajillo",
+      "note": "sin rabo, semillas ni venas"
+     }
+    },
+    {
+     "source": "2 chiles ancho, sin rabo, semillas ni venas",
+     "status": "structured",
+     "alt_in_source": null,
+     "proposed": {
+      "ref": "chiles-ancho",
+      "qty": 2.0,
+      "name": "chiles ancho",
+      "note": "sin rabo, semillas ni venas"
+     }
+    },
+    {
+     "source": "3 jitomates guaje (roma)",
+     "status": "structured",
+     "alt_in_source": null,
+     "proposed": {
+      "ref": "jitomates-guaje-roma",
+      "qty": 3.0,
+      "name": "jitomates guaje (roma)"
+     }
+    },
+    {
+     "source": "1/4 de cebolla",
+     "status": "structured",
+     "alt_in_source": null,
+     "proposed": {
+      "ref": "cebolla-2",
+      "qty": 0.25,
+      "name": "cebolla"
+     }
+    },
+    {
+     "source": "1 diente de ajo",
+     "status": "structured",
+     "alt_in_source": null,
+     "proposed": {
+      "ref": "diente-de-ajo",
+      "qty": 1.0,
+      "name": "diente de ajo"
+     }
+    },
+    {
+     "source": "1 cucharada de aceite, para freír la salsa",
+     "status": "structured",
+     "alt_in_source": null,
+     "proposed": {
+      "ref": "aceite",
+      "qty": 1.0,
+      "name": "aceite",
+      "unit": "tbsp",
+      "note": "para freír la salsa"
+     }
+    },
+    {
+     "source": "1/2 taza (120 ml) de aceite, para pasar las tortillas",
+     "status": "structured",
+     "alt_in_source": [
+      120.0,
+      "ml"
+     ],
+     "proposed": {
+      "ref": "aceite-2",
+      "qty": 0.5,
+      "name": "aceite",
+      "unit": "cup",
+      "note": "para pasar las tortillas"
+     }
+    },
+    {
+     "source": "12 tortillas de maíz",
+     "status": "structured",
+     "alt_in_source": null,
+     "proposed": {
+      "ref": "tortillas-de-maiz",
+      "qty": 12.0,
+      "name": "tortillas de maíz"
+     }
+    },
+    {
+     "source": "150 g de queso fresco desmoronado",
+     "status": "structured",
+     "alt_in_source": null,
+     "proposed": {
+      "ref": "queso-fresco-desmoronado",
+      "qty": 150.0,
+      "name": "queso fresco desmoronado",
+      "unit": "g"
+     }
+    },
+    {
+     "source": "1/2 taza (120 ml) de crema",
+     "status": "structured",
+     "alt_in_source": [
+      120.0,
+      "ml"
+     ],
+     "proposed": {
+      "ref": "crema",
+      "qty": 0.5,
+      "name": "crema",
+      "unit": "cup"
+     }
+    },
+    {
+     "source": "Cebolla picada y lechuga, para servir",
+     "status": "held",
+     "reason": "no leading quantity",
+     "proposed": "Cebolla picada y lechuga, para servir"
+    }
+   ],
+   "steps": [
+    {
+     "source": "Pon el pollo en una olla con agua que lo cubra, la 1/2 cebolla, 2 dientes de ajo y la cucharadita de sal. Hierve, baja el fuego y cuece tapado 18 a 20 minutos, hasta que el centro llegue a 74°C. Reserva 1 taza (250 ml) del caldo. Deshebra el pollo.",
+     "status": "held-amount"
+    },
+    {
+     "source": "Mientras tanto, tuesta los chiles en un comal 20 a 30 segundos por lado. Remójalos 15 minutos en agua caliente. Hierve los jitomates 5 minutos.",
+     "status": "ok"
+    },
+    {
+     "source": "Licúa los chiles escurridos con los jitomates, el 1/4 de cebolla, 1 diente de ajo, 1 taza del caldo reservado y una pizca de sal. Cuela.",
+     "status": "held-amount"
+    },
+    {
+     "source": "Calienta 1 cucharada de aceite en una sartén, vierte la salsa y cocina 5 minutos a fuego medio. Ajusta la sal.",
+     "status": "held-amount"
+    },
+    {
+     "source": "Calienta 1/2 taza de aceite en otra sartén. Pasa cada tortilla 5 segundos por lado en el aceite caliente y luego por la salsa.",
+     "status": "held-amount"
+    },
+    {
+     "source": "Rellena cada tortilla con pollo, enróllala y acomódala en un platón. Baña con la salsa restante.",
+     "status": "ok"
+    },
+    {
+     "source": "Sirve con queso fresco, crema, cebolla y lechuga. Refrigera las sobras dentro de 2 horas.",
+     "status": "ok"
+    }
+   ]
+  },
+  {
+   "id": "w1birria",
+   "lang": "es",
+   "title": "Tacos de birria de res con consomé",
+   "ingredients": [
+    {
+     "source": "1200 g de falda o aguayón de res, en 4 trozos grandes",
+     "status": "held",
+     "reason": "extra number in text (second amount or size)",
+     "proposed": "1200 g de falda o aguayón de res, en 4 trozos grandes"
+    },
+    {
+     "source": "5 chiles guajillo, sin rabo, semillas ni venas",
+     "status": "structured",
+     "alt_in_source": null,
+     "proposed": {
+      "ref": "chiles-guajillo",
+      "qty": 5.0,
+      "name": "chiles guajillo",
+      "note": "sin rabo, semillas ni venas"
+     }
+    },
+    {
+     "source": "2 chiles ancho, sin rabo, semillas ni venas",
+     "status": "structured",
+     "alt_in_source": null,
+     "proposed": {
+      "ref": "chiles-ancho",
+      "qty": 2.0,
+      "name": "chiles ancho",
+      "note": "sin rabo, semillas ni venas"
+     }
+    },
+    {
+     "source": "3 chiles de árbol secos (opcional, para más picante)",
+     "status": "structured",
+     "alt_in_source": null,
+     "proposed": {
+      "ref": "chiles-de-arbol-secos-op",
+      "qty": 3.0,
+      "name": "chiles de árbol secos (opcional",
+      "note": "para más picante)"
+     }
+    },
+    {
+     "source": "3 jitomates guaje (roma)",
+     "status": "structured",
+     "alt_in_source": null,
+     "proposed": {
+      "ref": "jitomates-guaje-roma",
+      "qty": 3.0,
+      "name": "jitomates guaje (roma)"
+     }
+    },
+    {
+     "source": "1/2 cebolla",
+     "status": "structured",
+     "alt_in_source": null,
+     "proposed": {
+      "ref": "cebolla",
+      "qty": 0.5,
+      "name": "cebolla"
+     }
+    },
+    {
+     "source": "5 dientes de ajo",
+     "status": "structured",
+     "alt_in_source": null,
+     "proposed": {
+      "ref": "dientes-de-ajo",
+      "qty": 5.0,
+      "name": "dientes de ajo"
+     }
+    },
+    {
+     "source": "2 cucharadas de vinagre de manzana",
+     "status": "structured",
+     "alt_in_source": null,
+     "proposed": {
+      "ref": "vinagre-de-manzana",
+      "qty": 2.0,
+      "name": "vinagre de manzana",
+      "unit": "tbsp"
+     }
+    },
+    {
+     "source": "1 cucharadita de orégano mexicano",
+     "status": "structured",
+     "alt_in_source": null,
+     "proposed": {
+      "ref": "oregano-mexicano",
+      "qty": 1.0,
+      "name": "orégano mexicano",
+      "unit": "tsp"
+     }
+    },
+    {
+     "source": "1/2 cucharadita de comino molido",
+     "status": "structured",
+     "alt_in_source": null,
+     "proposed": {
+      "ref": "comino-molido",
+      "qty": 0.5,
+      "name": "comino molido",
+      "unit": "tsp"
+     }
+    },
+    {
+     "source": "3 clavos de olor",
+     "status": "structured",
+     "alt_in_source": null,
+     "proposed": {
+      "ref": "clavos-de-olor",
+      "qty": 3.0,
+      "name": "clavos de olor"
+     }
+    },
+    {
+     "source": "1 raja pequeña de canela",
+     "status": "structured",
+     "alt_in_source": null,
+     "proposed": {
+      "ref": "raja-pequena-de-canela",
+      "qty": 1.0,
+      "name": "raja pequeña de canela"
+     }
+    },
+    {
+     "source": "2 cucharaditas de sal",
+     "status": "structured",
+     "alt_in_source": null,
+     "proposed": {
+      "ref": "sal",
+      "qty": 2.0,
+      "name": "sal",
+      "unit": "tsp"
+     }
+    },
+    {
+     "source": "2 hojas de laurel",
+     "status": "structured",
+     "alt_in_source": null,
+     "proposed": {
+      "ref": "hojas-de-laurel",
+      "qty": 2.0,
+      "name": "hojas de laurel"
+     }
+    },
+    {
+     "source": "2 tazas (500 ml) de agua, y 1 taza (250 ml) más para licuar",
+     "status": "held",
+     "reason": "extra number in text (second amount or size)",
+     "proposed": "2 tazas (500 ml) de agua, y 1 taza (250 ml) más para licuar"
+    },
+    {
+     "source": "16 tortillas de maíz",
+     "status": "structured",
+     "alt_in_source": null,
+     "proposed": {
+      "ref": "tortillas-de-maiz",
+      "qty": 16.0,
+      "name": "tortillas de maíz"
+     }
+    },
+    {
+     "source": "250 g de queso Oaxaca deshebrado",
+     "status": "structured",
+     "alt_in_source": null,
+     "proposed": {
+      "ref": "queso-oaxaca-deshebrado",
+      "qty": 250.0,
+      "name": "queso Oaxaca deshebrado",
+      "unit": "g"
+     }
+    },
+    {
+     "source": "Cebolla y cilantro picados, y limón, para servir",
+     "status": "held",
+     "reason": "no leading quantity",
+     "proposed": "Cebolla y cilantro picados, y limón, para servir"
+    }
+   ],
+   "steps": [
+    {
+     "source": "Tuesta los chiles en un comal 20 a 30 segundos por lado y remójalos 15 minutos en agua caliente. Hierve los jitomates 5 minutos.",
+     "status": "ok"
+    },
+    {
+     "source": "Licúa los chiles escurridos con los jitomates, la cebolla, el ajo, el vinagre, el orégano, el comino, los clavos, la canela, la sal y 1 taza (250 ml) de agua hasta que quede liso. Cuela.",
+     "status": "held-amount"
+    },
+    {
+     "source": "Unta la carne con la salsa en un recipiente y refrigérala al menos 1 hora y hasta una noche. No la dejes a temperatura ambiente.",
+     "status": "ok"
+    },
+    {
+     "source": "Calienta el horno a 160°C. Pasa la carne con toda la salsa a una olla con tapa, agrega el laurel y 2 tazas (500 ml) de agua. Tapa bien y hornea 3 horas, hasta que la carne se deshaga con un tenedor y marque al menos 63°C (145°F) en el centro.",
+     "status": "held-amount"
+    },
+    {
+     "source": "Retira la carne y déjala reposar al menos 3 minutos antes de deshebrar. Cuela el caldo, quítale la grasa roja de la superficie y reserva esa grasa. Mantén el caldo (consomé) caliente y ajusta la sal.",
+     "status": "ok"
+    },
+    {
+     "source": "Moja cada tortilla en la grasa reservada y ponla en un comal caliente. Agrega queso y carne a la mitad, dobla y dora 1 a 2 minutos por lado.",
+     "status": "ok"
+    },
+    {
+     "source": "Sirve los tacos con cebolla, cilantro y limón, y una taza de consomé caliente para mojar. Refrigera las sobras dentro de 2 horas.",
+     "status": "ok"
+    }
+   ]
+  }
+ ]
+}

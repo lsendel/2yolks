@@ -14,22 +14,44 @@ export const RECIPE_CLIENT_SCRIPT = `(function () {
     }
     return (Math.round(n * 10) / 10).toString();
   }
-  // Serving scaler
+  // Serving scaler + unit toggle. Every variant is pre-rendered on the server
+  // (data-v = {system: {multiplier: text}}); the browser only swaps text.
+  var vEls = Array.prototype.slice.call(document.querySelectorAll('[data-v]'));
   var scaler = document.querySelector('.scaler');
+  var unitBox = document.querySelector('.unit-toggle');
+  var state = { sys: unitBox ? unitBox.getAttribute('data-default-units') : null, mult: '1' };
+  try { var saved = localStorage.getItem('2y-units'); if (unitBox && (saved === 'metric' || saved === 'us')) state.sys = saved; } catch (e) {}
+  function apply() {
+    vEls.forEach(function (el) {
+      var v;
+      try { v = JSON.parse(el.getAttribute('data-v')); } catch (e) { return; }
+      var sys = state.sys || (v.metric ? 'metric' : 'us');
+      var t = v[sys] && (v[sys][state.mult] || v[sys]['1']);
+      if (t != null) el.textContent = t;
+    });
+    if (unitBox) Array.prototype.forEach.call(unitBox.querySelectorAll('button'), function (b) {
+      b.setAttribute('aria-pressed', b.getAttribute('data-units') === state.sys ? 'true' : 'false');
+    });
+  }
+  if (unitBox) {
+    unitBox.addEventListener('click', function (e) {
+      var b = e.target.closest('button[data-units]');
+      if (!b) return;
+      state.sys = b.getAttribute('data-units');
+      try { localStorage.setItem('2y-units', state.sys); } catch (e2) {}
+      apply();
+    });
+    apply();
+  }
   if (scaler) {
-    var qtyEls = Array.prototype.slice.call(document.querySelectorAll('.qty[data-qty]'));
     scaler.addEventListener('click', function (e) {
       var btn = e.target.closest('button[data-mult]');
       if (!btn) return;
-      var mult = parseFloat(btn.getAttribute('data-mult'));
+      state.mult = btn.getAttribute('data-mult');
       Array.prototype.forEach.call(scaler.querySelectorAll('button'), function (b) {
         b.setAttribute('aria-pressed', b === btn ? 'true' : 'false');
       });
-      qtyEls.forEach(function (el) {
-        var q = parseFloat(el.getAttribute('data-qty'));
-        var qe = el.getAttribute('data-qty-end');
-        el.textContent = fmt(q * mult) + (qe ? '-' + fmt(parseFloat(qe) * mult) : '');
-      });
+      apply();
     });
     var first = scaler.querySelector('button[data-mult="1"]');
     if (first) first.setAttribute('aria-pressed', 'true');
@@ -53,7 +75,8 @@ export const RECIPE_CLIENT_SCRIPT = `(function () {
   var openBtn = document.querySelector('[data-cook-open]');
   if (dataEl && overlay && openBtn) {
     var cookData = JSON.parse(dataEl.textContent);
-    var steps = cookData.steps;
+    var steps = Array.prototype.map.call(document.querySelectorAll('ol.steps li'), function (li) { return li.textContent; });
+    if (!steps.length) steps = cookData.steps;
     var strings = cookData.strings || {};
     var stepEl = overlay.querySelector('[data-cook-step]');
     var progEl = overlay.querySelector('[data-cook-progress]');
