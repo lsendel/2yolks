@@ -46,7 +46,7 @@ export function convertQuantity(q: Quantity, to: UnitSystem): Quantity | null {
 function sig(n: number): number {
   if (n >= 100) return Math.round(n / 5) * 5;
   if (n >= 10) return Math.round(n);
-  return Math.round(n * 10) / 10;
+  return Math.round(n * 2) / 2;
 }
 
 function roundMetric(base: number, small: string, big: string, factor: number): Quantity {
