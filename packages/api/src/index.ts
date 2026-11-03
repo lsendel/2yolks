@@ -16,6 +16,7 @@ import {
 import { renderHome, renderCountryHome, renderRecipe, renderAbout, renderHowWeTest, renderNotFound } from '@2yolks/web/server';
 import { isUntested } from '@2yolks/contracts';
 import { createDb, recipes, recipeLocales, sources } from './db';
+import { mcpApp } from './mcp';
 
 type Bindings = {
   DB: D1Database;
@@ -29,6 +30,12 @@ type Bindings = {
   /** Pinned canonical origin for absolute URLs (hreflang, JSON-LD).
    * Never derive from the request Host header. */
   CANONICAL_ORIGIN?: string;
+  /** Admin MCP bearer (shared directory admin key). Unset = MCP closed (503). */
+  ADMIN_MCP_API_KEY?: string;
+  /** Optional read-only MCP bearer. */
+  MCP_READ_KEY?: string;
+  /** Optional JSON array of per-agent keys: [{"name","key","role"}]. */
+  MCP_NAMED_KEYS?: string;
 };
 
 const DEMO_LICENSE = 'internal-demo';
@@ -328,6 +335,10 @@ app.post('/api/v1/submissions', async (c) => {
   );
   return c.json({ id, status: 'draft' }, 201);
 });
+
+// --- Admin MCP (agent content tools) -----------------------------------------
+// Fail-closed: with no keys configured the mount answers 503. See mcp.ts.
+app.route('/api/admin/mcp', mcpApp);
 
 app.all('/api/*', (c) => c.json({ error: 'not found' }, 404));
 

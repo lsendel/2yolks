@@ -1,0 +1,321 @@
+// Tests for the 2yolks admin MCP (packages/api/src/mcp.ts).
+// Runs the real Hono app against an in-memory D1 backed by node:sqlite,
+// with the 0001 + 0002 migrations applied.
+import { readFileSync } from 'node:fs';
+import { DatabaseSync } from 'node:sqlite';
+import { beforeEach, describe, expect, it } from 'vitest';
+import app from './index';
+
+const ADMIN_KEY = 'test-admin-key-0000000000';
+const READ_KEY = 'test-read-key-00000000000';
+const EDITOR_KEY = 'test-editor-key-000000000';
+
+function makeD1(sqlite: DatabaseSync): D1Database {
+  const prepare = (sql: string) => {
+    let bound: unknown[] = [];
+    const stmt = () => sqlite.prepare(sql);
+    return {
+      bind(...values: unknown[]) {
+        bound = values;
+        return this;
+      },
+      async run() {
+        const info = stmt().run(...(bound as never[]));
+        return {
+          success: true,
+          meta: {
+            changes: Number(info.changes),
+            last_row_id: Number(info.lastInsertRowid),
+            duration: 0,
+            size_after: 0,
+            rows_read: 0,
+            rows_written: Number(info.changes),
+            changed_db: Number(info.changes) > 0,
+            served_by: 'test',
+          },
+        };
+      },
+      async all() {
+        return {
+          results: stmt().all(...(bound as never[])),
+          success: true,
+          meta: { duration: 0, size_after: 0, rows_read: 0, rows_written: 0, changed_db: false, served_by: 'test' },
+        };
+      },
+      async first(col?: string) {
+        const row = stmt().get(...(bound as never[])) as Record<string, unknown> | undefined;
+        if (!row) return null;
+        if (col) return row[col] ?? null;
+        return row;
+      },
+      async raw() {
+        const rows = stmt().all(...(bound as never[])) as Record<string, unknown>[];
+        return rows.map((r) => Object.values(r));
+      },
+    };
+  };
+  const d1 = {
+    prepare,
+    async batch(statements: { run: () => Promise<unknown> }[]) {
+      sqlite.exec('BEGIN');
+      try {
+        const out = [];
+        for (const s of statements) out.push(await s.run());
+        sqlite.exec('COMMIT');
+        return out;
+      } catch (e) {
+        sqlite.exec('ROLLBACK');
+        throw e;
+      }
+    },
+    exec(sql: string) {
+      sqlite.exec(sql);
+      return Promise.resolve({ count: 0, duration: 0 });
+    },
+    dump() {
+      throw new Error('not implemented');
+    },
+    withSession() {
+      return d1;
+    },
+  };
+  return d1 as unknown as D1Database;
+}
+
+function migratedD1(): D1Database {
+  const sqlite = new DatabaseSync(':memory:');
+  for (const file of ['0001_init.sql', '0002_mcp_blog.sql']) {
+    const sql = readFileSync(new URL(`../migrations/${file}`, import.meta.url), 'utf8');
+    sqlite.exec(sql);
+  }
+  return makeD1(sqlite);
+}
+
+function env(db: D1Database, extra: Record<string, string> = {}) {
+  return {
+    DB: db,
+    ADMIN_MCP_API_KEY: ADMIN_KEY,
+    MCP_READ_KEY: READ_KEY,
+    MCP_NAMED_KEYS: JSON.stringify([{ name: 'harvester-1', key: EDITOR_KEY, role: 'editor' }]),
+    ALLOW_DEMO_SEED: 'false',
+    CANONICAL_ORIGIN: 'https://2yolks.com',
+    ...extra,
+  };
+}
+
+function rpc(method: string, params?: unknown, id = 1) {
+  return { jsonrpc: '2.0', id, method, params };
+}
+
+function call(token: string | null, method: string, params?: unknown) {
+  const headers: Record<string, string> = { 'content-type': 'application/json' };
+  if (token) headers['authorization'] = `Bearer ${token}`;
+  return app.request(
+    'https://2yolks.com/api/admin/mcp',
+    { method: 'POST', headers, body: JSON.stringify(rpc(method, params)) },
+    env(DB),
+  );
+}
+
+// Per-test database, swapped via closure.
+let DB: D1Database;
+
+async function toolCall(token: string, name: string, args: Record<string, unknown>) {
+  const res = await call(token, 'tools/call', { name, arguments: args });
+  const body = (await res.json()) as {
+    result?: { content?: { text: string }[]; isError?: boolean };
+    error?: { code: number; message: string };
+  };
+  const text = body.result?.content?.[0]?.text;
+  return {
+    status: res.status,
+    rpcError: body.error,
+    isError: body.result?.isError === true,
+    data: text ? (JSON.parse(text) as Record<string, unknown>) : undefined,
+  };
+}
+
+const RECIPE = {
+  source: { name: 'Test Kitchen', url: 'https://example.com/r', license: 'CC0-1.0' },
+  originCountry: 'us',
+  locales: [
+    {
+      country: 'us',
+      lang: 'en',
+      title: 'Test Pancakes',
+      intro: 'Draft: not yet tested in a kitchen.',
+      ingredients: ['2 cups flour', '2 eggs', '1 cup milk', '1 tsp salt'],
+      steps: ['Mix.', 'Cook 2 minutes per side.', 'Serve.'],
+    },
+  ],
+};
+
+describe('admin MCP', () => {
+  beforeEach(() => {
+    DB = migratedD1();
+  });
+
+  it('fails closed with 503 when no keys are configured', async () => {
+    const res = await app.request(
+      'https://2yolks.com/api/admin/mcp',
+      { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(rpc('ping')) },
+      { DB, ALLOW_DEMO_SEED: 'false' },
+    );
+    expect(res.status).toBe(503);
+    expect(((await res.json()) as { error: string }).error).toBe('MCP_NOT_CONFIGURED');
+  });
+
+  it('rejects missing and invalid tokens with 401', async () => {
+    expect((await call(null, 'ping')).status).toBe(401);
+    expect((await call('wrong-key', 'ping')).status).toBe(401);
+  });
+
+  it('scopes tools/list to the caller role', async () => {
+    const asViewer = await call(READ_KEY, 'tools/list');
+    const viewerTools = (((await asViewer.json()) as { result: { tools: { name: string }[] } }).result.tools).map(
+      (t) => t.name,
+    );
+    expect(viewerTools).toContain('recipes.list');
+    expect(viewerTools).not.toContain('recipes.create_draft');
+    const asAdmin = await call(ADMIN_KEY, 'tools/list');
+    const adminTools = (((await asAdmin.json()) as { result: { tools: { name: string }[] } }).result.tools).map(
+      (t) => t.name,
+    );
+    expect(adminTools).toContain('recipes.publish');
+    expect(adminTools).toContain('sources.clear_rights');
+  });
+
+  it('GET /tools catalog requires auth and reflects role', async () => {
+    const unauth = await app.request('https://2yolks.com/api/admin/mcp/tools', {}, env(DB));
+    expect(unauth.status).toBe(401);
+    const res = await app.request(
+      'https://2yolks.com/api/admin/mcp/tools',
+      { headers: { authorization: `Bearer ${READ_KEY}` } },
+      env(DB),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { role: string; tools: { name: string }[] };
+    expect(body.role).toBe('viewer');
+    expect(body.tools.map((t) => t.name)).not.toContain('blog.publish');
+  });
+
+  it('runs the full recipe lifecycle with draft-first and rights gating', async () => {
+    // editor creates a draft
+    const created = await toolCall(EDITOR_KEY, 'recipes.create_draft', RECIPE);
+    expect(created.status).toBe(200);
+    expect(created.isError).toBe(false);
+    const id = created.data?.['id'] as string;
+    const sourceId = created.data?.['source_id'] as string;
+    expect(id).toMatch(/^[a-z0-9]+$/);
+
+    // viewer cannot create
+    const denied = await toolCall(READ_KEY, 'recipes.create_draft', RECIPE);
+    expect(denied.isError).toBe(true);
+    expect((denied.data as { error: string }).error).toBe('insufficient role');
+
+    // admin cannot publish while the source is uncleared
+    const early = await toolCall(ADMIN_KEY, 'recipes.publish', { id });
+    expect(early.isError).toBe(true);
+    expect((early.data as { error: string }).error).toBe('source rights not cleared');
+
+    // public API does not list the draft
+    const pub = await app.request('https://2yolks.com/api/v1/countries/us/recipes', {}, env(DB));
+    expect(((await pub.json()) as { recipes: unknown[] }).recipes.length).toBe(0);
+
+    // clear_rights requires confirmation and a reason
+    const unconfirmed = await toolCall(ADMIN_KEY, 'sources.clear_rights', { id: sourceId });
+    expect((unconfirmed.data as { error: string }).error).toMatch(/confirmed/);
+    const noNotes = await toolCall(ADMIN_KEY, 'sources.clear_rights', { id: sourceId, confirmed: true });
+    expect((noNotes.data as { error: string }).error).toMatch(/notes/);
+    const cleared = await toolCall(ADMIN_KEY, 'sources.clear_rights', {
+      id: sourceId,
+      confirmed: true,
+      notes: 'CC0 public domain dedication verified on source page',
+    });
+    expect(cleared.isError).toBe(false);
+
+    // editor can update the draft, then admin publishes it
+    const upd = await toolCall(EDITOR_KEY, 'recipes.update_draft', {
+      id,
+      locales: [{ country: 'us', lang: 'en', intro: 'Kitchen-tested by the 2yolks team.' }],
+    });
+    expect(upd.isError).toBe(false);
+    const pubNow = await toolCall(ADMIN_KEY, 'recipes.publish', { id });
+    expect(pubNow.isError).toBe(false);
+
+    // public API now lists it
+    const pub2 = await app.request('https://2yolks.com/api/v1/countries/us/recipes', {}, env(DB));
+    const listed = ((await pub2.json()) as { recipes: { title: string }[] }).recipes;
+    expect(listed.map((r) => r.title)).toContain('Test Pancakes');
+
+    // published locales are not editable; unpublish returns to draft
+    const editPub = await toolCall(EDITOR_KEY, 'recipes.update_draft', {
+      id,
+      locales: [{ country: 'us', lang: 'en', title: 'Nope' }],
+    });
+    expect(editPub.isError).toBe(true);
+    expect((editPub.data as { error: string }).error).toBe('only draft locales are editable');
+    const unpub = await toolCall(ADMIN_KEY, 'recipes.unpublish', { id, country: 'us', lang: 'en' });
+    expect(unpub.isError).toBe(false);
+    const pub3 = await app.request('https://2yolks.com/api/v1/countries/us/recipes', {}, env(DB));
+    expect(((await pub3.json()) as { recipes: unknown[] }).recipes.length).toBe(0);
+
+    // audit trail captured the writes
+    const audits = await DB.prepare("SELECT COUNT(*) AS n FROM mcp_audit WHERE tool LIKE 'recipes.%' OR tool LIKE 'sources.%'")
+      .bind()
+      .first<{ n: number }>();
+    expect(Number(audits?.n)).toBeGreaterThanOrEqual(4);
+  });
+
+  it('validates recipe submissions the same way as public submissions', async () => {
+    const bad = await toolCall(EDITOR_KEY, 'recipes.create_draft', {
+      source: { name: 'X', url: 'http://insecure.example', license: 'CC0-1.0' },
+      locales: RECIPE.locales,
+    });
+    expect(bad.isError).toBe(true);
+    expect(JSON.stringify(bad.data)).toMatch(/https/);
+  });
+
+  it('runs the blog lifecycle draft -> publish -> unpublish', async () => {
+    const created = await toolCall(EDITOR_KEY, 'blog.create_draft', {
+      author: 'harvester-1',
+      locales: [
+        { country: 'us', lang: 'en', title: 'Why Two Yolks', body: '# Hello\n\nFirst post.', excerpt: 'Intro' },
+        { country: 'mx', lang: 'es', title: 'Por Que Dos Yemas', body: '# Hola\n\nPrimer post.' },
+      ],
+    });
+    expect(created.isError).toBe(false);
+    const id = created.data?.['id'] as string;
+
+    // drafts are listed with status filter
+    const drafts = await toolCall(READ_KEY, 'blog.list', { status: 'draft' });
+    expect((drafts.data?.['posts'] as unknown[]).length).toBe(2);
+
+    const pub = await toolCall(ADMIN_KEY, 'blog.publish', { id, country: 'us', lang: 'en' });
+    expect(pub.isError).toBe(false);
+    expect(pub.data?.['locales_changed']).toBe(1);
+
+    const listed = await toolCall(READ_KEY, 'blog.list', { status: 'published' });
+    const posts = listed.data?.['posts'] as { slug: string; country: string }[];
+    expect(posts.length).toBe(1);
+    expect(posts[0]?.slug).toBe('why-two-yolks');
+
+    const unpub = await toolCall(ADMIN_KEY, 'blog.unpublish', { id });
+    expect(unpub.isError).toBe(false);
+    const remaining = await toolCall(READ_KEY, 'blog.list', { status: 'published' });
+    expect((remaining.data?.['posts'] as unknown[]).length).toBe(0);
+  });
+
+  it('rejects blog locales for unlaunched countries and bad slugs', async () => {
+    const badCountry = await toolCall(EDITOR_KEY, 'blog.create_draft', {
+      author: 'a',
+      locales: [{ country: 'zz', lang: 'en', title: 'T', body: 'B' }],
+    });
+    expect(badCountry.isError).toBe(true);
+    const badSlug = await toolCall(EDITOR_KEY, 'blog.create_draft', {
+      author: 'a',
+      locales: [{ country: 'us', lang: 'en', title: 'T', body: 'B', slug: 'Has Spaces' }],
+    });
+    expect(badSlug.isError).toBe(true);
+  });
+});
