@@ -16,7 +16,7 @@ export function safeJsonLd(value: object): string {
     .replace(/>/g, '\\u003e')
     .replace(/&/g, '\\u0026');
 }
-import { Home, CountryHome, RecipeView, AboutView, HowWeTestView, NotFoundView, type HomeProps, type CountryHomeProps } from './App';
+import { Home, CountryHome, RecipeView, AboutView, PrivacyView, HowWeTestView, NotFoundView, type HomeProps, type CountryHomeProps } from './App';
 import { RECIPE_CLIENT_SCRIPT } from './clientScript';
 import type { RecipePage, IngredientEntry } from '@2yolks/contracts';
 import { uiStrings, renderIngredient, renderStep, defaultUnitSystem } from '@2yolks/contracts';
@@ -113,10 +113,15 @@ function shell(body: string, { title, alternates = [], jsonLd, noindex = false, 
     <meta name="twitter:card" content="${og.image ? 'summary_large_image' : 'summary'}" />` : ''}
     ${ld}
     <style>${BASE_CSS}</style>
+    ${ANALYTICS_BEACON}
   </head>
-  <body><header class="site-header"><a class="brand" href="/">2yolks</a></header>${body}<footer class="site-footer"><a href="/about">About / Acerca de</a> &middot; <a href="/how-we-test">How we test / C&oacute;mo probamos</a></footer></body>
+  <body><header class="site-header"><a class="brand" href="/">2yolks</a></header>${body}<footer class="site-footer"><a href="/about">About / Acerca de</a> &middot; <a href="/how-we-test">How we test / C&oacute;mo probamos</a> &middot; <a href="/privacy">Privacy / Privacidad</a></footer></body>
 </html>`;
 }
+
+// Cloudflare Web Analytics (free, cookieless). The site token is public by design.
+const ANALYTICS_BEACON =
+  `<script defer src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='{"token": "24832070d4c94429a9e409048f9a6b30"}'></script>`;
 
 export function renderHome(props: HomeProps): string {
   return shell(renderToString(<Home {...props} />), { title: '2yolks' });
@@ -126,6 +131,10 @@ export function renderCountryHome(props: CountryHomeProps): string {
   return shell(renderToString(<CountryHome {...props} />), {
     title: `2yolks - ${props.countryName}`,
   });
+}
+
+export function renderPrivacy(): string {
+  return shell(renderToString(<PrivacyView />), { title: 'Privacy - 2yolks' });
 }
 
 export function renderAbout(): string {
