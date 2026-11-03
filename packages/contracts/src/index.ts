@@ -158,6 +158,16 @@ const UI_STRINGS: Record<string, UiStrings> = {
     about: 'Acerca de', howWeTest: 'C\u00f3mo probamos y etiquetamos las recetas', print: 'Imprimir', home: 'Inicio',
     tagline: 'Recetas que valen dos huevos.',
   },
+  fr: {
+    ingredients: 'Ingr\u00e9dients', steps: '\u00c9tapes', source: 'Source',
+    jumpToRecipe: 'Aller \u00e0 la recette', servings: 'Portions', cookMode: 'Mode cuisine',
+    exitCookMode: 'Quitter le mode cuisine', previousStep: 'Retour', nextStep: 'Suivant',
+    startTimer: 'D\u00e9marrer le minuteur', timerDone: 'Termin\u00e9 !',
+    untestedBadge: 'Pas encore test\u00e9e',
+    untestedNote: 'Pas encore test\u00e9e en cuisine. \u00c9crite \u00e0 partir de techniques courantes ; nous ne l\u2019avons pas encore cuisin\u00e9e.',
+    about: '\u00c0 propos', howWeTest: 'Comment nous testons et \u00e9tiquetons les recettes', print: 'Imprimer', home: 'Accueil',
+    tagline: 'Des recettes qui valent deux \u0153ufs.',
+  },
 };
 
 export function uiStrings(lang: string): UiStrings {
@@ -450,3 +460,4 @@ export interface RecipePage {
   locale: RecipeLocale;
   source: Source;
 }
+export * from './units';
