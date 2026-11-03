@@ -1230,15 +1230,19 @@ async function callTool(ctx: CallCtx, name: string, args: Record<string, unknown
       data: { error: 'insufficient role', tool: name, needs: tool.role, has: ctx.role },
     };
   }
-  // Every write commits content + audit in one D1 batch, so an unexpected
-  // failure means nothing was written: return a structured, retry-safe 500
-  // instead of a bare crash that invites a blind retry.
+  // Every write commits content + audit in one D1 batch, so an in-process
+  // failure means nothing was written. This guarantee covers the D1 failure
+  // only: a client that saw a transport timeout cannot tell committed from
+  // uncommitted and must re-check state (recipes.get/list) before retrying.
   try {
     return await dispatch(ctx, name, args);
   } catch {
     return {
       status: 500,
-      data: { error: 'write failed before commit; content and audit are atomic, so nothing was written and the call is safe to retry' },
+      data: {
+        error: 'write failed before commit; content and audit are atomic, so nothing was written and this call is safe to retry',
+        hint: 'if the request failed at the transport level (timeout, no response), re-check state with recipes.get/list before retrying - the write may have committed',
+      },
     };
   }
 }
