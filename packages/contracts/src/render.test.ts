@@ -36,3 +36,11 @@ describe('unit rendering', () => {
     expect(defaultUnitSystem('mx')).toBe('metric');
   });
 });
+
+import { renderIngredient as _ri } from './render';
+describe('metric output uses decimals, not fractions', () => {
+  it('1 tsp -> 5 ml, 2.5 cups-ish litres stay decimal', () => {
+    expect(_ri('1 teaspoon oregano', 'en', 'metric')).toBe('5 ml oregano');
+    expect(_ri('1 cucharadita de orégano', 'es', 'metric')).toMatch(/^5 ml/);
+  });
+});

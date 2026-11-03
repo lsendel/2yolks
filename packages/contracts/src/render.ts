@@ -65,8 +65,9 @@ function asWritten(l: Line, mult: number): string {
   return l.written || label(l.unit!, 'en');
 }
 
-function fmtRange(a: number, b: number | null): string {
-  return b !== null ? `${formatQty(a)}-${formatQty(b)}` : formatQty(a);
+function fmtRange(a: number, b: number | null, dec = false): string {
+  const f = (n: number) => (dec ? String(Math.round(n * 100) / 100) : formatQty(n));
+  return b !== null ? `${f(a)}-${f(b)}` : f(a);
 }
 
 /** One ingredient line in one unit system at one scale. Converts only within
@@ -82,11 +83,11 @@ export function renderIngredient(entry: IngredientEntry, lang: string, system: U
   if (!a) return `${fmtRange(l.qty * mult, l.qtyEnd === null ? null : l.qtyEnd * mult)} ${asWritten(l, mult)} ${l.text}`.trim();
   if (l.qtyEnd !== null) {
     const b = convertQuantity({ qty: l.qtyEnd * mult, unit: l.unit }, system)!;
-    if (b.unit === a.unit) return `${fmtRange(a.qty, b.qty)} ${label(a.unit, lang)} ${l.text}`.trim();
+    if (b.unit === a.unit) return `${fmtRange(a.qty, b.qty, system === 'metric')} ${label(a.unit, lang)} ${l.text}`.trim();
     // Range straddles two display units: keep the unit as written.
     return `${fmtRange(l.qty * mult, l.qtyEnd * mult)} ${l.written} ${l.text}`.trim();
   }
-  return `${formatQty(a.qty)} ${label(a.unit, lang, a.qty)} ${l.text}`.trim();
+  return `${system === 'metric' ? fmtRange(a.qty, null, true) : formatQty(a.qty)} ${label(a.unit, lang, a.qty)} ${l.text}`.trim();
 }
 
 export function isConvertible(entry: IngredientEntry, system: UnitSystem): boolean {
