@@ -33,7 +33,11 @@ Both shapes are accepted and behave identically:
   flag wins either way.
 - A write commits its content mutation and its `mcp_audit` row in one D1
   batch: a success response always means the change is audited, and a
-  failed audit fails the whole write instead of committing silently.
+  failed audit fails the whole write instead of committing silently. An
+  in-process failure means nothing was written and the call is safe to
+  retry; after a transport-level failure (timeout, no response), re-check
+  state with recipes.get/list before retrying, since the write may have
+  committed. Duplicate creates answer 409 with the existing id.
 - Audit rows are attributed to the authenticated key identity; the
   `X-MCP-Caller` header is recorded as declared context only and cannot
   set the actor.
