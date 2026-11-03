@@ -46,3 +46,26 @@ describe('quality state', () => {
     expect(isUntested({ testedAt: '2026-11-20' })).toBe(false);
   });
 });
+
+import { validateRecipeSubmission, checkStructuredTranslation } from './index';
+describe('translation rules in submissions', () => {
+  const src = { country: 'us', lang: 'en', title: 'Soup', ingredients: [{ ref: 'oil', qty: 1, unit: 'tbsp', name: 'olive oil' }, '1 onion'], steps: ['Heat {i:oil} for 5 minutes. Cook to {t:160F}.'] };
+  const es = { country: 'mx', lang: 'es', title: 'Sopa', translationOf: 'us/en', translationMethod: 'machine' as const, ingredients: [{ ref: 'oil', qty: 1, unit: 'tbsp', name: 'aceite de oliva' }, '1 cebolla'], steps: ['Calienta {i:oil} por 5 minutos. Cocina a {t:160F}.'] };
+  const base = { source: { name: 'x', url: 'https://example.com', license: 'internal-original' }, originCountry: 'us' };
+  it('accepts a valid original plus translation', () => {
+    expect(validateRecipeSubmission({ ...base, locales: [src, es] }).ok).toBe(true);
+  });
+  it('rejects two originals, missing method, and changed quantities', () => {
+    expect(validateRecipeSubmission({ ...base, locales: [src, { ...es, translationOf: undefined }] }).ok).toBe(false);
+    expect(validateRecipeSubmission({ ...base, locales: [src, { ...es, translationMethod: undefined }] }).ok).toBe(false);
+    const bad = { ...es, ingredients: [{ ref: 'oil', qty: 2, unit: 'tbsp', name: 'aceite' }, '1 cebolla'] };
+    expect(validateRecipeSubmission({ ...base, locales: [src, bad] }).ok).toBe(false);
+  });
+  it('rejects a single locale claiming to be a translation, and unknown sources', () => {
+    expect(validateRecipeSubmission({ ...base, locales: [{ ...src, translationOf: 'us/en' }] }).ok).toBe(false);
+    expect(validateRecipeSubmission({ ...base, locales: [src, { ...es, translationOf: 'fr/fr' }] }).ok).toBe(false);
+  });
+  it('structured check flags unit changes', () => {
+    expect(checkStructuredTranslation(src.ingredients, [{ ref: 'oil', qty: 1, unit: 'cup', name: 'aceite' }, '1 cebolla']).ok).toBe(false);
+  });
+});

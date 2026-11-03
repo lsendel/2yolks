@@ -12,6 +12,8 @@
 // approved platform plan; wave 0 = registered, not yet scheduled.
 // ---------------------------------------------------------------------------
 
+import { isStructured, unitInfo, checkTranslation, checkStructuredTranslation, checkAllergens, ingredientText, type IngredientEntry } from './units';
+
 export interface Country {
   /** ISO 3166-1 alpha-2, lowercase. Used as the first URL segment. */
   code: string;
@@ -199,8 +201,12 @@ export interface RecipeLocaleInput {
   title: string;
   slug?: string;
   intro?: string;
-  ingredients: string[];
+  ingredients: IngredientEntry[];
   steps: string[];
+  /** "country/lang" of the locale this one was translated from. Exactly one
+   * locale per multi-locale submission (the original) leaves this unset. */
+  translationOf?: string;
+  translationMethod?: 'human' | 'machine';
 }
 
 export interface RecipeSubmission {
@@ -273,11 +279,43 @@ export function validateRecipeSubmission(input: unknown): ValidationResult {
         fail(`locales[${i}].slug`, 'must match slug pattern');
       if (lc['intro'] !== undefined && (typeof lc['intro'] !== 'string' || lc['intro'].length > MAX_LEN.intro))
         fail(`locales[${i}].intro`, 'max 2000 chars');
-      const arrOk = (v: unknown): v is string[] =>
-        Array.isArray(v) && v.length > 0 && v.every((x) => typeof x === 'string' && x.length > 0 && x.length <= MAX_LEN.item);
-      if (!arrOk(lc['ingredients'])) fail(`locales[${i}].ingredients`, 'non-empty string array required');
-      if (!arrOk(lc['steps'])) fail(`locales[${i}].steps`, 'non-empty string array required');
+      const strOk = (x: unknown): x is string => typeof x === 'string' && x.length > 0 && x.length <= MAX_LEN.item;
+      const ingOk = (x: unknown): boolean =>
+        strOk(x) || (isStructured(x) && x.name.length > 0 && x.name.length <= MAX_LEN.item &&
+          (x.qty === null || (Number.isFinite(x.qty) && x.qty > 0)) &&
+          (x.unit === undefined || x.unit === '' || unitInfo(x.unit) !== undefined || x.qty === null || /^[a-z]+$/.test(x.unit)));
+      if (!Array.isArray(lc['ingredients']) || lc['ingredients'].length === 0 || !lc['ingredients'].every(ingOk))
+        fail(`locales[${i}].ingredients`, 'non-empty array of strings or structured ingredients required');
+      if (!Array.isArray(lc['steps']) || lc['steps'].length === 0 || !lc['steps'].every(strOk))
+        fail(`locales[${i}].steps`, 'non-empty string array required');
+      if (lc['translationOf'] !== undefined && typeof lc['translationOf'] !== 'string')
+        fail(`locales[${i}].translationOf`, 'must be a country/lang string');
+      if (lc['translationMethod'] !== undefined && lc['translationMethod'] !== 'human' && lc['translationMethod'] !== 'machine')
+        fail(`locales[${i}].translationMethod`, "must be 'human' or 'machine'");
     });
+
+    // Translation rules (fail closed). A single locale is an original. With
+    // several, exactly one is the original and every other points at a locale
+    // in this submission and declares how it was produced.
+    if (errors.length === 0 && locs.length > 1) {
+      const rows = locs as RecipeLocaleInput[];
+      const key = (r: RecipeLocaleInput) => `${r.country}/${r.lang}`;
+      const originals = rows.filter((r) => r.translationOf === undefined);
+      if (originals.length !== 1) fail('locales', 'exactly one locale must be the original (no translationOf)');
+      rows.forEach((r, i) => {
+        if (r.translationOf === undefined) return;
+        const src = rows.find((x) => key(x) === r.translationOf);
+        if (!src || key(src) === key(r)) return fail(`locales[${i}].translationOf`, 'must name a different locale in this submission');
+        if (src.translationOf !== undefined) return fail(`locales[${i}].translationOf`, 'must name the original locale, not another translation');
+        if (!r.translationMethod) fail(`locales[${i}].translationMethod`, 'required for translated locales');
+        const steps = checkTranslation(src, r);
+        const ing = checkStructuredTranslation(src.ingredients, r.ingredients);
+        const alg = checkAllergens(ingredientText(src.ingredients), ingredientText(r.ingredients));
+        for (const p of [...steps.problems, ...ing.problems, ...alg.problems]) fail(`locales[${i}]`, `translation check: ${p}`);
+      });
+    } else if (errors.length === 0 && locs.length === 1 && (locs[0] as RecipeLocaleInput).translationOf !== undefined) {
+      fail('locales[0].translationOf', 'a single locale cannot be a translation');
+    }
   }
 
   if (errors.length > 0) return { ok: false, errors };
