@@ -296,6 +296,18 @@ export function parseIngredient(text: string): ParsedIngredient {
   return { qty, qtyEnd, rest: (m[3] ?? '').trim() };
 }
 
+/** The serving scaler only rescales each ingredient's leading number. It is
+ * unsafe when ingredient text carries other quantities (unit conversions
+ * such as "(250 ml)", sub-amounts) or when steps quote ingredient amounts
+ * ("add 1 cup"), because those would stay unscaled and contradict the
+ * scaled list. Times and temperatures are not amounts and are ignored. */
+export function scalingIsSafe(ingredients: string[], steps: string[]): boolean {
+  if (ingredients.some((raw) => /\d/.test(parseIngredient(raw).rest))) return false;
+  const amount =
+    /\d[\d./\u00bc-\u00be\u2150-\u215e]*\s*(?:cups?|tbsp|tsp|tablespoons?|teaspoons?|g|kg|ml|l|oz|lbs?|pounds?|tazas?|cucharadas?|cucharaditas?|litros?|gramos?)(?![\p{L}])/iu;
+  return !steps.some((st) => amount.test(st));
+}
+
 /** Format a scaled quantity with unicode fractions (eighths and thirds). */
 export function formatQty(n: number): string {
   const FRAC_DISPLAY: [number, string][] = [
