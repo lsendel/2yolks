@@ -8,7 +8,7 @@
   },
   "recipes": [
     {
-      "id": "w1-golumpki-soup",
+      "id": "w1golumpki",
       "origin_country": "pl",
       "country": "us",
       "lang": "en",
@@ -41,7 +41,7 @@
       ]
     },
     {
-      "id": "w1-pork-cabbage-potstickers",
+      "id": "w1potsticker",
       "origin_country": "cn",
       "country": "us",
       "lang": "en",
@@ -76,7 +76,7 @@
       ]
     },
     {
-      "id": "w1-pozole-rojo",
+      "id": "w1pozole",
       "origin_country": "mx",
       "country": "mx",
       "lang": "es",
@@ -110,7 +110,7 @@
       ]
     },
     {
-      "id": "w1-enchiladas-rojas-pollo",
+      "id": "w1enchiladas",
       "origin_country": "mx",
       "country": "mx",
       "lang": "es",
@@ -145,13 +145,13 @@
       ]
     },
     {
-      "id": "w1-tacos-birria-res",
+      "id": "w1birria",
       "origin_country": "mx",
       "country": "mx",
       "lang": "es",
       "title": "Tacos de birria de res con consomé",
       "slug": "tacos-de-birria-de-res",
-      "intro": "Res cocida lentamente en una salsa de chiles, servida en tacos dorados con queso y un consomé para mojar. Rinde unos 16 tacos. Unas 4 horas en total, casi todo en el horno. Borrador: aún no probado en cocina.",
+      "intro": "Res cocida lentamente en una salsa de chiles, servida en tacos dorados con queso y un consomé para mojar. Rinde unos 16 tacos. Unas 4 horas y media en total (1 hora de marinada y 3 de horno). Borrador: aún no probado en cocina.",
       "ingredients": [
         "1.2 kg de falda o aguayón de res, en 4 trozos grandes",
         "5 chiles guajillo, sin rabo, semillas ni venas",

@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { parsePath, recipePath } from '@2yolks/contracts';
 
 const data = JSON.parse(readFileSync(new URL('./wave1.json', import.meta.url), 'utf8'));
 
@@ -28,6 +29,12 @@ describe('wave 1 editorial drafts', () => {
       if (/pork|beef|cerdo|res|pollo/i.test(r.ingredients.join(' '))) {
         expect(text).toMatch(/160°F|71°C|74°C|se deshaga|muy suave/);
       }
+    }
+  });
+  it('has ids and slugs that round-trip through the public URL parser', () => {
+    for (const r of data.recipes) {
+      expect(r.id).toMatch(/^[a-z0-9]+$/);
+      expect(parsePath(recipePath(r.country, r.id, r.slug))).toEqual({ country: r.country, id: r.id, slug: r.slug });
     }
   });
 });
