@@ -148,6 +148,15 @@ export interface UiStrings {
   units: string;
   unitsMetric: string;
   unitsUs: string;
+  browseByCountry: string;
+  allRecipes: string;
+  categories: string;
+  allCategories: string;
+  skipToContent: string;
+  recipeWord: string;
+  recipesWord: string;
+  testingShort: string;
+  emptyCategory: string;
 }
 
 const UI_STRINGS: Record<string, UiStrings> = {
@@ -163,6 +172,10 @@ const UI_STRINGS: Record<string, UiStrings> = {
     tagline: 'Recipes worth cracking two eggs for.',
     share: 'Share', copyLink: 'Copy link', linkCopied: 'Link copied', shareEmail: 'Email',
     units: 'Units', unitsMetric: 'Metric', unitsUs: 'US customary',
+    browseByCountry: 'Browse by country', allRecipes: 'All recipes',
+    categories: 'Categories', allCategories: 'All', skipToContent: 'Skip to content',
+    recipeWord: 'recipe', recipesWord: 'recipes',
+    testingShort: 'How we test', emptyCategory: 'No recipes in this category yet.',
   },
   es: {
     ingredients: 'Ingredientes', steps: 'Pasos', source: 'Fuente',
@@ -176,6 +189,10 @@ const UI_STRINGS: Record<string, UiStrings> = {
     tagline: 'Recetas que valen dos huevos.',
     share: 'Compartir', copyLink: 'Copiar enlace', linkCopied: 'Enlace copiado', shareEmail: 'Correo',
     units: 'Unidades', unitsMetric: 'M\u00e9trico', unitsUs: 'EE. UU.',
+    browseByCountry: 'Explora por pa\u00eds', allRecipes: 'Todas las recetas',
+    categories: 'Categor\u00edas', allCategories: 'Todas', skipToContent: 'Saltar al contenido',
+    recipeWord: 'receta', recipesWord: 'recetas',
+    testingShort: 'C\u00f3mo probamos', emptyCategory: 'A\u00fan no hay recetas en esta categor\u00eda.',
   },
   fr: {
     ingredients: 'Ingr\u00e9dients', steps: '\u00c9tapes', source: 'Source',
@@ -189,6 +206,10 @@ const UI_STRINGS: Record<string, UiStrings> = {
     tagline: 'Des recettes qui valent deux \u0153ufs.',
     share: 'Partager', copyLink: 'Copier le lien', linkCopied: 'Lien copi\u00e9', shareEmail: 'E-mail',
     units: 'Unit\u00e9s', unitsMetric: 'M\u00e9trique', unitsUs: 'Am\u00e9ricaines (US)',
+    browseByCountry: 'Explorer par pays', allRecipes: 'Toutes les recettes',
+    categories: 'Cat\u00e9gories', allCategories: 'Toutes', skipToContent: 'Aller au contenu',
+    recipeWord: 'recette', recipesWord: 'recettes',
+    testingShort: 'Comment nous testons', emptyCategory: 'Aucune recette dans cette cat\u00e9gorie pour le moment.',
   },
 };
 
@@ -201,6 +222,28 @@ export const COUNTRY_INTROS: Readonly<Record<string, { lang: string; text: strin
   us: { lang: 'en', text: 'Home-style American recipes, plus dishes American kitchens have made their own. Every recipe carries a clear label for whether it has been tested in a kitchen.' },
   mx: { lang: 'es', text: 'Recetas mexicanas escritas en espa\u00f1ol, con medidas en m\u00e9trico. Cada receta indica con claridad si ya se prob\u00f3 en cocina.' },
 };
+
+// ---------------------------------------------------------------------------
+// Dish-type categories
+// A bounded, locale-invariant taxonomy grounded in the recipes actually
+// published. Stored as a slug on recipes.category (NULL = uncategorized,
+// shown under "All"). Labels are display-only; register a slug here before
+// any row may use it, so category values never drift into free text.
+// ---------------------------------------------------------------------------
+
+export const CATEGORIES: Readonly<Record<RecipeCategorySlug, { en: string; es: string; fr: string }>> = {
+  'soups-stews': { en: 'Soups & stews', es: 'Sopas y guisos', fr: 'Soupes et rago\u00fbts' },
+  dumplings: { en: 'Dumplings', es: 'Dumplings', fr: 'Raviolis' },
+  'tacos-tortillas': { en: 'Tacos & tortilla dishes', es: 'Tacos y platos de tortilla', fr: 'Tacos et plats \u00e0 la tortilla' },
+};
+
+/** Localized display label for a stored category slug; null when the slug is
+ * missing or unregistered (callers render nothing, never the raw slug). */
+export function categoryLabel(slug: string | null | undefined, lang: string): string | null {
+  if (!slug || !isRecipeCategorySlug(slug)) return null;
+  const entry = CATEGORIES[slug];
+  return (entry as unknown as Record<string, string>)[lang] ?? entry.en;
+}
 
 /** Quality state is explicit per recipe: tested only when a person recorded
  * a tested_at date. Never inferred from the source license. */

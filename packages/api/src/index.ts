@@ -12,9 +12,10 @@ import {
   countryPath,
   slugify,
   validateRecipeSubmission,
+  CATEGORIES,
   type RecipePage,
 } from '@2yolks/contracts';
-import { renderHome, renderCountryHome, renderRecipe, renderAbout, renderPrivacy, renderHowWeTest, renderNotFound } from '@2yolks/web/server';
+import { renderHome, renderCountryHome, renderRecipe, renderAbout, renderPrivacy, renderHowWeTest, renderNotFound, type SiteNavItem } from '@2yolks/web/server';
 import { isUntested } from '@2yolks/contracts';
 import { createDb, recipes, recipeLocales, recipeImages, sources } from './db';
 import { mcpApp } from './mcp';
@@ -59,6 +60,21 @@ function published(db: ReturnType<typeof createDb>, allowDemo: boolean) {
 }
 
 const demoAllowed = (c: Context<{ Bindings: Bindings }>) => c.env.ALLOW_DEMO_SEED === 'true';
+
+/** Header/footer nav: countries that currently carry at least one published
+ * recipe. Empty countries 404 on their pages, so they never appear here. */
+async function siteNav(db: ReturnType<typeof createDb>, allowDemo: boolean): Promise<SiteNavItem[]> {
+  const rows = await db
+    .selectDistinct({ country: recipeLocales.country })
+    .from(recipeLocales)
+    .innerJoin(recipes, eq(recipeLocales.recipeId, recipes.id))
+    .innerJoin(sources, eq(recipes.sourceId, sources.id))
+    .where(published(db, allowDemo));
+  return rows
+    .map((r) => getCountry(r.country))
+    .filter((ct): ct is NonNullable<typeof ct> => Boolean(ct))
+    .map((ct) => ({ href: countryPath(ct.code), label: ct.name }));
+}
 
 // --- API ---------------------------------------------------------------
 
@@ -247,7 +263,22 @@ app.get('/', async (c) => {
       .filter((lang) => lang === defaultLocale(ct.code) || live.some((l) => l.country === ct.code && l.lang === lang))
       .map((lang) => ({ country: ct.code, countryName: ct.name, lang })),
   );
-  return c.html(renderHome({ locales: markets }));
+  const recipeRows = await db
+    .select({ id: recipeLocales.recipeId, country: recipeLocales.country, lang: recipeLocales.lang, slug: recipeLocales.slug, title: recipeLocales.title, testedAt: recipes.testedAt })
+    .from(recipeLocales)
+    .innerJoin(recipes, eq(recipeLocales.recipeId, recipes.id))
+    .innerJoin(sources, eq(recipes.sourceId, sources.id))
+    .where(published(db, demoAllowed(c)));
+  const nav = await siteNav(db, demoAllowed(c));
+  return c.html(
+    renderHome(
+      {
+        locales: markets,
+        recipes: recipeRows.map((r) => ({ id: r.id, country: r.country, lang: r.lang, slug: r.slug, title: r.title, untested: isUntested({ testedAt: r.testedAt }) })),
+      },
+      nav,
+    ),
+  );
 });
 
 const countryHome = async (c: Context<{ Bindings: Bindings }>) => {
@@ -263,20 +294,41 @@ const countryHome = async (c: Context<{ Bindings: Bindings }>) => {
     .innerJoin(recipes, eq(recipeLocales.recipeId, recipes.id))
     .innerJoin(sources, eq(recipes.sourceId, sources.id))
     .where(and(eq(recipeLocales.country, parsed.country), published(db, demoAllowed(c))));
+  // ?cat=<slug> filters the listing by dish type. Unknown slugs are ignored
+  // (full listing), never 404 on a hand-typed filter.
+  const catParam = new URL(c.req.url).searchParams.get('cat');
+  const activeCategory = catParam && CATEGORIES[catParam] ? catParam : null;
+  const mapped = rows.map((r) => ({
+    id: r.id,
+    slug: r.slug,
+    title: r.title,
+    untested: isUntested({ testedAt: r.testedAt }),
+    lang: r.lang,
+    country: parsed.country,
+    category: (r as { category?: string | null }).category ?? null,
+  }));
+  const categories = [...new Set(mapped.map((r) => r.category).filter((x): x is string => Boolean(x)))].sort();
+  const filtered = activeCategory ? mapped.filter((r) => r.category === activeCategory) : mapped;
+  const nav = await siteNav(db, demoAllowed(c));
   return c.html(
-    renderCountryHome({
-      countryName: country.name,
-      country: parsed.country,
-      recipes: rows.map((r) => ({ id: r.id, slug: r.slug, title: r.title, untested: isUntested({ testedAt: r.testedAt }), lang: r.lang })),
-    }),
+    renderCountryHome(
+      {
+        countryName: country.name,
+        country: parsed.country,
+        recipes: filtered,
+        categories,
+        activeCategory,
+      },
+      nav,
+    ),
     // Empty listings must not be indexed (thin-page gate).
-    rows.length === 0 ? 200 : 200,
-    rows.length === 0 ? { 'x-robots-tag': 'noindex' } : undefined,
+    200,
+    filtered.length === 0 ? { 'x-robots-tag': 'noindex' } : undefined,
   );
 };
-app.get('/about', (c) => c.html(renderAbout()));
-app.get('/privacy', (c) => c.html(renderPrivacy()));
-app.get('/how-we-test', (c) => c.html(renderHowWeTest()));
+app.get('/about', async (c) => c.html(renderAbout(await siteNav(createDb(c.env.DB), demoAllowed(c)))));
+app.get('/privacy', async (c) => c.html(renderPrivacy(await siteNav(createDb(c.env.DB), demoAllowed(c)))));
+app.get('/how-we-test', async (c) => c.html(renderHowWeTest(await siteNav(createDb(c.env.DB), demoAllowed(c)))));
 app.get('/:country', countryHome);
 app.get('/:country/', countryHome);
 
@@ -405,7 +457,8 @@ const recipeRoute = async (c: Context<{ Bindings: Bindings }>) => {
       notes: canonical.sources.notes,
     },
   };
-  return c.html(renderRecipe(page, alternates));
+  const nav = await siteNav(db, demoAllowed(c));
+  return c.html(renderRecipe(page, alternates, { nav, countryName: getCountry(parsed.country)?.name }));
 };
 app.get('/:country/recipes/:idSlug', recipeRoute);
 app.get('/:country/:lang/recipes/:idSlug', recipeRoute);
