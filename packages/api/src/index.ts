@@ -284,6 +284,11 @@ const recipeRoute = async (c: Context<{ Bindings: Bindings }>) => {
       ingredientsJson: canonical.recipe_locales.ingredientsJson,
       stepsJson: canonical.recipe_locales.stepsJson,
       status: canonical.recipe_locales.status,
+      translationOf: canonical.recipe_locales.translationOf,
+      translationMethod: canonical.recipe_locales.translationMethod,
+      translationReviewedAt: canonical.recipe_locales.translationReviewedAt,
+      translationReviewedBy: canonical.recipe_locales.translationReviewedBy,
+      translationReviewerKind: canonical.recipe_locales.translationReviewerKind,
     },
     source: {
       id: canonical.sources.id,
