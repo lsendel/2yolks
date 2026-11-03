@@ -128,6 +128,13 @@ export interface UiStrings {
   nextStep: string;
   startTimer: string;
   timerDone: string;
+  untestedBadge: string;
+  untestedNote: string;
+  about: string;
+  howWeTest: string;
+  print: string;
+  home: string;
+  tagline: string;
 }
 
 const UI_STRINGS: Record<string, UiStrings> = {
@@ -136,17 +143,37 @@ const UI_STRINGS: Record<string, UiStrings> = {
     jumpToRecipe: 'Jump to recipe', servings: 'Servings', cookMode: 'Cook mode',
     exitCookMode: 'Exit cook mode', previousStep: 'Back', nextStep: 'Next',
     startTimer: 'Start timer', timerDone: 'Done!',
+    untestedBadge: 'Not yet tested',
+    untestedNote: 'Not yet tested in a kitchen. Written from standard techniques; we have not cooked it.',
+    about: 'About', howWeTest: 'How we test and label recipes', print: 'Print', home: 'Home',
+    tagline: 'Recipes worth cracking two eggs for.',
   },
   es: {
     ingredients: 'Ingredientes', steps: 'Pasos', source: 'Fuente',
     jumpToRecipe: 'Ir a la receta', servings: 'Porciones', cookMode: 'Modo cocina',
     exitCookMode: 'Salir del modo cocina', previousStep: 'Atr\u00e1s', nextStep: 'Siguiente',
     startTimer: 'Iniciar temporizador', timerDone: '\u00a1Listo!',
+    untestedBadge: 'A\u00fan no probada',
+    untestedNote: 'A\u00fan no probada en cocina. Escrita con t\u00e9cnicas est\u00e1ndar; todav\u00eda no la hemos cocinado.',
+    about: 'Acerca de', howWeTest: 'C\u00f3mo probamos y etiquetamos las recetas', print: 'Imprimir', home: 'Inicio',
+    tagline: 'Recetas que valen dos huevos.',
   },
 };
 
 export function uiStrings(lang: string): UiStrings {
   return UI_STRINGS[lang] ?? UI_STRINGS['en']!;
+}
+
+/** Per-country landing copy for listing pages (original text). */
+export const COUNTRY_INTROS: Readonly<Record<string, { lang: string; text: string }>> = {
+  us: { lang: 'en', text: 'Home-style American recipes, plus dishes American kitchens have made their own. Every recipe carries a clear label for whether it has been tested in a kitchen.' },
+  mx: { lang: 'es', text: 'Recetas mexicanas escritas en espa\u00f1ol, con medidas en m\u00e9trico. Cada receta indica con claridad si ya se prob\u00f3 en cocina.' },
+};
+
+/** A recipe counts as untested until its source is a person-verified one.
+ * Editorial drafts (license internal-original) have not been cooked. */
+export function isUntested(source: { license: string }): boolean {
+  return source.license === 'internal-original';
 }
 
 // ---------------------------------------------------------------------------

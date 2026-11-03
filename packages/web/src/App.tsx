@@ -1,5 +1,5 @@
 import type { RecipePage } from '@2yolks/contracts';
-import { countryPath, recipePath, uiStrings, parseIngredient, formatQty, scalingIsSafe } from '@2yolks/contracts';
+import { countryPath, recipePath, uiStrings, parseIngredient, formatQty, scalingIsSafe, isUntested, COUNTRY_INTROS, defaultLocale } from '@2yolks/contracts';
 
 export interface HomeProps {
   locales: { country: string; countryName: string; lang: string }[];
@@ -26,20 +26,27 @@ export function Home({ locales }: HomeProps) {
 export interface CountryHomeProps {
   countryName: string;
   country: string;
-  recipes: { id: string; slug: string; title: string }[];
+  recipes: { id: string; slug: string; title: string; untested?: boolean; lang?: string }[];
 }
 
 export function CountryHome({ countryName, country, recipes }: CountryHomeProps) {
+  const intro = COUNTRY_INTROS[country];
+  const t = uiStrings(intro?.lang ?? defaultLocale(country) ?? 'en');
   return (
     <main>
       <h1>{countryName}</h1>
+      {intro ? <p lang={intro.lang}>{intro.text}</p> : null}
       <ul className="cards">
         {recipes.map((r) => (
           <li key={`${r.id}-${r.slug}`}>
-            <a href={recipePath(country, r.id, r.slug)}>{r.title}</a>
+            <a href={recipePath(country, r.id, r.slug)}>
+              {r.title}
+              {r.untested ? <span className="badge">{t.untestedBadge}</span> : null}
+            </a>
           </li>
         ))}
       </ul>
+      <p className="langs"><a href="/how-we-test">{t.howWeTest}</a></p>
     </main>
   );
 }
@@ -60,6 +67,12 @@ export function RecipeView({ page, alternates = [] }: { page: RecipePage; altern
   return (
     <main>
       <h1>{page.locale.title}</h1>
+      {isUntested(page.source) ? (
+        <p className="untested" role="note">
+          <span className="badge">{t.untestedBadge}</span> {t.untestedNote}{' '}
+          <a href="/how-we-test">{t.howWeTest}</a>
+        </p>
+      ) : null}
       {others.length > 0 ? (
         <p className="langs">
           {others.map((a) => (
@@ -73,6 +86,9 @@ export function RecipeView({ page, alternates = [] }: { page: RecipePage; altern
         <a href="#recipe" className="jump">
           {t.jumpToRecipe} &darr;
         </a>
+        <button type="button" className="print-open" data-print-open>
+          {t.print}
+        </button>
         <button type="button" className="cook-open" data-cook-open>
           {t.cookMode}
         </button>
@@ -151,6 +167,45 @@ export function RecipeView({ page, alternates = [] }: { page: RecipePage; altern
           </div>
         </div>
       </div>
+    </main>
+  );
+}
+
+export function AboutView() {
+  return (
+    <main>
+      <h1>About 2yolks</h1>
+      <p>2yolks is an international recipe site. We start with the United States (English) and Mexico (Spanish) and add countries as the first two are done well.</p>
+      <p>Recipes are written for 2yolks in our own words, from standard, widely documented techniques. We do not copy text or photos from other sites. A recipe is only shown when its source has been cleared for use.</p>
+      <p>Right now every recipe is labeled not yet tested. We will say so until a person cooks it and signs it off. <a href="/how-we-test">How we test and label recipes</a>.</p>
+      <h2>Acerca de 2yolks</h2>
+      <p>2yolks es un sitio de recetas internacionales. Empezamos con Estados Unidos (ingl&eacute;s) y M&eacute;xico (espa&ntilde;ol). Escribimos las recetas con nuestras propias palabras y las marcamos como "a&uacute;n no probada" hasta que alguien las cocine.</p>
+    </main>
+  );
+}
+
+export function HowWeTestView() {
+  return (
+    <main>
+      <h1>How we test and label recipes</h1>
+      <p>Every recipe on 2yolks carries one of two labels.</p>
+      <ul>
+        <li><strong>Not yet tested.</strong> Written from standard techniques and checked against food-safety guidance (for example USDA safe minimum temperatures). Nobody has cooked it for 2yolks yet, so times and yields are estimates.</li>
+        <li><strong>Tested.</strong> A person cooked it, recorded the real yield and time, and noted changes. We show the date. No recipe has this label yet.</li>
+      </ul>
+      <p>We never invent ratings, reviews or testing. If a recipe has not been cooked, we say so.</p>
+      <h2>C&oacute;mo probamos y etiquetamos las recetas</h2>
+      <p>Cada receta es <strong>&quot;A&uacute;n no probada&quot;</strong> (escrita con t&eacute;cnicas est&aacute;ndar y revisada contra gu&iacute;as de seguridad alimentaria; tiempos y rendimientos son estimados) o <strong>&quot;Probada&quot;</strong> (alguien la cocin&oacute; y registr&oacute; rendimiento, tiempo y cambios, con fecha). Hoy ninguna tiene la etiqueta &quot;Probada&quot;.</p>
+    </main>
+  );
+}
+
+export function NotFoundView() {
+  return (
+    <main>
+      <h1>Page not found / P&aacute;gina no encontrada</h1>
+      <p>We could not find that page. <a href="/">Go to the 2yolks home page</a>.</p>
+      <p>No encontramos esa p&aacute;gina. <a href="/">Ir al inicio</a>.</p>
     </main>
   );
 }

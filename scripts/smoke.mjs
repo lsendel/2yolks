@@ -80,6 +80,16 @@ try {
 
   r = await get('/zz/');
   check('unknown country is 404', r.status === 404);
+  check('unknown path serves custom HTML 404', r.status === 404 && /text\/html/.test(r.headers.get('content-type') || '') && r.body.includes('Page not found'));
+
+  r = await get('/about');
+  check('about page 200', r.status === 200 && r.body.includes('About 2yolks'));
+  r = await get('/how-we-test');
+  check('how-we-test page 200', r.status === 200 && r.body.includes('Not yet tested'));
+  r = await get('/api/dev/passkey-spike');
+  check('dev spike routes removed (404)', r.status === 404);
+  r = await get('/api/dev/cpu-spike');
+  check('dev cpu spike removed (404)', r.status === 404);
 
   r = await get('/mx/recipes/r1-huevos-rancheros');
   check('demo recipe hidden in production mode (404)', r.status === 404);
