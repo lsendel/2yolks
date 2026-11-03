@@ -12,7 +12,7 @@ import {
   countryPath,
   slugify,
   validateRecipeSubmission,
-  CATEGORIES,
+  isRecipeCategorySlug,
   type RecipePage,
 } from '@2yolks/contracts';
 import { renderHome, renderCountryHome, renderRecipe, renderAbout, renderPrivacy, renderHowWeTest, renderNotFound, type SiteNavItem } from '@2yolks/web/server';
@@ -264,7 +264,7 @@ app.get('/', async (c) => {
       .map((lang) => ({ country: ct.code, countryName: ct.name, lang })),
   );
   const recipeRows = await db
-    .select({ id: recipeLocales.recipeId, country: recipeLocales.country, lang: recipeLocales.lang, slug: recipeLocales.slug, title: recipeLocales.title, testedAt: recipes.testedAt })
+    .select({ id: recipeLocales.recipeId, country: recipeLocales.country, lang: recipeLocales.lang, slug: recipeLocales.slug, title: recipeLocales.title, testedAt: recipes.testedAt, category: recipes.category })
     .from(recipeLocales)
     .innerJoin(recipes, eq(recipeLocales.recipeId, recipes.id))
     .innerJoin(sources, eq(recipes.sourceId, sources.id))
@@ -274,7 +274,7 @@ app.get('/', async (c) => {
     renderHome(
       {
         locales: markets,
-        recipes: recipeRows.map((r) => ({ id: r.id, country: r.country, lang: r.lang, slug: r.slug, title: r.title, untested: isUntested({ testedAt: r.testedAt }) })),
+        recipes: recipeRows.map((r) => ({ id: r.id, country: r.country, lang: r.lang, slug: r.slug, title: r.title, untested: isUntested({ testedAt: r.testedAt }), category: r.category })),
       },
       nav,
     ),
@@ -289,7 +289,7 @@ const countryHome = async (c: Context<{ Bindings: Bindings }>) => {
   if (!country || country.wave === 0) return c.notFound();
   const db = createDb(c.env.DB);
   const rows = await db
-    .select({ slug: recipeLocales.slug, title: recipeLocales.title, id: recipeLocales.recipeId, lang: recipeLocales.lang, testedAt: recipes.testedAt })
+    .select({ slug: recipeLocales.slug, title: recipeLocales.title, id: recipeLocales.recipeId, lang: recipeLocales.lang, testedAt: recipes.testedAt, category: recipes.category })
     .from(recipeLocales)
     .innerJoin(recipes, eq(recipeLocales.recipeId, recipes.id))
     .innerJoin(sources, eq(recipes.sourceId, sources.id))
@@ -297,7 +297,7 @@ const countryHome = async (c: Context<{ Bindings: Bindings }>) => {
   // ?cat=<slug> filters the listing by dish type. Unknown slugs are ignored
   // (full listing), never 404 on a hand-typed filter.
   const catParam = new URL(c.req.url).searchParams.get('cat');
-  const activeCategory = catParam && CATEGORIES[catParam] ? catParam : null;
+  const activeCategory = catParam && isRecipeCategorySlug(catParam) ? catParam : null;
   const mapped = rows.map((r) => ({
     id: r.id,
     slug: r.slug,
@@ -305,7 +305,7 @@ const countryHome = async (c: Context<{ Bindings: Bindings }>) => {
     untested: isUntested({ testedAt: r.testedAt }),
     lang: r.lang,
     country: parsed.country,
-    category: (r as { category?: string | null }).category ?? null,
+    category: r.category ?? null,
   }));
   const categories = [...new Set(mapped.map((r) => r.category).filter((x): x is string => Boolean(x)))].sort();
   const filtered = activeCategory ? mapped.filter((r) => r.category === activeCategory) : mapped;

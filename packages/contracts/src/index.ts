@@ -157,6 +157,11 @@ export interface UiStrings {
   recipesWord: string;
   testingShort: string;
   emptyCategory: string;
+  timePrep: string;
+  timeCook: string;
+  timeRest: string;
+  timeTotal: string;
+  imageIllustrationNote: string;
 }
 
 const UI_STRINGS: Record<string, UiStrings> = {
@@ -176,6 +181,8 @@ const UI_STRINGS: Record<string, UiStrings> = {
     categories: 'Categories', allCategories: 'All', skipToContent: 'Skip to content',
     recipeWord: 'recipe', recipesWord: 'recipes',
     testingShort: 'How we test', emptyCategory: 'No recipes in this category yet.',
+    timePrep: 'Prep', timeCook: 'Cook', timeRest: 'Rest', timeTotal: 'Total',
+    imageIllustrationNote: 'Illustration generated for this recipe - not a photo of the cooked dish.',
   },
   es: {
     ingredients: 'Ingredientes', steps: 'Pasos', source: 'Fuente',
@@ -193,6 +200,8 @@ const UI_STRINGS: Record<string, UiStrings> = {
     categories: 'Categor\u00edas', allCategories: 'Todas', skipToContent: 'Saltar al contenido',
     recipeWord: 'receta', recipesWord: 'recetas',
     testingShort: 'C\u00f3mo probamos', emptyCategory: 'A\u00fan no hay recetas en esta categor\u00eda.',
+    timePrep: 'Preparaci\u00f3n', timeCook: 'Cocci\u00f3n', timeRest: 'Reposo', timeTotal: 'Total',
+    imageIllustrationNote: 'Ilustraci\u00f3n generada para esta receta: no es una foto del plato cocinado.',
   },
   fr: {
     ingredients: 'Ingr\u00e9dients', steps: '\u00c9tapes', source: 'Source',
@@ -210,6 +219,8 @@ const UI_STRINGS: Record<string, UiStrings> = {
     categories: 'Cat\u00e9gories', allCategories: 'Toutes', skipToContent: 'Aller au contenu',
     recipeWord: 'recette', recipesWord: 'recettes',
     testingShort: 'Comment nous testons', emptyCategory: 'Aucune recette dans cette cat\u00e9gorie pour le moment.',
+    timePrep: 'Pr\u00e9paration', timeCook: 'Cuisson', timeRest: 'Repos', timeTotal: 'Total',
+    imageIllustrationNote: 'Illustration g\u00e9n\u00e9r\u00e9e pour cette recette - ce n\u2019est pas une photo du plat cuisin\u00e9.',
   },
 };
 

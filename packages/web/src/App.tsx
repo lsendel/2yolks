@@ -390,6 +390,14 @@ export function RecipeView({
   const unitsMatter =
     entries.some((e) => isConvertible(e, 'metric') || isConvertible(e, 'us')) || hasStepTokens(steps);
   const cat = categoryLabel(page.recipe.category, lang);
+  const r = page.recipe;
+  const fmtMin = (m: number) => (m >= 60 ? `${Math.floor(m / 60)} h ${m % 60 > 0 ? `${m % 60} min` : ''}`.trim() : `${m} min`);
+  const timeItems: { label: string; value: string }[] = [];
+  if (r.baseServings != null) timeItems.push({ label: t.servings, value: String(r.baseServings) });
+  if (r.prepMinutes != null) timeItems.push({ label: t.timePrep, value: fmtMin(r.prepMinutes) });
+  if (r.cookMinutes != null) timeItems.push({ label: t.timeCook, value: fmtMin(r.cookMinutes) });
+  if (r.restMinutes != null) timeItems.push({ label: t.timeRest, value: fmtMin(r.restMinutes) });
+  if (r.totalMinutes != null) timeItems.push({ label: t.timeTotal, value: fmtMin(r.totalMinutes) });
   return (
     <main id="main">
       <Crumbs
@@ -400,6 +408,21 @@ export function RecipeView({
         ]}
       />
       <h1>{page.locale.title}</h1>
+      {page.heroImage ? (
+        <figure className="hero-image">
+          <img src={page.heroImage.url.replace(/^https?:\/\/[^/]+/, '')} alt={page.locale.title} loading="lazy" />
+          {page.heroImage.style === 'illustration' ? <figcaption>{t.imageIllustrationNote}</figcaption> : null}
+        </figure>
+      ) : null}
+      {timeItems.length > 0 ? (
+        <p className="time-meta">
+          {timeItems.map((it, i) => (
+            <span key={i} className="time-item">
+              <span className="time-label">{it.label}</span> {it.value}
+            </span>
+          ))}
+        </p>
+      ) : null}
       {isUntested(page.recipe) ? (
         <p className="untested" role="note">
           <span className="badge">{t.untestedBadge}</span> {t.untestedNote}{' '}

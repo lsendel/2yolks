@@ -126,6 +126,12 @@ main img { max-width: 100%; height: auto; }
 .crumbs [aria-current="page"] { color: var(--ink); }
 /* Recipe page */
 .recipe-intro { font-size: 1.08rem; }
+.hero-image { margin: 0.25rem 0 1rem; }
+.hero-image img { width: 100%; height: auto; border-radius: var(--radius); border: 1px solid var(--line); display: block; }
+.hero-image figcaption { color: var(--muted); font-size: 0.85rem; margin-top: 0.35rem; }
+.time-meta { display: flex; flex-wrap: wrap; gap: 0.4rem 1rem; margin: 0 0 1rem; padding: 0.65rem 0.9rem; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); font-size: 0.95rem; }
+.time-item { white-space: nowrap; }
+.time-label { color: var(--muted); font-weight: 600; margin-right: 0.15rem; }
 .badge { display: inline-block; padding: 0.05rem 0.55rem; border-radius: 999px; background: var(--amber-bg); color: var(--amber-ink); border: 1px solid var(--amber-line); font-size: 0.75rem; font-weight: 700; }
 .machine-note { background: var(--blue-bg); border: 1px solid var(--blue-line); border-radius: var(--radius); padding: 0.6rem 0.9rem; font-size: 0.95rem; }
 .untested { background: var(--amber-bg); border: 1px solid var(--amber-line); border-radius: var(--radius); padding: 0.6rem 0.9rem; font-size: 0.95rem; }
@@ -280,7 +286,9 @@ export function renderRecipe(
   const self = alternates.find((a) => a.hreflang.toLowerCase() === `${page.locale.lang}-${page.locale.country}`.toLowerCase());
   const canonicalUrl = self?.href;
   // Title-only graphic (no food photo), built by scripts/build-pin-graphics.py. Only recipes with a built file get one.
-  const imageUrl = canonicalUrl && PIN_IMAGE_KEYS.has(`${page.locale.recipeId}:${page.locale.lang}`) ? `${new URL(canonicalUrl).origin}/img/pin/${page.locale.recipeId}.${page.locale.lang}.png` : null;
+  const pinUrl = canonicalUrl && PIN_IMAGE_KEYS.has(`${page.locale.recipeId}:${page.locale.lang}`) ? `${new URL(canonicalUrl).origin}/img/pin/${page.locale.recipeId}.${page.locale.lang}.png` : null;
+  // A rights-tracked hero image (migration 0004) wins over the title graphic.
+  const imageUrl = page.heroImage?.url ?? pinUrl;
   const cookData = safeJsonLd({
     steps: (JSON.parse(page.locale.stepsJson) as string[]).map((st) => renderStep(st, JSON.parse(page.locale.ingredientsJson) as IngredientEntry[], page.locale.lang, defaultUnitSystem(page.locale.country), 1)),
     strings: { timerDone: t.timerDone },
