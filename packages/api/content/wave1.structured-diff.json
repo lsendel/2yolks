@@ -470,15 +470,6 @@
      }
     },
     {
-     "before": "3 chiles de árbol secos (opcional, para más picante)",
-     "after": {
-      "ref": "chiles-de-arbol-secos-op",
-      "qty": 3.0,
-      "name": "chiles de árbol secos (opcional",
-      "note": "para más picante)"
-     }
-    },
-    {
      "before": "3 jitomates guaje (roma)",
      "after": {
       "ref": "jitomates-guaje-roma",
@@ -592,6 +583,10 @@
     {
      "row": "Cebolla y cilantro picados, y limón, para servir",
      "reason": "no leading quantity"
+    },
+    {
+     "row": "3 chiles de árbol secos (opcional, para más picante)",
+     "reason": "parenthetical split across name/note (not representable without changing text)"
     }
    ],
    "flagged_steps_held": [
@@ -601,10 +596,11 @@
   }
  ],
  "counts": {
-  "convert": 48,
+  "convert": 47,
   "hold_dual": 6,
   "hold_step_quote": 8,
-  "hold_unparsed": 15
+  "hold_unparsed": 15,
+  "hold_paren_split": 1
  },
  "convert_rows_with_unit": 24
 }

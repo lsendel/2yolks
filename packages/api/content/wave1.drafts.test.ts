@@ -46,3 +46,20 @@ describe('wave1 translation drafts (unpublished, assistant-authored)', () => {
     }
   });
 });
+
+import { slugify } from '@2yolks/contracts';
+describe('draft slugs', () => {
+  it('equal slugify(title), are clean ASCII, and never collide within country+lang', () => {
+    const seen = new Set<string>();
+    for (const d of drafts) {
+      expect(d.slug).toBe(slugify(d.title));
+      expect(d.slug).toMatch(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
+      const key = `${d.country}/${d.lang}/${d.slug}`;
+      expect(seen.has(key)).toBe(false);
+      seen.add(key);
+    }
+    // no collision with the live source slugs either
+    for (const s of src.values()) expect(seen.has(`${s.country}/${s.lang}/${s.slug}`)).toBe(false);
+    expect(slugify('Tacos de bœuf æther')).toBe('tacos-de-boeuf-aether');
+  });
+});

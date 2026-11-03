@@ -432,6 +432,11 @@ export const ID_PATTERN = /^[a-z0-9]+$/;
 export function slugify(title: string): string {
   const slug = title
     .toLowerCase()
+    // Ligatures do not decompose under NFD; transliterate them first so
+    // "b\u0153uf" becomes "boeuf", not "b-uf".
+    .replace(/\u0153/g, 'oe')
+    .replace(/\u00e6/g, 'ae')
+    .replace(/\u00df/g, 'ss')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/[^a-z0-9]+/g, '-')
