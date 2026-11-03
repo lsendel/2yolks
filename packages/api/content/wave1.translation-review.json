@@ -1,0 +1,99 @@
+{
+  "note": "Agent review record. Binds a completed AI-agent review to the exact content hash of each draft. It is not a human or native-speaker review and the reviewing assistant also wrote the drafts, so it is not independent. Any content change invalidates the hash and blocks publication.",
+  "reviewer": "AI agent review (2yolks implementation assistant, 2026-11-03); not independent of the drafting assistant; not a human or native-speaker review",
+  "reviewed_on": "2026-11-03",
+  "checks": [
+    "automated gate: step numbers, temperatures, quantities, structured ingredient equality, allergen terms (wave1.drafts.test.ts)",
+    "full side-by-side read of every step against the structured source for meaning, omissions, ingredient identity and doneness/food-safety wording"
+  ],
+  "findings": [
+    {
+      "recipe_id": "w1potsticker",
+      "locale": "us/es",
+      "issue": "step 3 rendered a small spoonful as a teaspoon (cucharadita); step 2 said fecula instead of fecula de maiz",
+      "fixed": true
+    }
+  ],
+  "reviews": [
+    {
+      "recipe_id": "w1birria",
+      "country": "mx",
+      "lang": "en",
+      "content_sha256": "60d22d55b68ece0d99e530f6f59408ab950541eb3cc6c76fae9815d84a65f8f5",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "w1birria",
+      "country": "mx",
+      "lang": "fr",
+      "content_sha256": "854a8fe3a1388fe4b2dbf89f9ada17a6dd5143b4f7254939075ba7da4aa83a45",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "w1enchiladas",
+      "country": "mx",
+      "lang": "en",
+      "content_sha256": "d656586bec75ab02f9560633c3bbda15d5965233ad50abadba212287a1b5ba3f",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "w1enchiladas",
+      "country": "mx",
+      "lang": "fr",
+      "content_sha256": "f5b673494de73b6d321d3d220a9635b675f36f6f49d60b47423eb5bfa153782f",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "w1golumpki",
+      "country": "us",
+      "lang": "es",
+      "content_sha256": "092931332f81820721e793ecb97e252a41a467d21ebeb0c9541d978c26e65d5e",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "w1golumpki",
+      "country": "us",
+      "lang": "fr",
+      "content_sha256": "a0bbd8f5d7c70a7e5e24b0568b1a701f82a50c6846830965140f9bbc05708830",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "w1potsticker",
+      "country": "us",
+      "lang": "es",
+      "content_sha256": "5d2ce6c8bb867f045e3c682eee9382bbaafc1422f993d02262f8310e4a2436b2",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "w1potsticker",
+      "country": "us",
+      "lang": "fr",
+      "content_sha256": "bfcb3a4d2fb1b9bb9acf7c4b005fc2a90c6d35aa07bfc10d37ba18c372c13a74",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "w1pozole",
+      "country": "mx",
+      "lang": "en",
+      "content_sha256": "17e7d06dc636fee8130e1689437b16bed40853767a5777dc02c01cb4bfb0cbf5",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "w1pozole",
+      "country": "mx",
+      "lang": "fr",
+      "content_sha256": "2197efb959de855a623125e9caa02ed89551f933abff3bb5442e65db79b759f5",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    }
+  ]
+}

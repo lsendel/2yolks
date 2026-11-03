@@ -75,6 +75,8 @@ ol.steps li { margin: 0.5rem 0; }
 .cook-timer[hidden] { display: none; }
 .timer-btn { border: 1px solid var(--brand); color: var(--brand); background: none; border-radius: 0.5rem; padding: 0.4rem 0.9rem; font-weight: 600; cursor: pointer; }
 .badge { display: inline-block; margin-left: 0.5rem; padding: 0 0.5rem; border-radius: 999px; background: #fef3c7; color: #78350f; border: 1px solid #fcd34d; font-size: 0.75rem; font-weight: 700; vertical-align: middle; }
+.machine-note { background: #eff6ff; border: 1px solid #93c5fd; border-radius: 0.5rem; padding: 0.5rem 0.75rem; font-size: 0.95rem; }
+.machine-note .badge { margin-left: 0; }
 .untested { background: #fffbeb; border: 1px solid #fcd34d; border-radius: 0.5rem; padding: 0.5rem 0.75rem; font-size: 0.95rem; }
 .untested .badge { margin-left: 0; }
 .recipe-actions .print-open { background: var(--card); color: var(--ink); border: 1px solid #e7e5e4; border-radius: 0.5rem; padding: 0.5rem 1rem; font-weight: 600; cursor: pointer; }
@@ -87,7 +89,7 @@ ol.steps li { margin: 0.5rem 0; }
 .timer-display { font-size: 1.4rem; font-weight: 700; font-variant-numeric: tabular-nums; }
 `;
 
-const PIN_IMAGE_KEYS = new Set<string>(["w1golumpki:en", "w1potsticker:en", "w1pozole:es", "w1enchiladas:es", "w1birria:es"]);
+const PIN_IMAGE_KEYS = new Set<string>(["w1golumpki:en", "w1potsticker:en", "w1pozole:es", "w1enchiladas:es", "w1birria:es", "w1golumpki:es", "w1golumpki:fr", "w1potsticker:es", "w1potsticker:fr", "w1pozole:en", "w1pozole:fr", "w1enchiladas:en", "w1enchiladas:fr", "w1birria:en", "w1birria:fr"]);
 
 function shell(body: string, { title, alternates = [], jsonLd, noindex = false, og }: ShellOptions): string {
   const links = alternates
