@@ -104,7 +104,7 @@ export function RecipeView({ page, alternates = [], canonicalUrl, imageUrl }: { 
         <p className="langs">
           {others.map((a) => (
             <a key={a.hreflang} href={a.href} hrefLang={a.hreflang}>
-              {LANG_NAMES[a.hreflang.split('-')[0]] ?? a.hreflang}
+              {LANG_NAMES[a.hreflang.split('-')[0] ?? ''] ?? a.hreflang}
             </a>
           ))}
         </p>
