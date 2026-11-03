@@ -1,0 +1,24 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "2yolks",
+  "main": "packages/api/src/index.ts",
+  "compatibility_date": "2026-10-30",
+  "workers_dev": true,
+  "vars": {
+    "ALLOW_DEMO_SEED": "false",
+    "CANONICAL_ORIGIN": "https://2yolks.com"
+  },
+  "assets": {
+    "directory": "./packages/web/dist",
+    "binding": "ASSETS",
+    "run_worker_first": true
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "2yolks",
+      "database_id": "e8eadf5d-a251-4065-8013-810c710ebc40", // provisioned via CF dashboard 2026-11-01, free plan,
+      "migrations_dir": "packages/api/migrations"
+    }
+  ]
+}
