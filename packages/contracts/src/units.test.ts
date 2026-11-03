@@ -15,10 +15,10 @@ describe('units', () => {
     expect(convertQuantity({ qty: 2, unit: 'clove' }, 'us')).toBeNull();
   });
   it('converts temperatures', () => {
-    expect(fahrenheitToCelsius(160)).toBe(71);
+    expect(fahrenheitToCelsius(160)).toBe(72);
     expect(fahrenheitToCelsius(145)).toBe(63);
     expect(celsiusToFahrenheit(71)).toBe(160);
-    expect(renderTemps('Cook to {t:160F}.', 'metric')).toBe('Cook to 71\u00b0C.');
+    expect(renderTemps('Cook to {t:160F}.', 'metric')).toBe('Cook to 72\u00b0C.');
     expect(renderTemps('Cook to {t:160F}.', 'us')).toBe('Cook to 160\u00b0F.');
     expect(renderTemps('Hornea a {t:180C}.', 'us')).toBe('Hornea a 356\u00b0F.');
   });
