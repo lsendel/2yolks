@@ -201,7 +201,7 @@ describe('admin MCP', () => {
 
   it('runs the full recipe lifecycle with draft-first and rights gating', async () => {
     // editor creates a draft
-    const created = await toolCall(EDITOR_KEY, 'recipes.create_draft', RECIPE);
+    const created = await toolCall(EDITOR_KEY, 'recipes.create_draft', { ...RECIPE, confirmed: true });
     expect(created.status).toBe(200);
     expect(created.isError).toBe(false);
     const id = created.data?.['id'] as string;
@@ -237,10 +237,11 @@ describe('admin MCP', () => {
     // editor can update the draft, then admin publishes it
     const upd = await toolCall(EDITOR_KEY, 'recipes.update_draft', {
       id,
+      confirmed: true,
       locales: [{ country: 'us', lang: 'en', intro: 'Kitchen-tested by the 2yolks team.' }],
     });
     expect(upd.isError).toBe(false);
-    const pubNow = await toolCall(ADMIN_KEY, 'recipes.publish', { id });
+    const pubNow = await toolCall(ADMIN_KEY, 'recipes.publish', { id, confirmed: true });
     expect(pubNow.isError).toBe(false);
 
     // public API now lists it
@@ -251,11 +252,12 @@ describe('admin MCP', () => {
     // published locales are not editable; unpublish returns to draft
     const editPub = await toolCall(EDITOR_KEY, 'recipes.update_draft', {
       id,
+      confirmed: true,
       locales: [{ country: 'us', lang: 'en', title: 'Nope' }],
     });
     expect(editPub.isError).toBe(true);
     expect((editPub.data as { error: string }).error).toBe('only draft locales are editable');
-    const unpub = await toolCall(ADMIN_KEY, 'recipes.unpublish', { id, country: 'us', lang: 'en' });
+    const unpub = await toolCall(ADMIN_KEY, 'recipes.unpublish', { id, country: 'us', lang: 'en', confirmed: true });
     expect(unpub.isError).toBe(false);
     const pub3 = await app.request('https://2yolks.com/api/v1/countries/us/recipes', {}, env(DB));
     expect(((await pub3.json()) as { recipes: unknown[] }).recipes.length).toBe(0);
@@ -279,6 +281,7 @@ describe('admin MCP', () => {
   it('runs the blog lifecycle draft -> publish -> unpublish', async () => {
     const created = await toolCall(EDITOR_KEY, 'blog.create_draft', {
       author: 'harvester-1',
+      confirmed: true,
       locales: [
         { country: 'us', lang: 'en', title: 'Why Two Yolks', body: '# Hello\n\nFirst post.', excerpt: 'Intro' },
         { country: 'mx', lang: 'es', title: 'Por Que Dos Yemas', body: '# Hola\n\nPrimer post.' },
@@ -291,7 +294,7 @@ describe('admin MCP', () => {
     const drafts = await toolCall(READ_KEY, 'blog.list', { status: 'draft' });
     expect((drafts.data?.['posts'] as unknown[]).length).toBe(2);
 
-    const pub = await toolCall(ADMIN_KEY, 'blog.publish', { id, country: 'us', lang: 'en' });
+    const pub = await toolCall(ADMIN_KEY, 'blog.publish', { id, country: 'us', lang: 'en', confirmed: true, review: 'Vetted by Luis, original text' });
     expect(pub.isError).toBe(false);
     expect(pub.data?.['locales_changed']).toBe(1);
 
@@ -300,7 +303,7 @@ describe('admin MCP', () => {
     expect(posts.length).toBe(1);
     expect(posts[0]?.slug).toBe('why-two-yolks');
 
-    const unpub = await toolCall(ADMIN_KEY, 'blog.unpublish', { id });
+    const unpub = await toolCall(ADMIN_KEY, 'blog.unpublish', { id, confirmed: true });
     expect(unpub.isError).toBe(false);
     const remaining = await toolCall(READ_KEY, 'blog.list', { status: 'published' });
     expect((remaining.data?.['posts'] as unknown[]).length).toBe(0);
@@ -364,7 +367,7 @@ describe('MCP hardening', () => {
       status: 'published',
       source: { ...RECIPE.source, cleared_at: '2026-01-01', clearedAt: '2026-01-01' },
     };
-    const created = await toolCall(EDITOR_KEY, 'recipes.create_draft', malicious);
+    const created = await toolCall(EDITOR_KEY, 'recipes.create_draft', { ...malicious, confirmed: true });
     expect(created.isError).toBe(false);
     const sourceId = created.data?.['source_id'] as string;
     const row = await DB.prepare('SELECT cleared_at FROM sources WHERE id = ?').bind(sourceId).first<{ cleared_at: string | null }>();
@@ -375,21 +378,21 @@ describe('MCP hardening', () => {
   });
 
   it('returns 409 with the existing id on a duplicate locale slug', async () => {
-    const first = await toolCall(EDITOR_KEY, 'recipes.create_draft', RECIPE);
-    const second = await toolCall(EDITOR_KEY, 'recipes.create_draft', RECIPE);
+    const first = await toolCall(EDITOR_KEY, 'recipes.create_draft', { ...RECIPE, confirmed: true });
+    const second = await toolCall(EDITOR_KEY, 'recipes.create_draft', { ...RECIPE, confirmed: true });
     expect(second.isError).toBe(true);
     expect((second.data as { error: string }).error).toMatch(/already exists/);
     expect((second.data as { existing_id: string }).existing_id).toBe(first.data?.['id']);
   });
 
   it('attributes audit rows to the authenticated key, not the caller header', async () => {
-    await toolCall(EDITOR_KEY, 'recipes.create_draft', RECIPE); // header-less JSON-RPC
+    await toolCall(EDITOR_KEY, 'recipes.create_draft', { ...RECIPE, confirmed: true }); // header-less JSON-RPC
     const res = await app.request(
       'https://2yolks.com/api/admin/mcp',
       {
         method: 'POST',
         headers: { 'content-type': 'application/json', authorization: `Bearer ${EDITOR_KEY}`, 'x-mcp-caller': 'spoofed-name' },
-        body: JSON.stringify(rpc('tools/call', { name: 'recipes.create_draft', arguments: { ...RECIPE, locales: [{ ...RECIPE.locales[0], slug: 'second-slug' }] } })),
+        body: JSON.stringify(rpc('tools/call', { name: 'recipes.create_draft', arguments: { ...RECIPE, locales: [{ ...RECIPE.locales[0], slug: 'second-slug' }] }, confirmed: true })),
       },
       env(DB),
     );
@@ -423,13 +426,14 @@ describe('MCP hardening', () => {
   });
 
   it('fails closed when a stored locale is no longer plain string arrays', async () => {
-    const created = await toolCall(EDITOR_KEY, 'recipes.create_draft', RECIPE);
+    const created = await toolCall(EDITOR_KEY, 'recipes.create_draft', { ...RECIPE, confirmed: true });
     const id = created.data?.['id'] as string;
     await DB.prepare("UPDATE recipe_locales SET ingredients_json = ? WHERE recipe_id = ?")
       .bind(JSON.stringify([{ qty: 2, unit: 'cups', item: 'flour' }]), id)
       .run();
     const upd = await toolCall(EDITOR_KEY, 'recipes.update_draft', {
       id,
+      confirmed: true,
       locales: [{ country: 'us', lang: 'en', ingredients: ['3 cups flour'] }],
     });
     expect(upd.isError).toBe(true);

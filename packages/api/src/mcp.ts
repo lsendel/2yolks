@@ -146,6 +146,18 @@ async function resolveAuth(c: Context<{ Bindings: McpBindings }>): Promise<AuthR
   };
 }
 
+function auditStmt(ctx: CallCtx, tool: string, entityId: string | null, details?: Record<string, unknown>) {
+  return ctx.db
+    .prepare('INSERT INTO mcp_audit (actor, role, tool, entity_id, details_json) VALUES (?, ?, ?, ?, ?)')
+    .bind(
+      ctx.actor,
+      ctx.role,
+      tool,
+      entityId,
+      JSON.stringify({ ...(details ?? {}), ...(ctx.declaredCaller ? { declared_caller: ctx.declaredCaller } : {}) }),
+    );
+}
+
 // --- Tool catalog -----------------------------------------------------------
 
 type ToolDef = {
@@ -185,7 +197,7 @@ const TOOLS: ToolDef[] = [
   {
     name: 'recipes.create_draft',
     description:
-      'Create a recipe draft (source + locales). The source is created uncleared, so the recipe cannot be served or published until sources.clear_rights. Same validation as public submissions.',
+      'Create a recipe draft (source + locales). The source is created uncleared, so the recipe cannot be served or published until sources.clear_rights. Same validation as public submissions. Executes only with confirmed: true; otherwise validates as a dry run.',
     role: 'editor',
     inputSchema: {
       type: 'object',
@@ -300,12 +312,19 @@ const TOOLS: ToolDef[] = [
   },
   {
     name: 'blog.publish',
-    description: 'Publish draft blog locales. Args: id, optional country+lang.',
+    description:
+      'Publish draft blog locales. Blogs carry no source row, so publish needs confirmed: true and a review note (who vetted the post). Args: id, optional country+lang.',
     role: 'admin',
     inputSchema: {
       type: 'object',
-      properties: { id: { type: 'string' }, country: { type: 'string' }, lang: { type: 'string' } },
-      required: ['id'],
+      properties: {
+        id: { type: 'string' },
+        country: { type: 'string' },
+        lang: { type: 'string' },
+        confirmed: { type: 'boolean' },
+        review: { type: 'string' },
+      },
+      required: ['id', 'confirmed', 'review'],
     },
   },
   {
@@ -447,9 +466,7 @@ async function callRecipesCreateDraft(ctx: CallCtx, args: Record<string, unknown
         ),
     ),
     // Audit in the same atomic batch as the write.
-    ctx.db
-      .prepare('INSERT INTO mcp_audit (actor, role, tool, entity_id, details_json) VALUES (?, ?, ?, ?, ?)')
-      .bind(ctx.actor, ctx.role, 'recipes.create_draft', id, JSON.stringify({ locales: sub.locales.length, ...(ctx.declaredCaller ? { declared_caller: ctx.declaredCaller } : {}) })),
+    auditStmt(ctx, 'recipes.create_draft', id, { locales: sub.locales.length }),
   ];
   try {
     await ctx.db.batch(statements);
@@ -466,7 +483,7 @@ async function callRecipesCreateDraft(ctx: CallCtx, args: Record<string, unknown
     }
     throw e;
   }
-  return { status: 201, data: { id, source_id: sourceId, status: 'draft', locales: sub.locales.length, audited_inline: true } };
+  return { status: 201, data: { id, source_id: sourceId, status: 'draft', locales: sub.locales.length } };
 }
 
 async function callRecipesUpdateDraft(ctx: CallCtx, args: Record<string, unknown>): Promise<CallResult> {
@@ -476,7 +493,10 @@ async function callRecipesUpdateDraft(ctx: CallCtx, args: Record<string, unknown
     return { status: 400, data: { error: 'id and non-empty locales array required' } };
   }
   if (locales.length > MAX_LOCALES) return { status: 400, data: { error: `at most ${MAX_LOCALES} locales per call` } };
-  const updated: string[] = [];
+  // Pass 1: validate every locale before any write; a multi-locale call never
+  // applies partially.
+  type Planned = { key: string; stmt: D1PreparedStatement };
+  const planned: Planned[] = [];
   for (const entry of locales as unknown[]) {
     if (typeof entry !== 'object' || entry === null) continue;
     const l = entry as Record<string, unknown>;
@@ -527,15 +547,20 @@ async function callRecipesUpdateDraft(ctx: CallCtx, args: Record<string, unknown
       params.push(JSON.stringify(arr));
     }
     if (!sets.length) continue;
-    if (!ctx.dryRun) {
-      await ctx.db
+    planned.push({
+      key: `${country}/${lang}`,
+      stmt: ctx.db
         .prepare(`UPDATE recipe_locales SET ${sets.join(', ')} WHERE recipe_id = ? AND country = ? AND lang = ?`)
-        .bind(...params, id, country, lang)
-        .run();
-    }
-    updated.push(`${country}/${lang}`);
+        .bind(...params, id, country, lang),
+    });
   }
-  return { status: 200, data: { id, updated, ...(ctx.dryRun ? { dry_run: true, ok: true } : {}) } };
+  const updated = planned.map((pl) => pl.key);
+  if (ctx.dryRun) return { status: 200, data: { dry_run: true, ok: true, id, updated } };
+  if (planned.length) {
+    // Content mutation and audit row commit in one atomic batch.
+    await ctx.db.batch([...planned.map((pl) => pl.stmt), auditStmt(ctx, 'recipes.update_draft', id, { updated })]);
+  }
+  return { status: 200, data: { id, updated } };
 }
 
 async function callStatusChange(
@@ -551,6 +576,7 @@ async function callStatusChange(
   if ((country && !lang) || (!country && lang)) {
     return { status: 400, data: { error: 'country and lang must be given together' } };
   }
+  const tool = `${kind === 'recipe' ? 'recipes' : 'blog'}.${target === 'published' ? 'publish' : 'unpublish'}`;
   if (kind === 'recipe') {
     const recipe = await ctx.db
       .prepare('SELECT r.id, s.cleared_at FROM recipes r JOIN sources s ON s.id = r.source_id WHERE r.id = ?')
@@ -566,29 +592,44 @@ async function callStatusChange(
   } else {
     const post = await ctx.db.prepare('SELECT id FROM blog_posts WHERE id = ?').bind(id).first();
     if (!post) return { status: 404, data: { error: 'blog post not found', id } };
+    // Blog publish has its own vetting gate (blogs carry no source row): an
+    // explicit confirmation plus a written review note, both audited.
+    if (target === 'published') {
+      if (args['confirmed'] !== true) {
+        return { status: 400, data: { error: 'confirmed: true required to publish a blog post' } };
+      }
+      if (!str(args['review'], 2000)) {
+        return { status: 400, data: { error: 'review note required (who vetted the post and why it is publishable)' } };
+      }
+    }
   }
   const from = target === 'published' ? 'draft' : 'published';
   const table = kind === 'recipe' ? 'recipe_locales' : 'blog_post_locales';
   const fk = kind === 'recipe' ? 'recipe_id' : 'post_id';
   const scope = country ? ' AND country = ? AND lang = ?' : '';
-  const bind: unknown[] = country ? [target, id, country, lang] : [target, id];
-  if (ctx.dryRun) {
-    const countBind: unknown[] = country ? [id, country, lang] : [id];
-    const matched = await ctx.db
-      .prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE ${fk} = ? AND status = '${from}'${scope}`)
-      .bind(...countBind)
-      .first<{ n: number }>();
-    return { status: 200, data: { dry_run: true, ok: true, id, would_set: target, matching_locales: Number(matched?.n ?? 0) } };
-  }
-  const res = await ctx.db
-    .prepare(`UPDATE ${table} SET status = ? WHERE ${fk} = ? AND status = '${from}'${scope}`)
-    .bind(...bind)
-    .run();
-  const changes = res.meta.changes ?? 0;
-  if (changes === 0) {
+  const countBind: unknown[] = country ? [id, country, lang] : [id];
+  const matched = await ctx.db
+    .prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE ${fk} = ? AND status = '${from}'${scope}`)
+    .bind(...countBind)
+    .first<{ n: number }>();
+  const matchedCount = Number(matched?.n ?? 0);
+  if (matchedCount === 0) {
     return { status: 409, data: { error: `no ${from} locales matched`, id, country: country ?? null, lang: lang ?? null } };
   }
-  return { status: 200, data: { id, status: target, locales_changed: changes } };
+  if (ctx.dryRun) {
+    return { status: 200, data: { dry_run: true, ok: true, id, would_set: target, matching_locales: matchedCount } };
+  }
+  const bind: unknown[] = country ? [target, id, country, lang] : [target, id];
+  // Content mutation and audit row commit in one atomic batch.
+  await ctx.db.batch([
+    ctx.db.prepare(`UPDATE ${table} SET status = ? WHERE ${fk} = ? AND status = '${from}'${scope}`).bind(...bind),
+    auditStmt(ctx, tool, id, {
+      locales_changed: matchedCount,
+      ...(country ? { country, lang } : {}),
+      ...(kind === 'blog' && target === 'published' ? { review: args['review'] } : {}),
+    }),
+  ]);
+  return { status: 200, data: { id, status: target, locales_changed: matchedCount } };
 }
 
 async function callSourcesUpdate(ctx: CallCtx, args: Record<string, unknown>): Promise<CallResult> {
@@ -609,11 +650,13 @@ async function callSourcesUpdate(ctx: CallCtx, args: Record<string, unknown>): P
     params.push(v);
   }
   if (!sets.length) return { status: 400, data: { error: 'no fields to update' } };
-  await ctx.db
-    .prepare(`UPDATE sources SET ${sets.join(', ')} WHERE id = ?`)
-    .bind(...params, id)
-    .run();
-  return { status: 200, data: { id, updated: sets.map((s) => s.split(' ')[0]) } };
+  const updated = sets.map((st) => st.split(' ')[0]);
+  if (ctx.dryRun) return { status: 200, data: { dry_run: true, ok: true, id, updated } };
+  await ctx.db.batch([
+    ctx.db.prepare(`UPDATE sources SET ${sets.join(', ')} WHERE id = ?`).bind(...params, id),
+    auditStmt(ctx, 'sources.update', id, { updated }),
+  ]);
+  return { status: 200, data: { id, updated } };
 }
 
 async function callSourcesClearRights(ctx: CallCtx, args: Record<string, unknown>): Promise<CallResult> {
@@ -624,20 +667,19 @@ async function callSourcesClearRights(ctx: CallCtx, args: Record<string, unknown
     return { status: 400, data: { error: 'confirmed: true required to clear source rights' } };
   }
   if (!notes) return { status: 400, data: { error: 'notes reason required (what was reviewed)' } };
+  const existing = await ctx.db
+    .prepare('SELECT id, cleared_at FROM sources WHERE id = ?')
+    .bind(id)
+    .first<{ id: string; cleared_at: string | null }>();
+  if (!existing) return { status: 404, data: { error: 'source not found', id } };
+  if (existing.cleared_at !== null) return { status: 409, data: { error: 'source already cleared', id } };
   if (ctx.dryRun) {
-    const src = await ctx.db.prepare('SELECT id, cleared_at FROM sources WHERE id = ?').bind(id).first<{ id: string; cleared_at: string | null }>();
-    if (!src) return { status: 404, data: { error: 'source not found', id } };
-    return { status: 200, data: { dry_run: true, ok: src.cleared_at === null, id, already_cleared: src.cleared_at !== null } };
+    return { status: 200, data: { dry_run: true, ok: true, id } };
   }
-  const res = await ctx.db
-    .prepare("UPDATE sources SET cleared_at = datetime('now'), notes = ? WHERE id = ? AND cleared_at IS NULL")
-    .bind(notes, id)
-    .run();
-  if ((res.meta.changes ?? 0) === 0) {
-    const existing = await ctx.db.prepare('SELECT id FROM sources WHERE id = ?').bind(id).first();
-    if (!existing) return { status: 404, data: { error: 'source not found', id } };
-    return { status: 409, data: { error: 'source already cleared', id } };
-  }
+  await ctx.db.batch([
+    ctx.db.prepare("UPDATE sources SET cleared_at = datetime('now'), notes = ? WHERE id = ? AND cleared_at IS NULL").bind(notes, id),
+    auditStmt(ctx, 'sources.clear_rights', id, { notes }),
+  ]);
   return { status: 200, data: { id, cleared: true } };
 }
 
@@ -733,9 +775,7 @@ async function callBlogCreateDraft(ctx: CallCtx, args: Record<string, unknown>):
         .bind(id, l.country, l.lang, l.title, l.slug, l.excerpt, l.body, 'draft'),
     ),
     // Audit in the same atomic batch as the write.
-    ctx.db
-      .prepare('INSERT INTO mcp_audit (actor, role, tool, entity_id, details_json) VALUES (?, ?, ?, ?, ?)')
-      .bind(ctx.actor, ctx.role, 'blog.create_draft', id, JSON.stringify({ locales: validated.locales.length, ...(ctx.declaredCaller ? { declared_caller: ctx.declaredCaller } : {}) })),
+    auditStmt(ctx, 'blog.create_draft', id, { locales: validated.locales.length }),
   ];
   try {
     await ctx.db.batch(statements);
@@ -745,7 +785,7 @@ async function callBlogCreateDraft(ctx: CallCtx, args: Record<string, unknown>):
     }
     throw e;
   }
-  return { status: 201, data: { id, status: 'draft', locales: validated.locales.length, audited_inline: true } };
+  return { status: 201, data: { id, status: 'draft', locales: validated.locales.length } };
 }
 
 async function callBlogUpdateDraft(ctx: CallCtx, args: Record<string, unknown>): Promise<CallResult> {
@@ -754,7 +794,11 @@ async function callBlogUpdateDraft(ctx: CallCtx, args: Record<string, unknown>):
   if (!id || !Array.isArray(locales) || locales.length === 0) {
     return { status: 400, data: { error: 'id and non-empty locales array required' } };
   }
-  const updated: string[] = [];
+  if (locales.length > MAX_LOCALES) return { status: 400, data: { error: `at most ${MAX_LOCALES} locales per call` } };
+  // Pass 1: validate every locale before any write; a multi-locale call never
+  // applies partially.
+  type Planned = { key: string; stmt: D1PreparedStatement };
+  const planned: Planned[] = [];
   for (const entry of locales as unknown[]) {
     if (typeof entry !== 'object' || entry === null) continue;
     const l = entry as Record<string, unknown>;
@@ -790,18 +834,24 @@ async function callBlogUpdateDraft(ctx: CallCtx, args: Record<string, unknown>):
       params.push(body);
     }
     if (!sets.length) continue;
-    if (!ctx.dryRun) {
-      await ctx.db
+    planned.push({
+      key: `${country}/${lang}`,
+      stmt: ctx.db
         .prepare(`UPDATE blog_post_locales SET ${sets.join(', ')} WHERE post_id = ? AND country = ? AND lang = ?`)
-        .bind(...params, id, country, lang)
-        .run();
-    }
-    updated.push(`${country}/${lang}`);
+        .bind(...params, id, country, lang),
+    });
   }
-  if (updated.length && !ctx.dryRun) {
-    await ctx.db.prepare("UPDATE blog_posts SET updated_at = datetime('now') WHERE id = ?").bind(id).run();
+  const updated = planned.map((pl) => pl.key);
+  if (ctx.dryRun) return { status: 200, data: { dry_run: true, ok: true, id, updated } };
+  if (planned.length) {
+    // Content mutation, updated_at bump and audit row commit in one batch.
+    await ctx.db.batch([
+      ...planned.map((pl) => pl.stmt),
+      ctx.db.prepare("UPDATE blog_posts SET updated_at = datetime('now') WHERE id = ?").bind(id),
+      auditStmt(ctx, 'blog.update_draft', id, { updated }),
+    ]);
   }
-  return { status: 200, data: { id, updated, ...(ctx.dryRun ? { dry_run: true, ok: true } : {}) } };
+  return { status: 200, data: { id, updated } };
 }
 
 // --- Dispatch -----------------------------------------------------------------
@@ -889,33 +939,30 @@ async function handleRpc(c: Context<{ Bindings: McpBindings }>) {
     declaredCaller: auth.declared,
   };
 
-  // Audit a write call after execution. Create tools audit atomically inside
-  // their own batch and mark data.audited_inline; this path covers the rest
-  // and signals explicitly if the audit insert fails after the write.
-  const auditWrite = async (name: string, args: Record<string, unknown>, result: CallResult): Promise<string | null> => {
-    if (result.status >= 400) return null;
-    const data = result.data as Record<string, unknown> | null;
-    if (data && data['audited_inline'] === true) return null;
-    const entity = typeof args['id'] === 'string' ? args['id'] : typeof data?.['id'] === 'string' ? (data['id'] as string) : null;
-    const summary: Record<string, unknown> = { status: result.status };
-    if (typeof args['country'] === 'string') summary['country'] = args['country'];
-    if (typeof args['lang'] === 'string') summary['lang'] = args['lang'];
-    if (auth.declared) summary['declared_caller'] = auth.declared;
-    try {
-      await recordAudit(c.env.DB, { actor: auth.actor, role: auth.role, tool: name, entityId: entity, details: summary });
-      return null;
-    } catch {
-      return 'write may have applied but the audit insert failed; verify before retrying';
+  // Write semantics are identical on both wire shapes: an explicit
+  // dryRun/dry_run flag wins; otherwise a write tool executes only when the
+  // call carries confirmed: true, and dry-runs otherwise. Reads always
+  // execute. Every write commits its audit row in the same D1 batch as the
+  // content mutation, so a successful response always means audited.
+  const dryFlag = (v: unknown) => (v === undefined ? undefined : v !== false);
+  const resolveDryRun = (
+    tool: ToolDef,
+    confirmed: boolean,
+    ...flags: unknown[]
+  ): boolean => {
+    for (const f of flags) {
+      const d = dryFlag(f);
+      if (d !== undefined) return d;
     }
+    return tool.role === 'viewer' ? false : !confirmed;
   };
 
   // Shorthand wire shape used by the directory MCP clients:
   // { name | tool, arguments | input | params, dryRun?, confirmed? }.
-  // Mirrors the directory convention: without confirmed: true a write tool
-  // runs as a dry run (validation and guard checks only, nothing written).
   if (body['jsonrpc'] !== '2.0' && typeof body['method'] !== 'string') {
     const rawName = typeof body['name'] === 'string' ? body['name'] : typeof body['tool'] === 'string' ? body['tool'] : undefined;
-    if (!rawName || !TOOLS.some((t) => t.name === rawName)) {
+    const tool = rawName ? TOOLS.find((t) => t.name === rawName) : undefined;
+    if (!tool) {
       return c.json({ error: 'not-registered' }, 404);
     }
     const rawArgs =
@@ -927,16 +974,8 @@ async function handleRpc(c: Context<{ Bindings: McpBindings }>) {
             ? (body['params'] as Record<string, unknown>)
             : {};
     const confirmed = body['confirmed'] === true || rawArgs['confirmed'] === true;
-    const dryFlag = (v: unknown) => (v === undefined ? undefined : v !== false);
-    const tool = TOOLS.find((t) => t.name === rawName)!;
-    const dryRun =
-      dryFlag(body['dryRun']) ?? dryFlag(body['dry_run']) ?? dryFlag(rawArgs['dryRun']) ?? dryFlag(rawArgs['dry_run']) ??
-      (tool.role === 'viewer' ? false : !confirmed);
-    const result = await callTool({ ...callCtx, dryRun }, rawName, rawArgs);
-    if (tool.role !== 'viewer' && !dryRun) {
-      const auditFailure = await auditWrite(rawName, rawArgs, result);
-      if (auditFailure) return c.json({ error: auditFailure, tool: rawName }, 500);
-    }
+    const dryRun = resolveDryRun(tool, confirmed, body['dryRun'], body['dry_run'], rawArgs['dryRun'], rawArgs['dry_run']);
+    const result = await callTool({ ...callCtx, dryRun }, tool.name, rawArgs);
     return c.json(result.data as Record<string, unknown>, result.status as 200);
   }
 
@@ -980,14 +1019,9 @@ async function handleRpc(c: Context<{ Bindings: McpBindings }>) {
         : {};
     const tool = TOOLS.find((t) => t.name === name);
     if (!tool) return c.json(rpcError(id, -32601, `Tool '${name}' not registered`), 404);
-    const dryRun = args['dryRun'] === true || args['dry_run'] === true;
+    const confirmed = params['confirmed'] === true || args['confirmed'] === true;
+    const dryRun = resolveDryRun(tool, confirmed, args['dryRun'], args['dry_run'], params['dryRun'], params['dry_run']);
     const result = await callTool({ ...callCtx, dryRun }, name, args);
-    if (tool.role !== 'viewer' && !dryRun) {
-      const auditFailure = await auditWrite(name, args, result);
-      if (auditFailure) {
-        return c.json(toolText(id, { error: auditFailure, tool: name }, true), 500);
-      }
-    }
     if (result.status >= 400) {
       return c.json(toolText(id, result.data, true), 200);
     }
