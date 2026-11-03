@@ -85,6 +85,8 @@ ol.steps li { margin: 0.5rem 0; }
 .timer-display { font-size: 1.4rem; font-weight: 700; font-variant-numeric: tabular-nums; }
 `;
 
+const PIN_IMAGE_IDS = new Set<string>(["w1golumpki", "w1potsticker", "w1pozole", "w1enchiladas", "w1birria"]);
+
 function shell(body: string, { title, alternates = [], jsonLd, noindex = false, og }: ShellOptions): string {
   const links = alternates
     .map((a) => `<link rel="alternate" hreflang="${escapeHtml(a.hreflang)}" href="${escapeHtml(a.href)}" />`)
@@ -154,19 +156,21 @@ export function renderRecipe(page: RecipePage, alternates: { hreflang: string; h
   const t = uiStrings(page.locale.lang);
   const self = alternates.find((a) => a.hreflang.toLowerCase() === `${page.locale.lang}-${page.locale.country}`.toLowerCase());
   const canonicalUrl = self?.href;
+  // Title-only graphic (no food photo), built by scripts/build-pin-graphics.py. Only recipes with a built file get one.
+  const imageUrl = canonicalUrl && PIN_IMAGE_IDS.has(page.locale.recipeId) ? `${new URL(canonicalUrl).origin}/img/pin/${page.locale.recipeId}.png` : null;
   const cookData = safeJsonLd({
     steps: JSON.parse(page.locale.stepsJson),
     strings: { timerDone: t.timerDone },
   });
   const body =
-    renderToString(<RecipeView page={page} alternates={alternates} canonicalUrl={canonicalUrl} />) +
+    renderToString(<RecipeView page={page} alternates={alternates} canonicalUrl={canonicalUrl} imageUrl={imageUrl} />) +
     `<script type="application/json" id="cook-data">${cookData}</script>` +
     `<script>${RECIPE_CLIENT_SCRIPT}</script>`;
   return shell(body, {
     title: `${page.locale.title} - 2yolks`,
     alternates,
     jsonLd,
-    og: canonicalUrl ? { title: page.locale.title, description: page.locale.intro ?? undefined, url: canonicalUrl, locale: `${page.locale.lang}_${page.locale.country.toUpperCase()}` } : undefined,
+    og: canonicalUrl ? { title: page.locale.title, description: page.locale.intro ?? undefined, url: canonicalUrl, locale: `${page.locale.lang}_${page.locale.country.toUpperCase()}`, image: imageUrl } : undefined,
     // Synthetic/dev-only sources must never be indexed as real recipes.
     noindex: page.source.license === 'internal-demo',
   });
