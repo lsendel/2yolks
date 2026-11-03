@@ -131,7 +131,7 @@ const signInForm = (msg = '') => `<h1>Your 2yolks account</h1>
 <p class="hint">Drafts stay private to you. Nothing is published until it has been reviewed.</p>`;
 
 const codeForm = (email: string, msg = '') => `<h1>Check your email</h1>
-<p class="lead">We sent a 6-digit code to ${esc(email)}. It works for 10 minutes.</p>${msg}
+<p class="lead">We sent a 6-digit code to ${esc(email)}. It works for 10 minutes. If you asked for more than one, use the code from the most recent request; older codes stop working.</p>${msg}
 <form method="post" action="/account/verify"><input type="hidden" name="email" value="${esc(email)}"><label>6-digit code<input type="text" name="code" inputmode="numeric" pattern="[0-9]{6}" autocomplete="one-time-code" maxlength="6" required></label><button type="submit">Sign in</button></form>`;
 
 accountApp.get('/', async (c) => {
@@ -420,7 +420,13 @@ accountApp.post('/recipes/save', async (c) => {
       D.prepare("INSERT INTO recipe_locales (recipe_id,country,lang,title,slug,intro,ingredients_json,steps_json,status) SELECT ?,?,?,?,?,?,?,?,'draft' WHERE EXISTS (SELECT 1 FROM recipes WHERE id = ?)").bind(id, loc.country, loc.lang, loc.title, slug, loc.intro ?? null, ing, stp, id),
       D.prepare('UPDATE users SET display_name = ? WHERE id = ?').bind(s.displayName, user.id),
     ]);
-    if (res[1]!.meta.changes !== 1) return page(c, 'Add a recipe', renderForm(s, [`You can keep up to ${MAX_DRAFTS_PER_USER} drafts. Remove one first.`]), 400);
+    if (res[1]!.meta.changes !== 1) {
+      const life = await D.prepare('SELECT count(*) AS n FROM recipes WHERE owner_user_id = ?').bind(user.id).first<{ n: number }>();
+      const msg = (life?.n ?? 0) >= MAX_ROWS_PER_USER
+        ? 'This account has reached its limit of saved recipes, including removed ones. Removing more will not free space here.'
+        : `You can keep up to ${MAX_DRAFTS_PER_USER} drafts. Remove one first.`;
+      return page(c, 'Add a recipe', renderForm(s, [msg]), 400);
+    }
   }
   return c.redirect(`/account/recipes/${id}/edit?saved=1`, 303);
 });
@@ -441,7 +447,7 @@ accountApp.post('/recipes/:id/submit', async (c) => {
     await sendMail(c.env, {
       to: c.env.REVIEW_NOTIFY_TO,
       subject: `2yolks recipe submitted for review: ${row.l.title}`.slice(0, 180),
-      text: `A recipe was sent in for review.\n\nTitle: ${row.l.title}\nRecipe id: ${row.r.id}\nAuthor shown as: ${user.displayName ?? ''}\nSubmitter: ${user.email}\nSource: ${row.s.name} (${row.s.url}), license label ${row.s.license}\nAuthor confirmed rights at: ${row.r.attestedAt}\n\nIt stays a private draft until you clear the source and publish it with the admin tools. Queue: MCP recipes.list with submitted:true.\n`,
+      text: `A recipe was sent in for review.\n\nTitle: ${row.l.title}\nRecipe id: ${row.r.id}\nAuthor shown as: ${row.r.authorName ?? user.displayName ?? ''}\nSubmitter: ${user.email}\nSource: ${row.s.name} (${row.s.url}), license label ${row.s.license}\nAuthor confirmed rights at: ${row.r.attestedAt}\n\nIt stays a private draft until you clear the source and publish it with the admin tools. Queue: MCP recipes.list with submitted:true.\n`,
     }).catch(() => false);
   }
   return page(c, 'Sent in', `<h1>Thanks, it is with us</h1><p class="lead">We will review "${esc(row.l.title)}" and its rights before anything goes live. Nothing is published automatically.</p><p><a class="btn" href="/account">Back to your recipes</a></p>`);
