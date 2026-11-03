@@ -16,7 +16,7 @@ export function safeJsonLd(value: object): string {
     .replace(/>/g, '\\u003e')
     .replace(/&/g, '\\u0026');
 }
-import { Home, CountryHome, RecipeView, type HomeProps, type CountryHomeProps } from './App';
+import { Home, CountryHome, RecipeView, AboutView, HowWeTestView, NotFoundView, type HomeProps, type CountryHomeProps } from './App';
 import { RECIPE_CLIENT_SCRIPT } from './clientScript';
 import type { RecipePage } from '@2yolks/contracts';
 import { uiStrings } from '@2yolks/contracts';
@@ -71,6 +71,12 @@ ol.steps li { margin: 0.5rem 0; }
 .cook-timer { display: flex; gap: 0.75rem; align-items: center; }
 .cook-timer[hidden] { display: none; }
 .timer-btn { border: 1px solid var(--brand); color: var(--brand); background: none; border-radius: 0.5rem; padding: 0.4rem 0.9rem; font-weight: 600; cursor: pointer; }
+.badge { display: inline-block; margin-left: 0.5rem; padding: 0 0.5rem; border-radius: 999px; background: #fef3c7; color: #78350f; border: 1px solid #fcd34d; font-size: 0.75rem; font-weight: 700; vertical-align: middle; }
+.untested { background: #fffbeb; border: 1px solid #fcd34d; border-radius: 0.5rem; padding: 0.5rem 0.75rem; font-size: 0.95rem; }
+.untested .badge { margin-left: 0; }
+.recipe-actions .print-open { background: var(--card); color: var(--ink); border: 1px solid #e7e5e4; border-radius: 0.5rem; padding: 0.5rem 1rem; font-weight: 600; cursor: pointer; }
+.site-footer { max-width: 42rem; margin: 0 auto; padding: 1rem; color: var(--muted); font-size: 0.9rem; border-top: 1px solid #e7e5e4; }
+@media print { .site-header, .site-footer, .recipe-actions, .scaler, .cook-mode, .langs { display: none !important; } body { background: #fff; } main { max-width: none; } ul.ingredients input { display: none; } }
 .timer-display { font-size: 1.4rem; font-weight: 700; font-variant-numeric: tabular-nums; }
 `;
 
@@ -90,7 +96,7 @@ function shell(body: string, { title, alternates = [], jsonLd, noindex = false }
     ${ld}
     <style>${BASE_CSS}</style>
   </head>
-  <body><header class="site-header"><a class="brand" href="/">2yolks</a></header>${body}</body>
+  <body><header class="site-header"><a class="brand" href="/">2yolks</a></header>${body}<footer class="site-footer"><a href="/about">About / Acerca de</a> &middot; <a href="/how-we-test">How we test / C&oacute;mo probamos</a></footer></body>
 </html>`;
 }
 
@@ -104,11 +110,26 @@ export function renderCountryHome(props: CountryHomeProps): string {
   });
 }
 
+export function renderAbout(): string {
+  return shell(renderToString(<AboutView />), { title: 'About 2yolks' });
+}
+
+export function renderHowWeTest(): string {
+  return shell(renderToString(<HowWeTestView />), { title: 'How we test and label recipes - 2yolks' });
+}
+
+export function renderNotFound(): string {
+  return shell(renderToString(<NotFoundView />), { title: 'Page not found - 2yolks', noindex: true });
+}
+
 export function renderRecipe(page: RecipePage, alternates: { hreflang: string; href: string }[]): string {
   const jsonLd = {
     '@context': 'https://schema.org',
     '@type': 'Recipe',
     name: page.locale.title,
+    inLanguage: page.locale.lang,
+    ...(page.locale.intro ? { description: page.locale.intro } : {}),
+    author: { '@type': 'Organization', name: '2yolks' },
     recipeIngredient: JSON.parse(page.locale.ingredientsJson),
     recipeInstructions: (JSON.parse(page.locale.stepsJson) as string[]).map((s, i) => ({
       '@type': 'HowToStep',

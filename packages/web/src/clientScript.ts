@@ -37,6 +37,8 @@ export const RECIPE_CLIENT_SCRIPT = `(function () {
   // Cook mode
   var dataEl = document.getElementById('cook-data');
   var overlay = document.querySelector('[data-cook-mode]');
+  var printBtn = document.querySelector('[data-print-open]');
+  if (printBtn) printBtn.addEventListener('click', function () { window.print(); });
   var openBtn = document.querySelector('[data-cook-open]');
   if (dataEl && overlay && openBtn) {
     var cookData = JSON.parse(dataEl.textContent);

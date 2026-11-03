@@ -13,9 +13,9 @@ import {
   validateRecipeSubmission,
   type RecipePage,
 } from '@2yolks/contracts';
-import { renderHome, renderCountryHome, renderRecipe } from '@2yolks/web/server';
+import { renderHome, renderCountryHome, renderRecipe, renderAbout, renderHowWeTest, renderNotFound } from '@2yolks/web/server';
+import { isUntested } from '@2yolks/contracts';
 import { createDb, recipes, recipeLocales, sources } from './db';
-import { scrypt } from '@noble/hashes/scrypt.js';
 
 type Bindings = {
   DB: D1Database;
@@ -53,61 +53,6 @@ const demoAllowed = (c: Context<{ Bindings: Bindings }>) => c.env.ALLOW_DEMO_SEE
 // --- API ---------------------------------------------------------------
 
 app.get('/api/health', (c) => c.json({ ok: true }));
-
-// Dev-only CPU spike: measure Better Auth's password hash (scrypt) inside
-// workerd. Wall time locally approximates CPU for pure compute; the Workers
-// Free limit is 10 ms CPU.
-app.get('/api/dev/cpu-spike', (c) => {
-  if (!demoAllowed(c)) return c.notFound();
-  const t0 = Date.now();
-  const key = scrypt('correct horse battery staple', '2yolks-spike-salt', {
-    N: 16384, r: 8, p: 1, dkLen: 32,
-  });
-  const ms = Date.now() - t0;
-  return c.json({ scrypt_ms: ms, key_bytes: key.length, params: { N: 16384, r: 8, p: 1 } });
-});
-
-// Dev-only passkey-cost spike: a WebAuthn assertion verification is dominated
-// by one ECDSA P-256 verify. WebCrypto runs natively in workerd (off the
-// JS CPU clock per Cloudflare docs), so this measures the wall cost of the
-// operations a real passkey login performs per ceremony.
-app.get('/api/dev/passkey-spike', async (c) => {
-  if (!demoAllowed(c)) return c.notFound();
-  const iterations = 25;
-  const t0 = Date.now();
-  const keyPair = await crypto.subtle.generateKey(
-    { name: 'ECDSA', namedCurve: 'P-256' },
-    true,
-    ['sign', 'verify'],
-  );
-  const payload = new Uint8Array(37); // authenticatorData(32+) + clientDataHash(32) shape
-  crypto.getRandomValues(payload);
-  const sig = await crypto.subtle.sign(
-    { name: 'ECDSA', hash: 'SHA-256' },
-    keyPair.privateKey,
-    payload,
-  );
-  const setupMs = Date.now() - t0;
-  let verifyMs = 0;
-  for (let i = 0; i < iterations; i++) {
-    const t = Date.now();
-    const ok = await crypto.subtle.verify(
-      { name: 'ECDSA', hash: 'SHA-256' },
-      keyPair.publicKey,
-      sig,
-      payload,
-    );
-    verifyMs += Date.now() - t;
-    if (!ok) return c.json({ error: 'verify failed' }, 500);
-  }
-  return c.json({
-    keygen_sign_ms: setupMs,
-    verify_avg_ms: verifyMs / iterations,
-    verify_total_ms: verifyMs,
-    iterations,
-    note: 'WebCrypto executes natively; per Cloudflare docs it is not billed against Workers CPU time.',
-  });
-});
 
 app.get('/api/v1/countries', (c) =>
   c.json({ countries: COUNTRIES, locales: LOCALES }),
@@ -230,7 +175,7 @@ const countryHome = async (c: Context<{ Bindings: Bindings }>) => {
   if (!country || country.wave === 0) return c.notFound();
   const db = createDb(c.env.DB);
   const rows = await db
-    .select({ slug: recipeLocales.slug, title: recipeLocales.title, id: recipeLocales.recipeId })
+    .select({ slug: recipeLocales.slug, title: recipeLocales.title, id: recipeLocales.recipeId, lang: recipeLocales.lang, license: sources.license })
     .from(recipeLocales)
     .innerJoin(recipes, eq(recipeLocales.recipeId, recipes.id))
     .innerJoin(sources, eq(recipes.sourceId, sources.id))
@@ -239,13 +184,15 @@ const countryHome = async (c: Context<{ Bindings: Bindings }>) => {
     renderCountryHome({
       countryName: country.name,
       country: parsed.country,
-      recipes: rows,
+      recipes: rows.map((r) => ({ id: r.id, slug: r.slug, title: r.title, untested: isUntested({ license: r.license }), lang: r.lang })),
     }),
     // Empty listings must not be indexed (thin-page gate).
     rows.length === 0 ? 200 : 200,
     rows.length === 0 ? { 'x-robots-tag': 'noindex' } : undefined,
   );
 };
+app.get('/about', (c) => c.html(renderAbout()));
+app.get('/how-we-test', (c) => c.html(renderHowWeTest()));
 app.get('/:country', countryHome);
 app.get('/:country/', countryHome);
 
@@ -386,6 +333,11 @@ app.all('/api/*', (c) => c.json({ error: 'not found' }, 404));
 
 // Everything else falls through to static assets (JS/CSS/images), which 404
 // when no asset matches.
-app.notFound((c) => c.env.ASSETS.fetch(c.req.raw));
+app.notFound(async (c) => {
+  const res = await c.env.ASSETS.fetch(c.req.raw);
+  if (res.status !== 404) return res;
+  if (c.req.path.startsWith('/api/')) return res;
+  return c.html(renderNotFound(), 404, { 'x-robots-tag': 'noindex' });
+});
 
 export default app;
