@@ -1,6 +1,7 @@
 // Route-level smoke tests against a real wrangler dev (workerd) runtime.
 // Usage: node scripts/smoke.mjs
 import { spawn, execSync } from 'node:child_process';
+import { readdirSync } from 'node:fs';
 
 const PORT = Number(process.env.PORT || 8799);
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -56,10 +57,13 @@ async function get(path, init) {
   return { status: res.status, headers: res.headers, body: await res.text(), location: res.headers.get('location') };
 }
 
-// fresh local D1: migration + demo seeds
+// fresh local D1: every migration in order + demo seeds. Never enumerate
+// migrations by hand here: a skipped migration once let smoke run against a
+// schema missing mcp_audit, so image/blog writes failed only downstream.
 execSync('rm -rf .wrangler');
-execSync('npx wrangler d1 execute 2yolks --local --file packages/api/migrations/0001_init.sql', { stdio: 'ignore' });
-execSync('npx wrangler d1 execute 2yolks --local --file packages/api/migrations/0003_quality_translation.sql', { stdio: 'ignore' });
+for (const file of readdirSync('packages/api/migrations').filter((f) => f.endsWith('.sql')).sort()) {
+  execSync(`npx wrangler d1 execute 2yolks --local --file packages/api/migrations/${file}`, { stdio: 'ignore' });
+}
 execSync('npx wrangler d1 execute 2yolks --local --file packages/api/seeds/0001_demo.sql', { stdio: 'ignore' });
 execSync('npx wrangler d1 execute 2yolks --local --file packages/api/seeds/0002_demo_malicious.sql', { stdio: 'ignore' });
 execSync('npx wrangler d1 execute 2yolks --local --file packages/api/seeds/0003_demo_units.sql', { stdio: 'ignore' });

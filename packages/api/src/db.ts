@@ -1,5 +1,5 @@
 import { drizzle } from 'drizzle-orm/d1';
-import { sqliteTable, text, primaryKey, index } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, text, integer, real, primaryKey, index } from 'drizzle-orm/sqlite-core';
 
 export const sources = sqliteTable('sources', {
   id: text('id').primaryKey(),
@@ -20,7 +20,37 @@ export const recipes = sqliteTable('recipes', {
   createdAt: text('created_at').notNull(),
   testedAt: text('tested_at'),
   testedBy: text('tested_by'),
+  prepMinutes: integer('prep_minutes'),
+  cookMinutes: integer('cook_minutes'),
+  restMinutes: integer('rest_minutes'),
+  totalMinutes: integer('total_minutes'),
+  baseServings: real('base_servings'),
+  category: text('category'),
 });
+
+export const recipeImages = sqliteTable(
+  'recipe_images',
+  {
+    id: text('id').primaryKey(),
+    recipeId: text('recipe_id')
+      .notNull()
+      .references(() => recipes.id),
+    kind: text('kind', { enum: ['hero', 'step'] }).notNull(),
+    stepIndex: integer('step_index'),
+    r2Key: text('r2_key').notNull(),
+    mime: text('mime').notNull(),
+    bytes: integer('bytes').notNull(),
+    width: integer('width'),
+    height: integer('height'),
+    style: text('style', { enum: ['photo', 'illustration', 'graphic'] }).notNull(),
+    sourceName: text('source_name').notNull(),
+    sourceUrl: text('source_url').notNull(),
+    license: text('license').notNull(),
+    clearedAt: text('cleared_at'),
+    createdAt: text('created_at').notNull(),
+  },
+  (t) => [index('idx_recipe_images_recipe').on(t.recipeId)],
+);
 
 export const recipeLocales = sqliteTable(
   'recipe_locales',
@@ -52,5 +82,5 @@ export const recipeLocales = sqliteTable(
 );
 
 export function createDb(d1: D1Database) {
-  return drizzle(d1, { schema: { sources, recipes, recipeLocales } });
+  return drizzle(d1, { schema: { sources, recipes, recipeLocales, recipeImages } });
 }

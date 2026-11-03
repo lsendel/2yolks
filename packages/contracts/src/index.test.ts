@@ -148,3 +148,43 @@ describe('locale-aware recipe paths', () => {
     expect(_LOC.mx).toEqual(['es', 'en', 'fr']);
   });
 });
+
+describe('parseTimeFields / parseCategoryField (migration 0004)', () => {
+  it('validates minutes, servings and category slugs', async () => {
+    const { parseTimeFields, parseCategoryField } = await import('./index');
+    const ok = parseTimeFields({ prepMinutes: 10, cookMinutes: 20, totalMinutes: 30, baseServings: 4 });
+    expect(ok.ok).toBe(true);
+    if (ok.ok) {
+      expect(ok.values).toEqual({ prepMinutes: 10, cookMinutes: 20, totalMinutes: 30, baseServings: 4 });
+      expect(ok.warnings).toEqual([]);
+    }
+    const snake = parseTimeFields({ prep_minutes: 5 });
+    expect(snake.ok && snake.values.prepMinutes).toBe(5);
+    const clear = parseTimeFields({ prepMinutes: null });
+    expect(clear.ok && clear.values.prepMinutes).toBeNull();
+    expect(parseTimeFields({ prepMinutes: -1 }).ok).toBe(false);
+    expect(parseTimeFields({ prepMinutes: 1.5 }).ok).toBe(false);
+    expect(parseTimeFields({ totalMinutes: 0 }).ok).toBe(false);
+    expect(parseTimeFields({ baseServings: 0 }).ok).toBe(false);
+    const overlap = parseTimeFields({ prepMinutes: 30, cookMinutes: 40, totalMinutes: 50 });
+    expect(overlap.ok && overlap.warnings.length).toBe(1);
+
+    const absent = parseCategoryField({});
+    expect(absent.ok).toBe(true);
+    if (absent.ok) expect(absent.present).toBe(false);
+    const cat = parseCategoryField({ category: 'tacos-tortillas' });
+    expect(cat.ok && cat.present && cat.value).toBe('tacos-tortillas');
+    expect(parseCategoryField({ category: null })).toEqual({ ok: true, present: true, value: null });
+    expect(parseCategoryField({ category: 'healthy' }).ok).toBe(false);
+  });
+
+  it('validateRecipeSubmission fails closed on bad times and categories', () => {
+    const base = {
+      source: { name: 'T', url: 'https://example.com', license: 'CC0-1.0' },
+      locales: [{ country: 'us', lang: 'en', title: 'X', ingredients: ['1 egg'], steps: ['Cook.'] }],
+    };
+    expect(validateRecipeSubmission({ ...base, prepMinutes: 10, category: 'soups-stews' }).ok).toBe(true);
+    expect(validateRecipeSubmission({ ...base, prepMinutes: -3 }).ok).toBe(false);
+    expect(validateRecipeSubmission({ ...base, category: 'keto' }).ok).toBe(false);
+  });
+});

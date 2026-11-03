@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
-import { eq, and, ne, isNotNull } from 'drizzle-orm';
+import { eq, and, ne, isNotNull, desc } from 'drizzle-orm';
 import {
   COUNTRIES,
   LOCALES,
@@ -12,16 +12,19 @@ import {
   countryPath,
   slugify,
   validateRecipeSubmission,
+  isRecipeCategorySlug,
   type RecipePage,
 } from '@2yolks/contracts';
-import { renderHome, renderCountryHome, renderRecipe, renderAbout, renderPrivacy, renderHowWeTest, renderNotFound } from '@2yolks/web/server';
-import { isUntested } from '@2yolks/contracts';
-import { createDb, recipes, recipeLocales, sources } from './db';
+import { renderHome, renderCountryHome, renderRecipe, renderAbout, renderPrivacy, renderHowWeTest, renderNotFound, type SiteNavItem } from '@2yolks/web/server';
+import { isUntested, localizedCountryName } from '@2yolks/contracts';
+import { createDb, recipes, recipeLocales, recipeImages, sources } from './db';
 import { mcpApp } from './mcp';
 
 type Bindings = {
   DB: D1Database;
   ASSETS: Fetcher;
+  /** R2 bucket for rights-tracked recipe images (migration 0004). */
+  IMAGES?: R2Bucket;
   /** 'true' only in local dev (wrangler dev --var ALLOW_DEMO_SEED:true).
    * Synthetic demo-seed content must never be served in production. */
   ALLOW_DEMO_SEED?: string;
@@ -57,6 +60,21 @@ function published(db: ReturnType<typeof createDb>, allowDemo: boolean) {
 }
 
 const demoAllowed = (c: Context<{ Bindings: Bindings }>) => c.env.ALLOW_DEMO_SEED === 'true';
+
+/** Header/footer nav: countries that currently carry at least one published
+ * recipe. Empty countries 404 on their pages, so they never appear here. */
+async function siteNav(db: ReturnType<typeof createDb>, allowDemo: boolean, lang: string): Promise<SiteNavItem[]> {
+  const rows = await db
+    .selectDistinct({ country: recipeLocales.country })
+    .from(recipeLocales)
+    .innerJoin(recipes, eq(recipeLocales.recipeId, recipes.id))
+    .innerJoin(sources, eq(recipes.sourceId, sources.id))
+    .where(published(db, allowDemo));
+  return rows
+    .map((r) => getCountry(r.country))
+    .filter((ct): ct is NonNullable<typeof ct> => Boolean(ct))
+    .map((ct) => ({ href: countryPath(ct.code), label: localizedCountryName(ct.code, lang) }));
+}
 
 // --- API ---------------------------------------------------------------
 
@@ -178,6 +196,55 @@ app.get('/sitemap.xml', async (c) => {
   return c.text(xml, 200, { 'content-type': 'application/xml; charset=utf-8' });
 });
 
+// --- Recipe images (migration 0004) ------------------------------------------
+// Registered before the /:country catch-alls so they cannot shadow it.
+// Serves rights-tracked R2 images by their recipe_images row id. Two gates,
+// both mandatory: the image row itself must be rights-cleared (cleared_at -
+// recorded provenance alone is NOT clearance) AND the recipe must have at
+// least one published, rights-cleared locale (same visibility rule as the
+// recipe page). No arbitrary R2 keys: only rows recorded through
+// recipes.set_image are served. Plain 404s (never the HTML/ASSETS not-found
+// path): this is a binary endpoint.
+app.get('/img/recipe/:imageId', async (c) => {
+  // 404s are never cached: a visibility flip must not stick at the edge.
+  const notFound = () => c.text('not found', 404, { 'cache-control': 'no-store' });
+  const images = c.env.IMAGES;
+  if (!images) return notFound();
+  const db = createDb(c.env.DB);
+  const rows = await db
+    .select({ r2Key: recipeImages.r2Key, mime: recipeImages.mime, recipeId: recipeImages.recipeId, clearedAt: recipeImages.clearedAt })
+    .from(recipeImages)
+    .where(eq(recipeImages.id, c.req.param('imageId')))
+    .limit(1);
+  const img = rows[0];
+  if (!img || !img.clearedAt) return notFound();
+  const visible = await db
+    .select({ slug: recipeLocales.slug })
+    .from(recipeLocales)
+    .innerJoin(recipes, eq(recipeLocales.recipeId, recipes.id))
+    .innerJoin(sources, eq(recipes.sourceId, sources.id))
+    .where(and(eq(recipeLocales.recipeId, img.recipeId), published(db, demoAllowed(c))))
+    .limit(1);
+  if (visible.length === 0) return notFound();
+  const obj = await images.get(img.r2Key);
+  if (!obj) return notFound();
+  return new Response(obj.body, {
+    headers: {
+      'content-type': img.mime,
+      // Content for an image id never changes (a new upload is a new id), but
+      // visibility flips with publish state - an immutable year-long cache
+      // would keep serving unpublished images. max-age=300 bounds staleness
+      // to 5 minutes, matching the draft/private visibility promise.
+      'cache-control': 'public, max-age=300',
+      // Defense in depth for the container-validation bound (JPEG/WebP
+      // bitstream corruption is not detected): the browser must treat the
+      // bytes strictly as the declared image type, never sniffed as active
+      // content.
+      'x-content-type-options': 'nosniff',
+    },
+  });
+});
+
 // --- SSR pages ----------------------------------------------------------
 
 app.get('/', async (c) => {
@@ -196,7 +263,22 @@ app.get('/', async (c) => {
       .filter((lang) => lang === defaultLocale(ct.code) || live.some((l) => l.country === ct.code && l.lang === lang))
       .map((lang) => ({ country: ct.code, countryName: ct.name, lang })),
   );
-  return c.html(renderHome({ locales: markets }));
+  const recipeRows = await db
+    .select({ id: recipeLocales.recipeId, country: recipeLocales.country, lang: recipeLocales.lang, slug: recipeLocales.slug, title: recipeLocales.title, testedAt: recipes.testedAt, category: recipes.category })
+    .from(recipeLocales)
+    .innerJoin(recipes, eq(recipeLocales.recipeId, recipes.id))
+    .innerJoin(sources, eq(recipes.sourceId, sources.id))
+    .where(published(db, demoAllowed(c)));
+  const nav = await siteNav(db, demoAllowed(c), 'en');
+  return c.html(
+    renderHome(
+      {
+        locales: markets,
+        recipes: recipeRows.map((r) => ({ id: r.id, country: r.country, lang: r.lang, slug: r.slug, title: r.title, untested: isUntested({ testedAt: r.testedAt }), category: r.category })),
+      },
+      nav,
+    ),
+  );
 });
 
 const countryHome = async (c: Context<{ Bindings: Bindings }>) => {
@@ -207,25 +289,47 @@ const countryHome = async (c: Context<{ Bindings: Bindings }>) => {
   if (!country || country.wave === 0) return c.notFound();
   const db = createDb(c.env.DB);
   const rows = await db
-    .select({ slug: recipeLocales.slug, title: recipeLocales.title, id: recipeLocales.recipeId, lang: recipeLocales.lang, testedAt: recipes.testedAt })
+    .select({ slug: recipeLocales.slug, title: recipeLocales.title, id: recipeLocales.recipeId, lang: recipeLocales.lang, testedAt: recipes.testedAt, category: recipes.category })
     .from(recipeLocales)
     .innerJoin(recipes, eq(recipeLocales.recipeId, recipes.id))
     .innerJoin(sources, eq(recipes.sourceId, sources.id))
     .where(and(eq(recipeLocales.country, parsed.country), published(db, demoAllowed(c))));
+  // ?cat=<slug> filters the listing by dish type. Unknown slugs are ignored
+  // (full listing), never 404 on a hand-typed filter.
+  const catParam = new URL(c.req.url).searchParams.get('cat');
+  const activeCategory = catParam && isRecipeCategorySlug(catParam) ? catParam : null;
+  const mapped = rows.map((r) => ({
+    id: r.id,
+    slug: r.slug,
+    title: r.title,
+    untested: isUntested({ testedAt: r.testedAt }),
+    lang: r.lang,
+    country: parsed.country,
+    category: r.category ?? null,
+  }));
+  const categories = [...new Set(mapped.map((r) => r.category).filter((x): x is string => Boolean(x)))].sort();
+  const filtered = activeCategory ? mapped.filter((r) => r.category === activeCategory) : mapped;
+  const pageLang = defaultLocale(parsed.country) ?? 'en';
+  const nav = await siteNav(db, demoAllowed(c), pageLang);
   return c.html(
-    renderCountryHome({
-      countryName: country.name,
-      country: parsed.country,
-      recipes: rows.map((r) => ({ id: r.id, slug: r.slug, title: r.title, untested: isUntested({ testedAt: r.testedAt }), lang: r.lang })),
-    }),
+    renderCountryHome(
+      {
+        countryName: localizedCountryName(parsed.country, pageLang),
+        country: parsed.country,
+        recipes: filtered,
+        categories,
+        activeCategory,
+      },
+      nav,
+    ),
     // Empty listings must not be indexed (thin-page gate).
-    rows.length === 0 ? 200 : 200,
-    rows.length === 0 ? { 'x-robots-tag': 'noindex' } : undefined,
+    200,
+    filtered.length === 0 ? { 'x-robots-tag': 'noindex' } : undefined,
   );
 };
-app.get('/about', (c) => c.html(renderAbout()));
-app.get('/privacy', (c) => c.html(renderPrivacy()));
-app.get('/how-we-test', (c) => c.html(renderHowWeTest()));
+app.get('/about', async (c) => c.html(renderAbout(await siteNav(createDb(c.env.DB), demoAllowed(c), 'en'))));
+app.get('/privacy', async (c) => c.html(renderPrivacy(await siteNav(createDb(c.env.DB), demoAllowed(c), 'en'))));
+app.get('/how-we-test', async (c) => c.html(renderHowWeTest(await siteNav(createDb(c.env.DB), demoAllowed(c), 'en'))));
 app.get('/:country', countryHome);
 app.get('/:country/', countryHome);
 
@@ -280,6 +384,37 @@ const recipeRoute = async (c: Context<{ Bindings: Bindings }>) => {
     });
   }
 
+  // Latest rights-cleared hero image, if any (migration 0004). The page
+  // renderer falls back to the title graphic when this is null. Uncleared
+  // rows (recorded provenance without the rightsConfirmed stamp) never reach
+  // the page.
+  const heroRows = await db
+    .select({ id: recipeImages.id, style: recipeImages.style })
+    .from(recipeImages)
+    .where(and(eq(recipeImages.recipeId, parsed.id), eq(recipeImages.kind, 'hero'), isNotNull(recipeImages.clearedAt)))
+    .orderBy(desc(recipeImages.createdAt))
+    .limit(1);
+  // Cleared step images, latest first so the newest row per step wins.
+  const stepRows = await db
+    .select({ id: recipeImages.id, style: recipeImages.style, stepIndex: recipeImages.stepIndex })
+    .from(recipeImages)
+    .where(and(eq(recipeImages.recipeId, parsed.id), eq(recipeImages.kind, 'step'), isNotNull(recipeImages.clearedAt)))
+    .orderBy(desc(recipeImages.createdAt));
+  // Aligned to the page locale's steps array by 0-based index; steps without
+  // an image stay null.
+  let stepCount = 0;
+  try {
+    const stepsParsed: unknown = JSON.parse(canonical.recipe_locales.stepsJson);
+    stepCount = Array.isArray(stepsParsed) ? stepsParsed.length : 0;
+  } catch {
+    stepCount = 0;
+  }
+  const stepImages: NonNullable<RecipePage['stepImages']> = Array.from({ length: stepCount }, () => null);
+  for (const row of stepRows) {
+    const idx = row.stepIndex ?? -1;
+    if (idx < 0 || idx >= stepCount || stepImages[idx]) continue;
+    stepImages[idx] = { url: `${origin}/img/recipe/${row.id}`, style: row.style };
+  }
   const page: RecipePage = {
     recipe: {
       id: canonical.recipes.id,
@@ -289,7 +424,15 @@ const recipeRoute = async (c: Context<{ Bindings: Bindings }>) => {
       createdAt: canonical.recipes.createdAt,
       testedAt: canonical.recipes.testedAt,
       testedBy: canonical.recipes.testedBy,
+      prepMinutes: canonical.recipes.prepMinutes,
+      cookMinutes: canonical.recipes.cookMinutes,
+      restMinutes: canonical.recipes.restMinutes,
+      totalMinutes: canonical.recipes.totalMinutes,
+      baseServings: canonical.recipes.baseServings,
+      category: (canonical.recipes.category ?? null) as RecipePage['recipe']['category'],
     },
+    heroImage: heroRows[0] ? { url: `${origin}/img/recipe/${heroRows[0].id}`, style: heroRows[0].style } : null,
+    stepImages,
     locale: {
       recipeId: canonical.recipe_locales.recipeId,
       country: canonical.recipe_locales.country,
@@ -315,7 +458,8 @@ const recipeRoute = async (c: Context<{ Bindings: Bindings }>) => {
       notes: canonical.sources.notes,
     },
   };
-  return c.html(renderRecipe(page, alternates));
+  const nav = await siteNav(db, demoAllowed(c), page.locale.lang);
+  return c.html(renderRecipe(page, alternates, { nav, countryName: localizedCountryName(parsed.country, page.locale.lang) }));
 };
 app.get('/:country/recipes/:idSlug', recipeRoute);
 app.get('/:country/:lang/recipes/:idSlug', recipeRoute);

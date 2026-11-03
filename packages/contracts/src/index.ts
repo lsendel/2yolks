@@ -91,6 +91,19 @@ export function getCountry(code: string): Country | undefined {
   return BY_CODE.get(code.toLowerCase());
 }
 
+/** Display name for a country in the page's language. Launched (wave-1)
+ * countries are translated; the rest fall back to the catalogue (English)
+ * name until their market launches. */
+const COUNTRY_DISPLAY: Record<string, Record<string, string>> = {
+  us: { es: 'Estados Unidos', fr: '\u00c9tats-Unis' },
+  mx: { es: 'M\u00e9xico', fr: 'Mexique' },
+};
+export function localizedCountryName(code: string, lang: string): string {
+  const ct = getCountry(code);
+  if (!ct) return code.toUpperCase();
+  return COUNTRY_DISPLAY[code]?.[lang] ?? ct.name;
+}
+
 export function waveCountries(wave: number): Country[] {
   return COUNTRIES.filter((c) => c.wave === wave);
 }
@@ -148,6 +161,20 @@ export interface UiStrings {
   units: string;
   unitsMetric: string;
   unitsUs: string;
+  browseByCountry: string;
+  allRecipes: string;
+  categories: string;
+  allCategories: string;
+  skipToContent: string;
+  recipeWord: string;
+  recipesWord: string;
+  testingShort: string;
+  emptyCategory: string;
+  timePrep: string;
+  timeCook: string;
+  timeRest: string;
+  timeTotal: string;
+  imageIllustrationNote: string;
 }
 
 const UI_STRINGS: Record<string, UiStrings> = {
@@ -160,9 +187,15 @@ const UI_STRINGS: Record<string, UiStrings> = {
     untestedNote: 'Not yet tested in a kitchen. Written from standard techniques; we have not cooked it.',
     machineNote: 'Machine-translated from the original recipe. Checked by automated tests and an AI review; not reviewed by a native speaker. If anything looks off, follow the original-language version.',
     about: 'About', howWeTest: 'How we test and label recipes', print: 'Print', home: 'Home',
-    tagline: 'Recipes worth cracking two eggs for.',
+    tagline: 'Honest recipes, clearly labeled.',
     share: 'Share', copyLink: 'Copy link', linkCopied: 'Link copied', shareEmail: 'Email',
     units: 'Units', unitsMetric: 'Metric', unitsUs: 'US customary',
+    browseByCountry: 'Browse by country', allRecipes: 'All recipes',
+    categories: 'Categories', allCategories: 'All', skipToContent: 'Skip to content',
+    recipeWord: 'recipe', recipesWord: 'recipes',
+    testingShort: 'How we test', emptyCategory: 'No recipes in this category yet.',
+    timePrep: 'Prep', timeCook: 'Cook', timeRest: 'Rest', timeTotal: 'Total',
+    imageIllustrationNote: 'Illustration generated for this recipe - not a photo of the cooked dish.',
   },
   es: {
     ingredients: 'Ingredientes', steps: 'Pasos', source: 'Fuente',
@@ -173,9 +206,15 @@ const UI_STRINGS: Record<string, UiStrings> = {
     untestedNote: 'A\u00fan no probada en cocina. Escrita con t\u00e9cnicas est\u00e1ndar; todav\u00eda no la hemos cocinado.',
     machineNote: 'Traducci\u00f3n autom\u00e1tica de la receta original. Revisada con pruebas autom\u00e1ticas y una revisi\u00f3n con IA; no la ha revisado un hablante nativo. Si algo no parece correcto, sigue la versi\u00f3n en el idioma original.',
     about: 'Acerca de', howWeTest: 'C\u00f3mo probamos y etiquetamos las recetas', print: 'Imprimir', home: 'Inicio',
-    tagline: 'Recetas que valen dos huevos.',
+    tagline: 'Recetas honestas, con etiquetas claras.',
     share: 'Compartir', copyLink: 'Copiar enlace', linkCopied: 'Enlace copiado', shareEmail: 'Correo',
     units: 'Unidades', unitsMetric: 'M\u00e9trico', unitsUs: 'EE. UU.',
+    browseByCountry: 'Explora por pa\u00eds', allRecipes: 'Todas las recetas',
+    categories: 'Categor\u00edas', allCategories: 'Todas', skipToContent: 'Saltar al contenido',
+    recipeWord: 'receta', recipesWord: 'recetas',
+    testingShort: 'C\u00f3mo probamos', emptyCategory: 'A\u00fan no hay recetas en esta categor\u00eda.',
+    timePrep: 'Preparaci\u00f3n', timeCook: 'Cocci\u00f3n', timeRest: 'Reposo', timeTotal: 'Total',
+    imageIllustrationNote: 'Ilustraci\u00f3n generada para esta receta: no es una foto del plato cocinado.',
   },
   fr: {
     ingredients: 'Ingr\u00e9dients', steps: '\u00c9tapes', source: 'Source',
@@ -186,9 +225,15 @@ const UI_STRINGS: Record<string, UiStrings> = {
     untestedNote: 'Pas encore test\u00e9e en cuisine. \u00c9crite \u00e0 partir de techniques courantes ; nous ne l\u2019avons pas encore cuisin\u00e9e.',
     machineNote: 'Traduction automatique de la recette originale. V\u00e9rifi\u00e9e par des tests automatiques et une relecture par IA ; non relue par un locuteur natif. Si quelque chose semble inexact, suivez la version dans la langue d\u2019origine.',
     about: '\u00c0 propos', howWeTest: 'Comment nous testons et \u00e9tiquetons les recettes', print: 'Imprimer', home: 'Accueil',
-    tagline: 'Des recettes qui valent deux \u0153ufs.',
+    tagline: 'Des recettes honn\u00eates, clairement \u00e9tiquet\u00e9es.',
     share: 'Partager', copyLink: 'Copier le lien', linkCopied: 'Lien copi\u00e9', shareEmail: 'E-mail',
     units: 'Unit\u00e9s', unitsMetric: 'M\u00e9trique', unitsUs: 'Am\u00e9ricaines (US)',
+    browseByCountry: 'Explorer par pays', allRecipes: 'Toutes les recettes',
+    categories: 'Cat\u00e9gories', allCategories: 'Toutes', skipToContent: 'Aller au contenu',
+    recipeWord: 'recette', recipesWord: 'recettes',
+    testingShort: 'Comment nous testons', emptyCategory: 'Aucune recette dans cette cat\u00e9gorie pour le moment.',
+    timePrep: 'Pr\u00e9paration', timeCook: 'Cuisson', timeRest: 'Repos', timeTotal: 'Total',
+    imageIllustrationNote: 'Illustration g\u00e9n\u00e9r\u00e9e pour cette recette - ce n\u2019est pas une photo du plat cuisin\u00e9.',
   },
 };
 
@@ -201,6 +246,28 @@ export const COUNTRY_INTROS: Readonly<Record<string, { lang: string; text: strin
   us: { lang: 'en', text: 'Home-style American recipes, plus dishes American kitchens have made their own. Every recipe carries a clear label for whether it has been tested in a kitchen.' },
   mx: { lang: 'es', text: 'Recetas mexicanas escritas en espa\u00f1ol, con medidas en m\u00e9trico. Cada receta indica con claridad si ya se prob\u00f3 en cocina.' },
 };
+
+// ---------------------------------------------------------------------------
+// Dish-type categories
+// A bounded, locale-invariant taxonomy grounded in the recipes actually
+// published. Stored as a slug on recipes.category (NULL = uncategorized,
+// shown under "All"). Labels are display-only; register a slug here before
+// any row may use it, so category values never drift into free text.
+// ---------------------------------------------------------------------------
+
+export const CATEGORIES: Readonly<Record<RecipeCategorySlug, { en: string; es: string; fr: string }>> = {
+  'soups-stews': { en: 'Soups & stews', es: 'Sopas y guisos', fr: 'Soupes et rago\u00fbts' },
+  dumplings: { en: 'Dumplings', es: 'Dumplings', fr: 'Raviolis' },
+  'tacos-tortillas': { en: 'Tacos & tortilla dishes', es: 'Tacos y platos de tortilla', fr: 'Tacos et plats \u00e0 la tortilla' },
+};
+
+/** Localized display label for a stored category slug; null when the slug is
+ * missing or unregistered (callers render nothing, never the raw slug). */
+export function categoryLabel(slug: string | null | undefined, lang: string): string | null {
+  if (!slug || !isRecipeCategorySlug(slug)) return null;
+  const entry = CATEGORIES[slug];
+  return (entry as unknown as Record<string, string>)[lang] ?? entry.en;
+}
 
 /** Quality state is explicit per recipe: tested only when a person recorded
  * a tested_at date. Never inferred from the source license. */
@@ -233,6 +300,110 @@ export interface RecipeSubmission {
   source: { name: string; url: string; license: string };
   originCountry?: string;
   locales: RecipeLocaleInput[];
+  /** Optional structured timing/yield (see parseTimeFields). */
+  prepMinutes?: number | null;
+  cookMinutes?: number | null;
+  restMinutes?: number | null;
+  totalMinutes?: number | null;
+  baseServings?: number | null;
+  category?: RecipeCategorySlug | null;
+}
+
+// ---------------------------------------------------------------------------
+// Structured timing/yield fields (migration 0004). Shared by every ingestion
+// path (submissions, MCP create/update). Values are nullable; explicit null
+// clears on update. Numbers are validated, never guessed.
+// ---------------------------------------------------------------------------
+
+export const MAX_RECIPE_MINUTES = 10080; // one week; caps marinating/curing
+
+export interface RecipeTimeFields {
+  prepMinutes: number | null;
+  cookMinutes: number | null;
+  restMinutes: number | null;
+  totalMinutes: number | null;
+  baseServings: number | null;
+}
+
+const TIME_KEYS: Record<string, keyof RecipeTimeFields> = {
+  prepMinutes: 'prepMinutes', prep_minutes: 'prepMinutes',
+  cookMinutes: 'cookMinutes', cook_minutes: 'cookMinutes',
+  restMinutes: 'restMinutes', rest_minutes: 'restMinutes',
+  totalMinutes: 'totalMinutes', total_minutes: 'totalMinutes',
+  baseServings: 'baseServings', base_servings: 'baseServings',
+};
+
+export type TimeFieldsParse =
+  | { ok: true; values: Partial<RecipeTimeFields>; warnings: string[] }
+  | { ok: false; error: string };
+
+/** Reads the optional timing/yield keys out of a submission or MCP argument
+ * object. A key set to null means "clear" (update paths); an absent key is
+ * left untouched. */
+export function parseTimeFields(input: Record<string, unknown>): TimeFieldsParse {
+  const values: Partial<RecipeTimeFields> = {};
+  const warnings: string[] = [];
+  for (const [rawKey, field] of Object.entries(TIME_KEYS)) {
+    if (!(rawKey in input) || field in values) continue;
+    const v = input[rawKey];
+    if (v === undefined) continue;
+    if (v === null) {
+      values[field] = null;
+      continue;
+    }
+    if (field === 'baseServings') {
+      if (typeof v !== 'number' || !Number.isFinite(v) || v <= 0 || v > 1000) {
+        return { ok: false, error: `${rawKey} must be a number in (0, 1000]` };
+      }
+      values[field] = v;
+      continue;
+    }
+    if (typeof v !== 'number' || !Number.isInteger(v) || v < 0 || v > MAX_RECIPE_MINUTES) {
+      return { ok: false, error: `${rawKey} must be an integer in [0, ${MAX_RECIPE_MINUTES}] minutes` };
+    }
+    if (field === 'totalMinutes' && v === 0) {
+      return { ok: false, error: 'totalMinutes must be at least 1 when provided' };
+    }
+    values[field] = v;
+  }
+  const total = values.totalMinutes;
+  if (typeof total === 'number') {
+    const active = (values.prepMinutes ?? 0) + (values.cookMinutes ?? 0);
+    if (active > total) {
+      warnings.push('totalMinutes is less than prep+cook; only consistent if they overlap');
+    }
+  }
+  return { ok: true, values, warnings };
+}
+
+// ---------------------------------------------------------------------------
+// Locale-invariant dish-type categories (migration 0004). The slug list is
+// the contract; localized display labels live in the web UI keyed by these
+// slugs. Categories are dish types only - never health, diet, or quality
+// classifications. NULL means uncategorized (listed under "All").
+// ---------------------------------------------------------------------------
+
+export const RECIPE_CATEGORY_SLUGS = ['soups-stews', 'dumplings', 'tacos-tortillas'] as const;
+export type RecipeCategorySlug = (typeof RECIPE_CATEGORY_SLUGS)[number];
+
+export function isRecipeCategorySlug(v: unknown): v is RecipeCategorySlug {
+  return typeof v === 'string' && (RECIPE_CATEGORY_SLUGS as readonly string[]).includes(v);
+}
+
+export type CategoryFieldParse =
+  | { ok: true; present: boolean; value: RecipeCategorySlug | null }
+  | { ok: false; error: string };
+
+/** Reads the optional category key out of a submission or MCP argument
+ * object. null clears; an unknown slug is rejected, never coerced. */
+export function parseCategoryField(input: Record<string, unknown>): CategoryFieldParse {
+  if (!('category' in input) || input['category'] === undefined) return { ok: true, present: false, value: null };
+  const v = input['category'];
+  if (v === null) return { ok: true, present: true, value: null };
+  if (!isRecipeCategorySlug(v)) {
+    return { ok: false, error: `category must be one of: ${RECIPE_CATEGORY_SLUGS.join(', ')}` };
+  }
+  return { ok: true, present: true, value: v };
 }
 
 export interface ValidationFailure {
@@ -273,6 +444,12 @@ export function validateRecipeSubmission(input: unknown): ValidationResult {
     if (typeof sub['originCountry'] !== 'string' || !getCountry(sub['originCountry'] as string))
       fail('originCountry', 'unknown country code');
   }
+
+  const times = parseTimeFields(sub);
+  if (!times.ok) fail('times', times.error);
+
+  const category = parseCategoryField(sub);
+  if (!category.ok) fail('category', category.error);
 
   // locales
   const locs = sub['locales'];
@@ -525,7 +702,25 @@ export interface Recipe {
   createdAt: string;
   testedAt?: string | null;
   testedBy?: string | null;
+  /** Structured timing/yield (migration 0004). All nullable: an absent value
+   * means "not recorded", never zero. totalMinutes is stored explicitly and
+   * is never prep+cook arithmetic - prep and cook can overlap and resting
+   * time sits outside both. Translation-invariant: stored once per recipe,
+   * shared by every locale. */
+  prepMinutes?: number | null;
+  cookMinutes?: number | null;
+  restMinutes?: number | null;
+  totalMinutes?: number | null;
+  /** Numeric base yield the serving scaler multiplies from (1x). */
+  baseServings?: number | null;
+  /** Dish-type category slug (migration 0004); null = uncategorized. */
+  category?: RecipeCategorySlug | null;
 }
+
+/** Honest imagery classes: a real photo (depicts an actual dish, provenance
+ * required), a generated illustration (labeled, never presented as the
+ * cooked result), or a title graphic (text only, no food depiction). */
+export type RecipeImageStyle = 'photo' | 'illustration' | 'graphic';
 
 export interface RecipeLocale {
   recipeId: string;
@@ -546,10 +741,26 @@ export interface RecipeLocale {
   translationReviewerKind?: string | null;
 }
 
+/** A served recipe image reference: absolute URL on this origin plus the
+ * honest-imagery label. Only rights-confirmed (cleared_at) images are ever
+ * resolved into these refs. */
+export interface RecipeImageRef {
+  url: string;
+  style: RecipeImageStyle;
+}
+
 export interface RecipePage {
   recipe: Recipe;
   locale: RecipeLocale;
   source: Source;
+  /** Rights-tracked hero image (recipe_images, migration 0004), already
+   * resolved to an absolute serving URL. null when none is set; renderers
+   * fall back to the title graphic or no image. */
+  heroImage?: RecipeImageRef | null;
+  /** Rights-tracked step images (migration 0004), aligned to the locale's
+   * steps array by 0-based index; null entries are steps without an image.
+   * Same serving URL shape as heroImage. */
+  stepImages?: (RecipeImageRef | null)[];
 }
 export * from './units';
 export * from './render';

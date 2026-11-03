@@ -14,6 +14,12 @@
     "binding": "ASSETS",
     "run_worker_first": true
   },
+  "r2_buckets": [
+    {
+      "binding": "IMAGES",
+      "bucket_name": "2yolks-images" // dedicated recipe-image bucket; created in the CF dashboard 2026-11-03 under the approved image plan
+    }
+  ],
   "d1_databases": [
     {
       "binding": "DB",
