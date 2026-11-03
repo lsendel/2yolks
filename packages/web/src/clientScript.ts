@@ -5,6 +5,11 @@
  * Steps data comes from the #cook-data JSON script tag (escaped server-side).
  */
 export const RECIPE_CLIENT_SCRIPT = `(function () {
+  // Graceful fallback: hide the hero figure if its image failed to load (alt text alone is not a layout).
+  Array.prototype.slice.call(document.querySelectorAll('figure.hero-image img')).forEach(function (img) {
+    function hide() { var f = img.closest('figure'); if (f) f.style.display = 'none'; }
+    if (img.complete && img.naturalWidth === 0) hide(); else img.addEventListener('error', hide);
+  });
   var FRACS = [[0.125,'\\u215b'],[0.2,'\\u2155'],[0.25,'\\u00bc'],[0.333333,'\\u2153'],[0.375,'\\u215c'],[0.4,'\\u2156'],[0.5,'\\u00bd'],[0.6,'\\u2157'],[0.625,'\\u215d'],[0.666667,'\\u2154'],[0.75,'\\u00be'],[0.8,'\\u2158'],[0.875,'\\u215e']];
   function fmt(n) {
     var w = Math.floor(n + 1e-9), r = n - w;

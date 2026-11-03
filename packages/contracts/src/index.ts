@@ -91,6 +91,19 @@ export function getCountry(code: string): Country | undefined {
   return BY_CODE.get(code.toLowerCase());
 }
 
+/** Display name for a country in the page's language. Launched (wave-1)
+ * countries are translated; the rest fall back to the catalogue (English)
+ * name until their market launches. */
+const COUNTRY_DISPLAY: Record<string, Record<string, string>> = {
+  us: { es: 'Estados Unidos', fr: '\u00c9tats-Unis' },
+  mx: { es: 'M\u00e9xico', fr: 'Mexique' },
+};
+export function localizedCountryName(code: string, lang: string): string {
+  const ct = getCountry(code);
+  if (!ct) return code.toUpperCase();
+  return COUNTRY_DISPLAY[code]?.[lang] ?? ct.name;
+}
+
 export function waveCountries(wave: number): Country[] {
   return COUNTRIES.filter((c) => c.wave === wave);
 }
@@ -174,7 +187,7 @@ const UI_STRINGS: Record<string, UiStrings> = {
     untestedNote: 'Not yet tested in a kitchen. Written from standard techniques; we have not cooked it.',
     machineNote: 'Machine-translated from the original recipe. Checked by automated tests and an AI review; not reviewed by a native speaker. If anything looks off, follow the original-language version.',
     about: 'About', howWeTest: 'How we test and label recipes', print: 'Print', home: 'Home',
-    tagline: 'Recipes worth cracking two eggs for.',
+    tagline: 'Honest recipes, clearly labeled.',
     share: 'Share', copyLink: 'Copy link', linkCopied: 'Link copied', shareEmail: 'Email',
     units: 'Units', unitsMetric: 'Metric', unitsUs: 'US customary',
     browseByCountry: 'Browse by country', allRecipes: 'All recipes',
@@ -193,7 +206,7 @@ const UI_STRINGS: Record<string, UiStrings> = {
     untestedNote: 'A\u00fan no probada en cocina. Escrita con t\u00e9cnicas est\u00e1ndar; todav\u00eda no la hemos cocinado.',
     machineNote: 'Traducci\u00f3n autom\u00e1tica de la receta original. Revisada con pruebas autom\u00e1ticas y una revisi\u00f3n con IA; no la ha revisado un hablante nativo. Si algo no parece correcto, sigue la versi\u00f3n en el idioma original.',
     about: 'Acerca de', howWeTest: 'C\u00f3mo probamos y etiquetamos las recetas', print: 'Imprimir', home: 'Inicio',
-    tagline: 'Recetas que valen dos huevos.',
+    tagline: 'Recetas honestas, con etiquetas claras.',
     share: 'Compartir', copyLink: 'Copiar enlace', linkCopied: 'Enlace copiado', shareEmail: 'Correo',
     units: 'Unidades', unitsMetric: 'M\u00e9trico', unitsUs: 'EE. UU.',
     browseByCountry: 'Explora por pa\u00eds', allRecipes: 'Todas las recetas',
@@ -212,7 +225,7 @@ const UI_STRINGS: Record<string, UiStrings> = {
     untestedNote: 'Pas encore test\u00e9e en cuisine. \u00c9crite \u00e0 partir de techniques courantes ; nous ne l\u2019avons pas encore cuisin\u00e9e.',
     machineNote: 'Traduction automatique de la recette originale. V\u00e9rifi\u00e9e par des tests automatiques et une relecture par IA ; non relue par un locuteur natif. Si quelque chose semble inexact, suivez la version dans la langue d\u2019origine.',
     about: '\u00c0 propos', howWeTest: 'Comment nous testons et \u00e9tiquetons les recettes', print: 'Imprimer', home: 'Accueil',
-    tagline: 'Des recettes qui valent deux \u0153ufs.',
+    tagline: 'Des recettes honn\u00eates, clairement \u00e9tiquet\u00e9es.',
     share: 'Partager', copyLink: 'Copier le lien', linkCopied: 'Lien copi\u00e9', shareEmail: 'E-mail',
     units: 'Unit\u00e9s', unitsMetric: 'M\u00e9trique', unitsUs: 'Am\u00e9ricaines (US)',
     browseByCountry: 'Explorer par pays', allRecipes: 'Toutes les recettes',

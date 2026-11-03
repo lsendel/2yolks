@@ -16,7 +16,7 @@ import {
   type RecipePage,
 } from '@2yolks/contracts';
 import { renderHome, renderCountryHome, renderRecipe, renderAbout, renderPrivacy, renderHowWeTest, renderNotFound, type SiteNavItem } from '@2yolks/web/server';
-import { isUntested } from '@2yolks/contracts';
+import { isUntested, localizedCountryName } from '@2yolks/contracts';
 import { createDb, recipes, recipeLocales, recipeImages, sources } from './db';
 import { mcpApp } from './mcp';
 
@@ -63,7 +63,7 @@ const demoAllowed = (c: Context<{ Bindings: Bindings }>) => c.env.ALLOW_DEMO_SEE
 
 /** Header/footer nav: countries that currently carry at least one published
  * recipe. Empty countries 404 on their pages, so they never appear here. */
-async function siteNav(db: ReturnType<typeof createDb>, allowDemo: boolean): Promise<SiteNavItem[]> {
+async function siteNav(db: ReturnType<typeof createDb>, allowDemo: boolean, lang: string): Promise<SiteNavItem[]> {
   const rows = await db
     .selectDistinct({ country: recipeLocales.country })
     .from(recipeLocales)
@@ -73,7 +73,7 @@ async function siteNav(db: ReturnType<typeof createDb>, allowDemo: boolean): Pro
   return rows
     .map((r) => getCountry(r.country))
     .filter((ct): ct is NonNullable<typeof ct> => Boolean(ct))
-    .map((ct) => ({ href: countryPath(ct.code), label: ct.name }));
+    .map((ct) => ({ href: countryPath(ct.code), label: localizedCountryName(ct.code, lang) }));
 }
 
 // --- API ---------------------------------------------------------------
@@ -269,7 +269,7 @@ app.get('/', async (c) => {
     .innerJoin(recipes, eq(recipeLocales.recipeId, recipes.id))
     .innerJoin(sources, eq(recipes.sourceId, sources.id))
     .where(published(db, demoAllowed(c)));
-  const nav = await siteNav(db, demoAllowed(c));
+  const nav = await siteNav(db, demoAllowed(c), 'en');
   return c.html(
     renderHome(
       {
@@ -309,11 +309,12 @@ const countryHome = async (c: Context<{ Bindings: Bindings }>) => {
   }));
   const categories = [...new Set(mapped.map((r) => r.category).filter((x): x is string => Boolean(x)))].sort();
   const filtered = activeCategory ? mapped.filter((r) => r.category === activeCategory) : mapped;
-  const nav = await siteNav(db, demoAllowed(c));
+  const pageLang = defaultLocale(parsed.country) ?? 'en';
+  const nav = await siteNav(db, demoAllowed(c), pageLang);
   return c.html(
     renderCountryHome(
       {
-        countryName: country.name,
+        countryName: localizedCountryName(parsed.country, pageLang),
         country: parsed.country,
         recipes: filtered,
         categories,
@@ -326,9 +327,9 @@ const countryHome = async (c: Context<{ Bindings: Bindings }>) => {
     filtered.length === 0 ? { 'x-robots-tag': 'noindex' } : undefined,
   );
 };
-app.get('/about', async (c) => c.html(renderAbout(await siteNav(createDb(c.env.DB), demoAllowed(c)))));
-app.get('/privacy', async (c) => c.html(renderPrivacy(await siteNav(createDb(c.env.DB), demoAllowed(c)))));
-app.get('/how-we-test', async (c) => c.html(renderHowWeTest(await siteNav(createDb(c.env.DB), demoAllowed(c)))));
+app.get('/about', async (c) => c.html(renderAbout(await siteNav(createDb(c.env.DB), demoAllowed(c), 'en'))));
+app.get('/privacy', async (c) => c.html(renderPrivacy(await siteNav(createDb(c.env.DB), demoAllowed(c), 'en'))));
+app.get('/how-we-test', async (c) => c.html(renderHowWeTest(await siteNav(createDb(c.env.DB), demoAllowed(c), 'en'))));
 app.get('/:country', countryHome);
 app.get('/:country/', countryHome);
 
@@ -457,8 +458,8 @@ const recipeRoute = async (c: Context<{ Bindings: Bindings }>) => {
       notes: canonical.sources.notes,
     },
   };
-  const nav = await siteNav(db, demoAllowed(c));
-  return c.html(renderRecipe(page, alternates, { nav, countryName: getCountry(parsed.country)?.name }));
+  const nav = await siteNav(db, demoAllowed(c), page.locale.lang);
+  return c.html(renderRecipe(page, alternates, { nav, countryName: localizedCountryName(parsed.country, page.locale.lang) }));
 };
 app.get('/:country/recipes/:idSlug', recipeRoute);
 app.get('/:country/:lang/recipes/:idSlug', recipeRoute);
