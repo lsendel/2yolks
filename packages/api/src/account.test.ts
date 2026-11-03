@@ -141,7 +141,7 @@ describe('atomicity under concurrency', () => {
     const sv = await post('/account/recipes/save', recipeForm(), { cookie });
     const id = /recipes\/([a-z0-9]+)\/edit/.exec(sv.headers.get('location')!)![1]!;
     const now = Date.now();
-    for (let i = 0; i < 100; i++) await DB.prepare("INSERT OR IGNORE INTO mail_log (id,kind,created_at) VALUES (?,'code',?)").bind(`s${i}`, now).run();
+    for (let i = 0; i < 8; i++) await DB.prepare("INSERT OR IGNORE INTO mail_log (id,kind,created_at) VALUES (?,'notice',?)").bind(`s${i}`, now).run();
     const before = sent.length;
     expect((await post(`/account/recipes/${id}/submit`, {}, { cookie })).status).toBe(200);
     expect(sent.length).toBe(before);
@@ -412,11 +412,13 @@ describe('limits and credit', () => {
 });
 
 describe('budget order, concurrent issuance, removal frees a slot', () => {
-  it('codes stop at 32/day but the remaining 8 of the 40/day total stay for review notices', async () => {
+  it('hard allocation: 32 codes and 8 notices are independent, 40 total', async () => {
     const now = Date.now();
-    for (let i = 0; i < 32; i++) await DB.prepare("INSERT INTO mail_log (id,kind,created_at) VALUES (?,'code',?)").bind(`c${i}`, now).run();
-    expect((await post('/account/code', { email: 'cap@example.com' })).status).toBe(503);
     for (let i = 0; i < 8; i++) await DB.prepare("INSERT INTO mail_log (id,kind,created_at) VALUES (?,'notice',?)").bind(`n${i}`, now).run();
+    for (let i = 0; i < 31; i++) await DB.prepare("INSERT INTO mail_log (id,kind,created_at) VALUES (?,'code',?)").bind(`c${i}`, now).run();
+    // 8 notices already used: a code is still allowed (31 < 32), the next is refused
+    expect((await post('/account/code', { email: 'one@example.com' })).status).toBe(200);
+    expect((await post('/account/code', { email: 'two@example.com' })).status).toBe(503);
     expect((await DB.prepare('SELECT count(*) AS n FROM mail_log').first<{ n: number }>())!.n).toBe(40);
   });
   it('per-email rejections do not spend the site-wide mail budget', async () => {

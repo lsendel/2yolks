@@ -32,8 +32,8 @@ const SESSION_DAYS = 30;
 const CODE_TTL_MS = 10 * 60_000;
 const MAX_ATTEMPTS = 5;
 const CODES_PER_EMAIL_10MIN = 3;
-const CODES_PER_DAY = 32; // login codes. The Resend free plan (100/day, 3,000/month) is shared with other sites, so 2yolks takes at most 40/day in total
-const MAIL_PER_DAY = 40; // all 2yolks mail per rolling 24h = 32 codes + 8 review notices at most
+const CODES_PER_DAY = 32; // login codes per rolling 24h, counted by kind. The Resend free plan (100/day, 3,000/month) is shared with other sites
+const NOTICES_PER_DAY = 8; // review notices per rolling 24h, counted by kind; 32 + 8 = 40/day hard total
 const MAX_DRAFTS_PER_USER = 50; // active (not removed) drafts
 const MAX_ROWS_PER_USER = 500; // lifetime rows incl. removed ones, so remove/recreate loops cannot grow storage forever
 
@@ -79,8 +79,8 @@ accountApp.use('*', async (c, next) => {
 async function reserveMail(db: D1Database, kind: 'code' | 'notice', cap: number): Promise<boolean> {
   const now = Date.now();
   const r = await db.prepare(
-    'INSERT INTO mail_log (id, kind, created_at) SELECT ?, ?, ? WHERE (SELECT count(*) FROM mail_log WHERE created_at > ?) < ?',
-  ).bind(newId() + newId(), kind, now, now - 86_400_000, cap).run();
+    'INSERT INTO mail_log (id, kind, created_at) SELECT ?, ?, ? WHERE (SELECT count(*) FROM mail_log WHERE kind = ? AND created_at > ?) < ?',
+  ).bind(newId() + newId(), kind, now, kind, now - 86_400_000, cap).run();
   return r.meta.changes === 1;
 }
 
@@ -443,7 +443,7 @@ accountApp.post('/recipes/:id/submit', async (c) => {
   if (flip.meta.changes !== 1) return page(c, 'Submitted', banner('ok', 'Already sent in for review.'), 409);
   // The admin queue (MCP recipes.list submitted:true) is the source of truth; the email is an extra,
   // counted against the same daily mail budget as login codes.
-  if (c.env.REVIEW_NOTIFY_TO && (await reserveMail(c.env.DB, 'notice', MAIL_PER_DAY))) {
+  if (c.env.REVIEW_NOTIFY_TO && (await reserveMail(c.env.DB, 'notice', NOTICES_PER_DAY))) {
     await sendMail(c.env, {
       to: c.env.REVIEW_NOTIFY_TO,
       subject: `2yolks recipe submitted for review: ${row.l.title}`.slice(0, 180),
