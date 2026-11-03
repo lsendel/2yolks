@@ -392,7 +392,7 @@ describe('limits and credit', () => {
     expect(rs.filter((r) => r.status === 400)).toHaveLength(4);
     expect((await DB.prepare('SELECT count(*) AS n FROM recipes').first<{ n: number }>())!.n).toBe(50);
     expect((await DB.prepare("SELECT count(*) AS n FROM sources WHERE id LIKE 'src-%'").first<{ n: number }>())!.n).toBe(2);
-    expect((await DB.prepare('SELECT count(*) AS n FROM recipe_locales').first<{ n: number }>())!.n).toBe(2);
+    expect((await DB.prepare('SELECT count(*) AS n FROM recipe_locales').first<{ n: number }>())!.n).toBe(50);
   });
   it('keeps each recipe\'s own author credit when another recipe uses a different name', async () => {
     const cookie = await signIn();
