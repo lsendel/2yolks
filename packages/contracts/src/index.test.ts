@@ -60,7 +60,8 @@ describe('ui strings', () => {
   it('localizes recipe page chrome', () => {
     expect(uiStrings('es').ingredients).toBe('Ingredientes');
     expect(uiStrings('en').ingredients).toBe('Ingredients');
-    expect(uiStrings('fr').steps).toBe('Steps'); // fallback to en
+    expect(uiStrings('fr').steps).toBe('\u00c9tapes');
+    expect(uiStrings('de').steps).toBe('Steps'); // unsupported falls back to en
   });
 });
 
