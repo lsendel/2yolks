@@ -303,6 +303,15 @@ export const CATEGORIES: Readonly<Record<RecipeCategorySlug, { en: string; es: s
   'tacos-tortillas': { en: 'Tacos & tortilla dishes', es: 'Tacos y platos de tortilla', fr: 'Tacos et plats \u00e0 la tortilla' },
 };
 
+// Honest-imagery styles the UI is allowed to label (migration 0004 CHECK).
+// Anything else - NULL, unknown or malformed - fails closed: callers render
+// no image rather than guess a label. Defense in depth past the DB CHECK.
+export const IMAGE_STYLES = ['photo', 'illustration', 'graphic'] as const;
+export type ImageStyle = (typeof IMAGE_STYLES)[number];
+export function asImageStyle(v: unknown): ImageStyle | null {
+  return typeof v === 'string' && (IMAGE_STYLES as readonly string[]).includes(v) ? (v as ImageStyle) : null;
+}
+
 /** Localized display label for a stored category slug; null when the slug is
  * missing or unregistered (callers render nothing, never the raw slug). */
 export function categoryLabel(slug: string | null | undefined, lang: string): string | null {

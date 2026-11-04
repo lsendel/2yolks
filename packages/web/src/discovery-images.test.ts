@@ -21,6 +21,16 @@ describe('List photo previews with honest labels',()=>{
   expect(html).not.toContain('/img/recipe/');
   expect(html).not.toContain('class="has-thumb"');
  });
+ it('fails closed on an unknown style value: no thumbnail, no guessed Photo label',()=>{
+  const html=renderHome({recipes:[{...base,id:'r1',imageId:'img9',imageStyle:'oil-painting' as unknown as 'photo'}],locales:[],lang:'en'});
+  expect(html).not.toContain('/img/recipe/img9');
+  expect(html).not.toContain('>Photo</span>');
+  expect(html).not.toContain('class="has-thumb"');
+ });
+ it('fails closed when an image id arrives without a style',()=>{
+  const html=renderHome({recipes:[{...base,id:'r1',imageId:'img10'}],locales:[],lang:'en'});
+  expect(html).not.toContain('/img/recipe/img10');
+ });
  it('localizes the label',()=>{
   const html=renderHome({recipes:[{...base,id:'r1',imageId:'img3',imageStyle:'illustration'}],locales:[],lang:'es'});
   expect(html).toContain('Ilustración de IA');

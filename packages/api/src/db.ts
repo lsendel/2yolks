@@ -11,6 +11,13 @@ export const sources = sqliteTable('sources', {
   notes: text('notes'),
 });
 
+/** A rights stamp counts only when it is a non-empty string - the same rule
+ * the /img/recipe endpoint applies with its truthiness check. Using one
+ * predicate everywhere keeps the list, the recipe page and the binary
+ * endpoint consistent: NULL and '' both mean "recorded, not cleared". */
+export const imageCleared = () => and(isNotNull(recipeImages.clearedAt), ne(recipeImages.clearedAt, ''));
+
+
 export const recipes = sqliteTable('recipes', {
   id: text('id').primaryKey(),
   sourceId: text('source_id')
