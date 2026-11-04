@@ -73,6 +73,24 @@ describe('capture form (category-first + live checks)', () => {
     const rows = await DB.prepare('SELECT category FROM recipes ORDER BY created_at').all<{ category: string | null }>();
     expect(rows.results[1]!.category).toBeNull();
   });
+  it('localizes category options and check strings when the recipe language is Spanish', async () => {
+    const cookie = await signIn();
+    await post('/account/recipes/save', recipeForm({ locale: 'us:es', category: 'soups-stews' }), { cookie });
+    const { id } = (await DB.prepare('SELECT id FROM recipes').first<{ id: string }>())!;
+    const html = await (await get(`/account/recipes/${id}/edit`, cookie)).text();
+    expect(html).toContain('<option value="soups-stews" selected>Sopas y guisos</option>');
+    expect(html).toContain('¿Qué tipo de plato es?');
+    expect(html).toContain('Ponle un nombre a la receta');
+    expect(html).toContain('Una o dos frases antes de la receta');
+  });
+  it('ships idle (neutral) check markup and all three locales of check strings', async () => {
+    const cookie = await signIn();
+    const html = await (await get('/account/recipes/new', cookie)).text();
+    expect(html).toContain('id="capture-check-strings"');
+    expect(html).toContain('id="capture-cat-labels"');
+    for (const frag of ['Ponle un nombre', 'Donnez un nom', 'Give the recipe a name']) expect(html).toContain(frag);
+    for (const frag of ['Sopas y guisos', 'Soupes et rago']) expect(html).toContain(frag);
+  });
   it('prefills the category when editing a draft', async () => {
     const cookie = await signIn();
     await post('/account/recipes/save', recipeForm({ category: 'dumplings' }), { cookie });
