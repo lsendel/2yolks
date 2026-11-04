@@ -1,4 +1,4 @@
-// Executable evidence for design/0007-consent-revisions.sql (REV 6):
+// Executable evidence for design/0007-consent-revisions.sql (REV 7):
 // schema validity under enforced FKs, trigger-abort preconditions (real
 // batch rollback - no false return after mutation), exact-head CAS,
 // snapshot-derived writes, atomic multi-locale publish, sealed manifests.
@@ -125,13 +125,17 @@ async function tryPublish(revisionId: string, actor = USER, licenseVersion = 'pu
   const rev = await DB.prepare(`SELECT snapshot_json AS s FROM recipe_revisions WHERE id = ?`).bind(revisionId).first<{ s: string }>();
   if (!rev) return false;
   const keys = Object.keys(JSON.parse(rev.s).locales as Record<string, unknown>);
+  const pubId = `pub-${++pubN}`;
   try {
     await DB.batch([
-      DB.prepare(`INSERT INTO publish_requests (id, recipe_id, revision_id, requested_by, license_version, license_lang) VALUES (?, '${RECIPE}', ?, ?, ?, ?)`).bind(`pub-${++pubN}`, revisionId, actor, licenseVersion, licenseLang),
+      DB.prepare(`INSERT INTO publish_requests (id, recipe_id, revision_id, requested_by, license_version, license_lang) VALUES (?, '${RECIPE}', ?, ?, ?, ?)`).bind(pubId, revisionId, actor, licenseVersion, licenseLang),
       ...keys.map((k) => {
         const [country, lang] = k.split(':');
         return DB.prepare(`UPDATE recipe_locales SET status = 'published' WHERE recipe_id = '${RECIPE}' AND country = ? AND lang = ? AND status <> 'published'`).bind(country, lang);
       }),
+      // one-use: the request is consumed by its own transition batch, so a
+      // historical request can never bless a later flip.
+      DB.prepare(`UPDATE publish_requests SET consumed_at = datetime('now') WHERE id = ? AND consumed_at IS NULL`).bind(pubId),
     ]);
     return true;
   } catch {
@@ -147,16 +151,16 @@ beforeEach(fresh);
 
 describe('0007 schema', () => {
   it('applies under enforced foreign keys', () => {
-    expect(() => sqlite.exec(`INSERT INTO recipe_revisions (id, recipe_id, seq, content_hash, snapshot_json, created_by) VALUES ('rev-1', '${RECIPE}', 1, '${HEX('a')}', '{"recipe":{},"source":{},"locales":{},"images":[]}', '${USER}')`)).not.toThrow();
+    expect(() => sqlite.exec(`INSERT INTO recipe_revisions (id, recipe_id, seq, content_hash, snapshot_json, created_by) VALUES ('rev-1', '${RECIPE}', 1, '${HEX('a')}', '{"recipe":{},"source":{"name":"A","url":"u","license":"l"},"locales":{},"images":[]}', '${USER}')`)).not.toThrow();
   });
-  it('rejects malformed snapshot shape and hash at the CHECK constraint', async () => {
-    expect(() => sqlite.exec(`INSERT INTO recipe_revisions (id, recipe_id, seq, content_hash, snapshot_json, created_by) VALUES ('rev-x', '${RECIPE}', 1, 'h', '{}', '${USER}')`)).toThrow(/CHECK/);
-    expect(() => sqlite.exec(`INSERT INTO recipe_revisions (id, recipe_id, seq, content_hash, snapshot_json, created_by) VALUES ('rev-x', '${RECIPE}', 1, '${HEX('a')}', '{"a":1}', '${USER}')`)).toThrow(/CHECK/);
+  it('rejects malformed snapshot shape and hash before any row lands', async () => {
+    expect(() => sqlite.exec(`INSERT INTO recipe_revisions (id, recipe_id, seq, content_hash, snapshot_json, created_by) VALUES ('rev-x', '${RECIPE}', 1, 'h', '{"recipe":{},"source":{"name":"A","url":"u","license":"l"},"locales":{},"images":[]}', '${USER}')`)).toThrow(/CHECK/);
+    expect(() => sqlite.exec(`INSERT INTO recipe_revisions (id, recipe_id, seq, content_hash, snapshot_json, created_by) VALUES ('rev-x', '${RECIPE}', 1, '${HEX('a')}', '{"a":1}', '${USER}')`)).toThrow(/CHECK|source/);
     expect(await revCount()).toBe(0);
   });
   it('rejects a consent event whose revision belongs to another recipe', async () => {
     sqlite.exec(`INSERT INTO recipes (id, source_id, origin_country, created_at, owner_user_id) VALUES ('rec-2', 'src-1', 'us', '2026-01-01', '${USER}')`);
-    sqlite.exec(`INSERT INTO recipe_revisions (id, recipe_id, seq, content_hash, snapshot_json, created_by) VALUES ('rev-2', 'rec-2', 1, '${HEX('a')}', '{"recipe":{},"source":{},"locales":{},"images":[]}', '${USER}')`);
+    sqlite.exec(`INSERT INTO recipe_revisions (id, recipe_id, seq, content_hash, snapshot_json, created_by) VALUES ('rev-2', 'rec-2', 1, '${HEX('a')}', '{"recipe":{},"source":{"name":"A","url":"u","license":"l"},"locales":{},"images":[]}', '${USER}')`);
     expect(() => sqlite.exec(`INSERT INTO recipe_consent_events (id, recipe_id, revision_id, consent_seq, event, user_id, audience, license_version, license_lang) VALUES ('ce-1', '${RECIPE}', 'rev-2', 1, 'grant', '${USER}', 'public', 'public-license-v1', 'en')`)).toThrow(/FOREIGN KEY/);
     expect(await revCount()).toBe(0);
   });
@@ -379,7 +383,7 @@ describe('image manifest coherence and sealing', () => {
     expect(await saveEdit('rev-a', 0, snap1('Soup'))).toBe(true);
     await manifestInsert('img-1');
     expect(await consentEvent('ce-1', 'rev-a', 0, 'grant')).toBe(true);
-    await expect(DB.prepare(`INSERT INTO recipe_revision_images (revision_id, image_id, role, style, source_name, source_url, license, sha256) VALUES ('rev-a', 'img-1', 'hero', 'photo', 'Ana', '', 'proprietary', '${HEX('c')}')`).run()).rejects.toThrow(/sealed|PRIMARY KEY/);
+    await expect(DB.prepare(`INSERT INTO recipe_revision_images (revision_id, image_id, role, style, source_name, source_url, license, sha256) VALUES ('rev-a', 'img-1', 'hero', 'photo', 'Ana', '', 'proprietary', '${HEX('c')}')`).run()).rejects.toThrow(/sealed|PRIMARY KEY|append-only/);
   });
 });
 
@@ -432,6 +436,67 @@ describe('published-state protection (all write paths)', () => {
   });
 });
 
+describe('one-use publication authorization', () => {
+  it('a historical (consumed) request cannot bless a republish after disable + metadata drift', async () => {
+    expect(await saveEdit('rev-a', 0, snap1('Soup'))).toBe(true);
+    expect(await consentEvent('ce-1', 'rev-a', 0, 'grant')).toBe(true);
+    expect(await tryPublish('rev-a')).toBe(true);
+    sqlite.exec(`UPDATE recipe_locales SET status = 'draft' WHERE recipe_id = '${RECIPE}'`); // moderation disable
+    sqlite.exec(`UPDATE recipes SET author_name = 'Unconsented Name', prep_minutes = 99 WHERE id = '${RECIPE}'`); // writable again while unpublished
+    expect(() => sqlite.exec(`UPDATE recipe_locales SET status = 'published' WHERE recipe_id = '${RECIPE}'`)).toThrow(/publish guard failed/);
+    const served = await DB.prepare(`SELECT count(*) n FROM recipe_locales_effective WHERE recipe_id = '${RECIPE}'`).first<{ n: number }>();
+    expect(served!.n).toBe(0);
+    // and a fresh publish request re-runs the FULL assertion: drift is caught
+    expect(await tryPublish('rev-a')).toBe(false);
+    expect(await statusOf()).toBe('draft');
+  });
+});
+
+describe('INSERT OR REPLACE / upsert replay is closed', () => {
+  it('append-only tables reject REPLACE collisions', async () => {
+    expect(await saveEdit('rev-a', 0, snap1('Soup'))).toBe(true);
+    expect(await consentEvent('ce-1', 'rev-a', 0, 'grant')).toBe(true);
+    const snap = snap1('Replay');
+    expect(() => sqlite.exec(`INSERT OR REPLACE INTO recipe_revisions (id, recipe_id, seq, content_hash, snapshot_json, created_by) VALUES ('rev-a', '${RECIPE}', 2, '${snap.hash}', '${snap.json.replace(/'/g, "''")}', '${USER}')`)).toThrow(/append-only/);
+    expect(() => sqlite.exec(`INSERT OR REPLACE INTO recipe_consent_events (id, recipe_id, revision_id, consent_seq, event, user_id, audience, license_version, license_lang) VALUES ('ce-1', '${RECIPE}', 'rev-a', 1, 'revoke', '${USER}', 'public', 'public-license-v1', 'en')`)).toThrow(/append-only/);
+    const stillGrant = await DB.prepare(`SELECT event FROM recipe_consent_events WHERE id = 'ce-1'`).first<{ event: string }>();
+    expect(stillGrant!.event).toBe('grant');
+  });
+  it('a bound image id cannot be replaced, re-keyed or re-owned', async () => {
+    sqlite.exec(`INSERT INTO recipe_images (id, recipe_id, kind, r2_key, mime, bytes, style, source_name, source_url, license, cleared_at, created_at) VALUES ('img-1', '${RECIPE}', 'hero', 'img/${HEX('a')}.webp', 'image/webp', 100, 'photo', 'Ana', '', 'proprietary', '2026-01-01', '2026-01-01')`);
+    const img: SnapImage = { image_id: 'img-1', role: 'hero', step_index: null, style: 'photo', source_name: 'Ana', source_url: '', license: 'proprietary', sha256: HEX('a') };
+    expect(await saveEdit('rev-a', 0, snap1('Soup', { images: [img] }))).toBe(true);
+    sqlite.exec(`INSERT INTO recipe_revision_images (revision_id, image_id, role, style, source_name, source_url, license, sha256) VALUES ('rev-a', 'img-1', 'hero', 'photo', 'Ana', '', 'proprietary', '${HEX('a')}')`);
+    expect(() => sqlite.exec(`UPDATE recipe_images SET recipe_id = 'rec-9' WHERE id = 'img-1'`)).toThrow(/immutable/);
+    expect(() => sqlite.exec(`UPDATE recipe_images SET id = 'img-9' WHERE id = 'img-1'`)).toThrow(/immutable/);
+    expect(() => sqlite.exec(`INSERT OR REPLACE INTO recipe_images (id, recipe_id, kind, r2_key, mime, bytes, style, source_name, source_url, license, cleared_at, created_at) VALUES ('img-1', '${RECIPE}', 'hero', 'img/${HEX('b')}.webp', 'image/webp', 100, 'illustration', 'Ana', '', 'proprietary', '2026-01-01', '2026-01-01')`)).toThrow(/cannot be replaced|never deleted|append-only/);
+    const row = await DB.prepare(`SELECT style FROM recipe_images WHERE id = 'img-1'`).first<{ style: string }>();
+    expect(row!.style).toBe('photo');
+  });
+});
+
+describe('recursive snapshot validation at insert', () => {
+  const rawRevision = (id: string, snapJson: string, seq = 1) => {
+    const hash = createHash('sha256').update(snapJson, 'utf8').digest('hex');
+    return DB.prepare(`INSERT INTO recipe_revisions (id, recipe_id, seq, content_hash, snapshot_json, created_by) VALUES (?, '${RECIPE}', ?, ?, ?, '${USER}')`).bind(id, seq, hash, snapJson).run();
+  };
+  it('a source object missing required keys is rejected (no NULL-equal publish bypass)', async () => {
+    const bad = JSON.stringify({ recipe: {}, source: {}, locales: {}, images: [] });
+    await expect(rawRevision('rev-bad', bad)).rejects.toThrow(/source/);
+    expect(await revCount()).toBe(0);
+  });
+  it('a locale missing steps_json or with the wrong types is rejected', async () => {
+    const good = JSON.parse(snap1('Soup').json);
+    const missing = { ...good, locales: { 'us:en': { title: 'Soup', slug: 'soup-x', intro: null, ingredients_json: '["1 egg"]' } } };
+    await expect(rawRevision('rev-bad', JSON.stringify(missing))).rejects.toThrow(/locale/);
+    const wrongType = { ...good, locales: { 'us:en': { title: 'Soup', slug: 'soup-x', intro: null, ingredients_json: '["1 egg"]', steps_json: 42 } } };
+    await expect(rawRevision('rev-bad', JSON.stringify(wrongType))).rejects.toThrow(/locale/);
+    const badKey = { ...good, locales: { usen: { title: 'Soup', slug: 'soup-x', intro: null, ingredients_json: '["1 egg"]', steps_json: '["Cook."]' } } };
+    await expect(rawRevision('rev-bad', JSON.stringify(badKey))).rejects.toThrow(/locale/);
+    expect(await revCount()).toBe(0);
+  });
+});
+
 describe('serving consults current consent', () => {
   it('a revoke after publish removes the row from the serving view immediately', async () => {
     expect(await saveEdit('rev-a', 0, snap1('Soup'))).toBe(true);
@@ -463,7 +528,7 @@ describe('append-only enforcement', () => {
     await expect(DB.prepare(`DELETE FROM recipe_consent_events WHERE id = 'ce-1'`).run()).rejects.toThrow(/append-only/);
     await expect(DB.prepare(`UPDATE recipe_revision_images SET sha256 = '${HEX('d')}' WHERE image_id = 'img-1'`).run()).rejects.toThrow(/append-only/);
     await expect(DB.prepare(`DELETE FROM recipe_revision_images WHERE image_id = 'img-1'`).run()).rejects.toThrow(/append-only/);
-    await expect(DB.prepare(`UPDATE publish_requests SET requested_by = 'x'`).run()).rejects.toThrow(/append-only/);
+    await expect(DB.prepare(`UPDATE publish_requests SET requested_by = 'x'`).run()).rejects.toThrow(/consumption/);
     await expect(DB.prepare(`DELETE FROM publish_requests`).run()).rejects.toThrow(/append-only/);
   });
 });

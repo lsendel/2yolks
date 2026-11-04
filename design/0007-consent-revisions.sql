@@ -1,4 +1,4 @@
--- DESIGN REV 6 - smallest separable slice: immutable revisions + exact-content
+-- DESIGN REV 7 - smallest separable slice: immutable revisions + exact-content
 -- consent for the PUBLIC audience only. Family, erasure and the mail outbox
 -- are deliberately NOT in this slice; they ship behind separate reviewed
 -- migrations. This file is design evidence, not wired into testd1/deploy.
@@ -46,7 +46,21 @@
 -- * Ownerless catalog recipes (owner_user_id IS NULL) cannot enter this
 --   flow: revisions, consent and publish all require a current owner. The
 --   admin/catalog write path is module-I (RBAC) work, explicitly out of
---   slice.
+--   slice. recipe_locales_effective EXCLUDES ownerless rows (a grant from
+--   the current owner can never exist for them): adopting the view in any
+--   shared read path is a deliberate per-query opt-in at integration,
+--   never a wholesale switch of public queries.
+-- * A publish request authorizes exactly ONE transition batch: the per-row
+--   guard requires an UNCONSUMED request and the batch's final statement
+--   consumes it. A historical request can never bless a later flip after
+--   disable + metadata drift.
+-- * INSERT-path replay is closed on every table: BEFORE-INSERT guards abort
+--   INSERT OR REPLACE / upsert collisions with existing bound or
+--   append-only rows (SQLite fires delete triggers for REPLACE only under
+--   recursive_triggers, so delete triggers alone are NOT sufficient).
+-- * Snapshot structure is validated recursively at insert (nested required
+--   keys + JSON types), and drift asserts are NULL-safe (IS NOT / NOT
+--   EXISTS) so missing keys can never compare equal-by-NULL.
 --
 -- Launch dependencies (explicit, NOT implemented in this slice): every
 -- mutation surface (account save, admin MCP, future user MCP) must route
@@ -84,6 +98,32 @@ CREATE TRIGGER recipe_revisions_guard BEFORE INSERT ON recipe_revisions
 BEGIN
   SELECT RAISE(ABORT, 'stale or future head: seq must equal current head + 1')
   WHERE NEW.seq <> COALESCE((SELECT MAX(seq) FROM recipe_revisions WHERE recipe_id = NEW.recipe_id), 0) + 1;
+  -- nested snapshot structure: required keys and JSON types, recursively
+  SELECT RAISE(ABORT, 'snapshot source must carry name, url and license as text')
+  WHERE json_type(NEW.snapshot_json, '$.source.name') IS NOT 'text'
+     OR json_type(NEW.snapshot_json, '$.source.url') IS NOT 'text'
+     OR json_type(NEW.snapshot_json, '$.source.license') IS NOT 'text';
+  SELECT RAISE(ABORT, 'every snapshot locale must carry title, slug, intro, ingredients_json and steps_json with the right types')
+  WHERE EXISTS (
+    SELECT 1 FROM json_each(json_extract(NEW.snapshot_json, '$.locales')) k
+    WHERE k.key NOT GLOB '*:*'
+       OR json_type(k.value) IS NOT 'object'
+       OR json_type(k.value, '$.title') IS NOT 'text'
+       OR json_type(k.value, '$.slug') IS NOT 'text'
+       OR json_type(k.value, '$.ingredients_json') IS NOT 'text'
+       OR json_type(k.value, '$.steps_json') IS NOT 'text'
+       OR (json_type(k.value, '$.intro') IS NOT 'text' AND json_type(k.value, '$.intro') IS NOT 'null'));
+  SELECT RAISE(ABORT, 'every snapshot image must carry image_id, role, style and sha256 as text')
+  WHERE EXISTS (
+    SELECT 1 FROM json_each(json_extract(NEW.snapshot_json, '$.images')) m
+    WHERE json_type(m.value) IS NOT 'object'
+       OR json_type(m.value, '$.image_id') IS NOT 'text'
+       OR json_type(m.value, '$.role') IS NOT 'text'
+       OR json_type(m.value, '$.style') IS NOT 'text'
+       OR json_type(m.value, '$.sha256') IS NOT 'text');
+  -- append-only against INSERT OR REPLACE / upsert replay
+  SELECT RAISE(ABORT, 'recipe_revisions is append-only')
+  WHERE EXISTS (SELECT 1 FROM recipe_revisions x WHERE x.id = NEW.id);
   SELECT RAISE(ABORT, 'recipe not editable by this user in its current state')
   WHERE NOT EXISTS (
     SELECT 1 FROM recipes o
@@ -110,6 +150,8 @@ CREATE TABLE recipe_revision_images (
 -- what consent binds).
 CREATE TRIGGER recipe_revision_images_guard BEFORE INSERT ON recipe_revision_images
 BEGIN
+  SELECT RAISE(ABORT, 'recipe_revision_images is append-only')
+  WHERE EXISTS (SELECT 1 FROM recipe_revision_images x WHERE x.revision_id = NEW.revision_id AND x.image_id = NEW.image_id);
   SELECT RAISE(ABORT, 'image belongs to another recipe')
   WHERE NOT EXISTS (
     SELECT 1 FROM recipe_images i JOIN recipe_revisions r ON r.id = NEW.revision_id
@@ -150,6 +192,9 @@ CREATE TABLE recipe_consent_events (
 
 CREATE TRIGGER recipe_consent_events_guard BEFORE INSERT ON recipe_consent_events
 BEGIN
+  SELECT RAISE(ABORT, 'recipe_consent_events is append-only')
+  WHERE EXISTS (SELECT 1 FROM recipe_consent_events x WHERE x.id = NEW.id)
+     OR EXISTS (SELECT 1 FROM recipe_consent_events x WHERE x.recipe_id = NEW.recipe_id AND x.consent_seq = NEW.consent_seq);
   SELECT RAISE(ABORT, 'stale or future consent head')
   WHERE NEW.consent_seq <> COALESCE((SELECT MAX(consent_seq) FROM recipe_consent_events WHERE recipe_id = NEW.recipe_id), 0) + 1;
   SELECT RAISE(ABORT, 'only the current recipe owner can consent')
@@ -169,9 +214,16 @@ CREATE TABLE publish_requests (
   requested_by    TEXT NOT NULL REFERENCES users(id),  -- the authenticated actor (admin review flow at integration); the GRANT must come from the current owner
   license_version TEXT NOT NULL,
   license_lang    TEXT NOT NULL,
+  consumed_at     TEXT,             -- set by the publish batch's final statement; an unconsumed request is required for every status flip
   created_at      TEXT NOT NULL DEFAULT (datetime('now')),
   FOREIGN KEY (revision_id, recipe_id) REFERENCES recipe_revisions(id, recipe_id)
 );
+
+CREATE TRIGGER publish_requests_insert_guard BEFORE INSERT ON publish_requests
+BEGIN
+  SELECT RAISE(ABORT, 'publish_requests is append-only')
+  WHERE EXISTS (SELECT 1 FROM publish_requests x WHERE x.id = NEW.id);
+END;
 
 CREATE TRIGGER publish_assert BEFORE INSERT ON publish_requests
 BEGIN
@@ -206,11 +258,11 @@ BEGIN
   WHERE EXISTS (
     SELECT 1 FROM json_each(json_extract((SELECT snapshot_json FROM recipe_revisions WHERE id = NEW.revision_id), '$.locales')) k
     JOIN recipe_locales l ON l.recipe_id = NEW.recipe_id AND l.status <> 'rejected' AND l.country || ':' || l.lang = k.key
-    WHERE json_extract(k.value, '$.title') <> l.title
-       OR json_extract(k.value, '$.slug') <> l.slug
-       OR IFNULL(json_extract(k.value, '$.intro'), '') <> IFNULL(l.intro, '')
-       OR json_extract(k.value, '$.ingredients_json') <> l.ingredients_json
-       OR json_extract(k.value, '$.steps_json') <> l.steps_json);
+    WHERE json_extract(k.value, '$.title') IS NOT l.title
+       OR json_extract(k.value, '$.slug') IS NOT l.slug
+       OR IFNULL(json_extract(k.value, '$.intro'), '') IS NOT IFNULL(l.intro, '')
+       OR json_extract(k.value, '$.ingredients_json') IS NOT l.ingredients_json
+       OR json_extract(k.value, '$.steps_json') IS NOT l.steps_json);
   -- Recipe-level fields equal the snapshot (timing, yield, category, author).
   SELECT RAISE(ABORT, 'recipe fields drifted from the consented snapshot')
   WHERE EXISTS (
@@ -229,9 +281,9 @@ BEGIN
   WHERE EXISTS (
     SELECT 1 FROM sources s JOIN recipes o ON o.source_id = s.id
     WHERE o.id = NEW.recipe_id AND (
-      s.name <> json_extract((SELECT snapshot_json FROM recipe_revisions WHERE id = NEW.revision_id), '$.source.name')
-      OR s.url <> json_extract((SELECT snapshot_json FROM recipe_revisions WHERE id = NEW.revision_id), '$.source.url')
-      OR s.license <> json_extract((SELECT snapshot_json FROM recipe_revisions WHERE id = NEW.revision_id), '$.source.license')));
+      s.name IS NOT json_extract((SELECT snapshot_json FROM recipe_revisions WHERE id = NEW.revision_id), '$.source.name')
+      OR s.url IS NOT json_extract((SELECT snapshot_json FROM recipe_revisions WHERE id = NEW.revision_id), '$.source.url')
+      OR s.license IS NOT json_extract((SELECT snapshot_json FROM recipe_revisions WHERE id = NEW.revision_id), '$.source.license')));
   -- The sealed manifest rows equal the snapshot image manifest exactly.
   SELECT RAISE(ABORT, 'image manifest drifted from the consented snapshot')
   WHERE (SELECT count(*) FROM recipe_revision_images WHERE revision_id = NEW.revision_id)
@@ -269,6 +321,7 @@ BEGIN
         WHERE x.recipe_id = e.recipe_id AND x.revision_id = e.revision_id AND x.user_id = e.user_id
           AND x.audience = e.audience AND x.license_version = e.license_version AND x.license_lang = e.license_lang)
     WHERE p.recipe_id = NEW.recipe_id
+      AND p.consumed_at IS NULL
       AND r.seq = (SELECT MAX(seq) FROM recipe_revisions WHERE recipe_id = NEW.recipe_id)
       AND EXISTS (SELECT 1 FROM json_each(json_extract(r.snapshot_json, '$.locales')) k
         WHERE k.key = NEW.country || ':' || NEW.lang
@@ -343,7 +396,8 @@ END;
 -- writable: it is the rights-review moderation stamp, not bound content.
 CREATE TRIGGER recipe_images_bound_no_update BEFORE UPDATE ON recipe_images
 WHEN EXISTS (SELECT 1 FROM recipe_revision_images m WHERE m.image_id = OLD.id) AND (
-  NEW.kind <> OLD.kind OR IFNULL(NEW.step_index, -1) <> IFNULL(OLD.step_index, -1)
+  NEW.id <> OLD.id OR NEW.recipe_id <> OLD.recipe_id
+  OR NEW.kind <> OLD.kind OR IFNULL(NEW.step_index, -1) <> IFNULL(OLD.step_index, -1)
   OR NEW.r2_key <> OLD.r2_key OR NEW.mime <> OLD.mime OR NEW.bytes <> OLD.bytes
   OR IFNULL(NEW.width, -1) <> IFNULL(OLD.width, -1) OR IFNULL(NEW.height, -1) <> IFNULL(OLD.height, -1)
   OR NEW.style <> OLD.style OR NEW.source_name <> OLD.source_name
@@ -356,6 +410,14 @@ CREATE TRIGGER recipe_images_bound_no_delete BEFORE DELETE ON recipe_images
 WHEN EXISTS (SELECT 1 FROM recipe_revision_images m WHERE m.image_id = OLD.id)
 BEGIN
   SELECT RAISE(ABORT, 'an image bound to a revision is never deleted');
+END;
+
+-- REPLACE/reinsert replay: an insert colliding with an already-bound image id
+-- aborts while the bound row exists at BEFORE-INSERT time.
+CREATE TRIGGER recipe_images_insert_guard BEFORE INSERT ON recipe_images
+BEGIN
+  SELECT RAISE(ABORT, 'an image id bound to a revision cannot be replaced')
+  WHERE EXISTS (SELECT 1 FROM recipe_revision_images m WHERE m.image_id = NEW.id);
 END;
 
 -- Effective rows for serving: a published locale is served only while the
@@ -398,7 +460,10 @@ CREATE TRIGGER recipe_consent_events_no_update BEFORE UPDATE ON recipe_consent_e
 BEGIN SELECT RAISE(ABORT, 'recipe_consent_events is append-only'); END;
 CREATE TRIGGER recipe_consent_events_no_delete BEFORE DELETE ON recipe_consent_events
 BEGIN SELECT RAISE(ABORT, 'recipe_consent_events is append-only'); END;
-CREATE TRIGGER publish_requests_no_update BEFORE UPDATE ON publish_requests
-BEGIN SELECT RAISE(ABORT, 'publish_requests is append-only'); END;
+CREATE TRIGGER publish_requests_consume_only BEFORE UPDATE ON publish_requests
+WHEN NOT (OLD.consumed_at IS NULL AND NEW.consumed_at IS NOT NULL
+  AND NEW.id = OLD.id AND NEW.recipe_id = OLD.recipe_id AND NEW.revision_id = OLD.revision_id
+  AND NEW.requested_by = OLD.requested_by AND NEW.license_version = OLD.license_version AND NEW.license_lang = OLD.license_lang)
+BEGIN SELECT RAISE(ABORT, 'publish_requests only record consumption'); END;
 CREATE TRIGGER publish_requests_no_delete BEFORE DELETE ON publish_requests
 BEGIN SELECT RAISE(ABORT, 'publish_requests is append-only'); END;
