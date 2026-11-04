@@ -154,26 +154,136 @@ describe('own recipes', () => {
 });
 
 describe('account deletion', () => {
-  it('removes sign-in artifacts, withdraws non-published locales, keeps published credit', async () => {
+  async function signInAndSeed() {
     const token = await signIn();
     const me = ((await (await get('/api/v1/me', { token })).json()) as { user: { id: string } }).user;
+    // 1. a never-submitted draft (should be fully deleted)
     const { id: draftId } = (await (await post('/api/v1/me/recipes', draftBody(), { token })).json()) as { id: string };
+    // 2. an attested, submitted draft (should be withdrawn, evidence kept)
+    const { id: subId } = (await (await post('/api/v1/me/recipes', draftBody({ title: 'Sent Soup' }), { token })).json()) as { id: string };
+    expect((await post(`/api/v1/me/recipes/${subId}/submit`, {}, { token })).status).toBe(200);
+    // 3. a published owned recipe (stays live, credit + attestation intact)
     await seedPublished(me.id);
+    return { token, me, draftId, subId };
+  }
+
+  it('deletes drafts and identity, withdraws submitted with evidence, keeps published credit', async () => {
+    const { token, me, draftId, subId } = await signInAndSeed();
     const res = await del('/api/v1/me/account', { token });
     expect(res.status).toBe(200);
     expect((await get('/api/v1/me', { token })).status).toBe(401);
-    expect(await DB.prepare('SELECT count(*) AS n FROM users').first<{ n: number }>().then((r) => r!.n)).toBe(0);
+    // Identity gone: no sessions, no codes, email/display_name anonymized.
     expect(await DB.prepare('SELECT count(*) AS n FROM sessions').first<{ n: number }>().then((r) => r!.n)).toBe(0);
     expect(await DB.prepare('SELECT count(*) AS n FROM auth_codes').first<{ n: number }>().then((r) => r!.n)).toBe(0);
-    const draft = await DB.prepare('SELECT status FROM recipe_locales WHERE recipe_id = ?').bind(draftId).first<{ status: string }>();
-    expect(draft!.status).toBe('rejected');
-    const pub = await DB.prepare('SELECT status FROM recipe_locales WHERE recipe_id = ?').bind('rp1').first<{ status: string }>();
-    expect(pub!.status).toBe('published');
-    const owner = await DB.prepare('SELECT owner_user_id AS o, author_name AS a FROM recipes WHERE id = ?').bind('rp1').first<{ o: string | null; a: string }>();
-    expect(owner!.o).toBeNull();
-    expect(owner!.a).toBe('Chef Ana');
-    // The published recipe is still served to readers.
+    const u = await DB.prepare('SELECT email, display_name AS dn FROM users WHERE id = ?').bind(me.id).first<{ email: string; dn: string | null }>();
+    expect(u!.email).toBe(`deleted-${me.id}@account-deleted.invalid`);
+    expect(u!.email).not.toContain('cook@example.com');
+    expect(u!.dn).toBeNull();
+    // Never-submitted draft: rows fully deleted (recipe, locale, source).
+    const count = async (sql: string, ...bind: string[]) => (await DB.prepare(sql).bind(...bind).first<{ n: number }>())!.n;
+    expect(await count('SELECT count(*) AS n FROM recipes WHERE id = ?', draftId)).toBe(0);
+    expect(await count('SELECT count(*) AS n FROM recipe_locales WHERE recipe_id = ?', draftId)).toBe(0);
+    expect(await count('SELECT count(*) AS n FROM sources WHERE id = ?', `src-${draftId}`)).toBe(0);
+    // Submitted-not-published: withdrawn, but evidence (attestation, credit, owner link, source) intact.
+    const subLoc = await DB.prepare('SELECT status FROM recipe_locales WHERE recipe_id = ?').bind(subId).first<{ status: string }>();
+    expect(subLoc!.status).toBe('rejected');
+    const subR = await DB.prepare('SELECT owner_user_id AS o, attested_at AS a, submitted_at AS s, author_name AS an FROM recipes WHERE id = ?').bind(subId).first<{ o: string; a: string; s: string; an: string }>();
+    expect(subR!.o).toBe(me.id);
+    expect(subR!.a).toBeTruthy();
+    expect(subR!.s).toBeTruthy();
+    expect(subR!.an).toBe('Ana');
+    // Published: still served, credit + attestation intact, owner link preserved.
+    const pubR = await DB.prepare('SELECT owner_user_id AS o, attested_at AS a, author_name AS an FROM recipes WHERE id = ?').bind('rp1').first<{ o: string; a: string | null; an: string }>();
+    expect(pubR!.o).toBe(me.id);
+    expect(pubR!.an).toBe('Chef Ana');
     expect((await get('/api/v1/recipes/us/en/tomato-soup-rp1')).status).toBe(200);
+  });
+
+  it('keeps withdrawn content private in MCP (viewer/editor cannot see it)', async () => {
+    const { token, subId } = await signInAndSeed();
+    await del('/api/v1/me/account', { token });
+    const mcpEnv = { MCP_READ_KEY: 'read-key', ADMIN_MCP_API_KEY: 'admin-key' };
+    const rpc = (key: string) =>
+      app.request(`${ORIGIN}/api/admin/mcp`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'recipes.list', arguments: {} } }),
+      }, env(mcpEnv));
+    const viewer = (await (await rpc('read-key')).json()) as { result: { content: { text: string }[] } };
+    const viewerData = JSON.parse(viewer.result.content[0]!.text) as { recipes: { id: string }[] };
+    expect(viewerData.recipes.map((r) => r.id)).not.toContain(subId);
+    const admin = (await (await rpc('admin-key')).json()) as typeof viewer;
+    const adminData = JSON.parse(admin.result.content[0]!.text) as { recipes: { id: string; user_submitted: number }[] };
+    const row = adminData.recipes.find((r) => r.id === subId);
+    // Admin audit still sees the withdrawn submission, flagged as user-submitted.
+    expect(row).toBeDefined();
+    expect(row!.user_submitted).toBe(1);
+  });
+});
+
+describe('draft detail for edit rehydration', () => {
+  it('round-trips a draft through relaunch: create, read, edit, re-read', async () => {
+    const token = await signIn();
+    const { id } = (await (await post('/api/v1/me/recipes', draftBody(), { token })).json()) as { id: string };
+    const first = (await (await get(`/api/v1/me/recipes/${id}`, { token })).json()) as Record<string, unknown>;
+    expect(first).toMatchObject({
+      id, title: 'Abuela Soup', locale: 'us:en', state: 'draft', status: 'draft',
+      ingredients: ['2 cups stock', '1 onion'], steps: ['Chop.', 'Simmer.'],
+      prepMinutes: 10, cookMinutes: 30, baseServings: 4,
+      displayName: 'Ana', sourceKind: 'original', sourceUrl: '', attest: true,
+    });
+    // App "relaunches", edits from the rehydrated state, saves.
+    const edit = await put(`/api/v1/me/recipes/${id}`, draftBody({ title: 'Abuela Soup 2', steps: ['Chop finer.', 'Simmer.', 'Serve.'] }), { token });
+    expect(edit.status).toBe(200);
+    const second = (await (await get(`/api/v1/me/recipes/${id}`, { token })).json()) as Record<string, unknown>;
+    expect(second['title']).toBe('Abuela Soup 2');
+    expect(second['steps']).toEqual(['Chop finer.', 'Simmer.', 'Serve.']);
+    expect(second['attest']).toBe(true);
+  });
+  it('serves adapted-source drafts back with their https source url', async () => {
+    const token = await signIn();
+    const { id } = (await (await post('/api/v1/me/recipes', draftBody({ sourceKind: 'adapted', sourceUrl: 'https://blog.example.com/soup' }), { token })).json()) as { id: string };
+    const j = (await (await get(`/api/v1/me/recipes/${id}`, { token })).json()) as Record<string, unknown>;
+    expect(j['sourceKind']).toBe('adapted');
+    expect(j['sourceUrl']).toBe('https://blog.example.com/soup');
+  });
+  it('404s other users and unknown ids', async () => {
+    const t1 = await signIn('one@example.com');
+    const t2 = await signIn('two@example.com');
+    const { id } = (await (await post('/api/v1/me/recipes', draftBody(), { token: t1 })).json()) as { id: string };
+    expect((await get(`/api/v1/me/recipes/${id}`, { token: t2 })).status).toBe(404);
+    expect((await get('/api/v1/me/recipes/zzzzzzzzzz', { token: t1 })).status).toBe(404);
+  });
+});
+
+describe('mutation request guard', () => {
+  const raw = (opts: { ct?: string; origin?: string }) => {
+    const headers: Record<string, string> = {};
+    if (opts.ct) headers['content-type'] = opts.ct;
+    if (opts.origin) headers['origin'] = opts.origin;
+    const body = opts.ct === 'application/json' ? JSON.stringify({ email: 'cook@example.com' }) : 'email=cook%40example.com';
+    return app.request(`${ORIGIN}/api/v1/auth/code`, { method: 'POST', headers, body }, env());
+  };
+  it('rejects non-JSON bodies (no-cors browser forms) without spending the mail budget', async () => {
+    expect((await raw({ ct: 'text/plain' })).status).toBe(415);
+    expect((await raw({ ct: 'application/x-www-form-urlencoded' })).status).toBe(415);
+    expect((await raw({})).status).toBe(415);
+    expect(sent).toHaveLength(0);
+    expect(await DB.prepare('SELECT count(*) AS n FROM mail_log').first<{ n: number }>().then((r) => r!.n)).toBe(0);
+  });
+  it('rejects foreign Origin headers, allows absent (native) and same-origin', async () => {
+    const foreign = await raw({ ct: 'application/json', origin: 'https://evil.example.com' });
+    expect(foreign.status).toBe(403);
+    expect(sent).toHaveLength(0);
+    const native = await raw({ ct: 'application/json' });
+    expect(native.status).toBe(200);
+    const sameOrigin = await raw({ ct: 'application/json', origin: ORIGIN });
+    expect(sameOrigin.status).toBe(200);
+    expect(sent).toHaveLength(2);
+  });
+  it('does not guard GET reads', async () => {
+    const res = await app.request(`${ORIGIN}/api/v1/recipes/us/en/nope`, { headers: { origin: 'https://evil.example.com' } }, env());
+    expect(res.status).toBe(404);
   });
 });
 
@@ -183,13 +293,13 @@ describe('published recipe detail', () => {
     const res = await get('/api/v1/recipes/us/en/tomato-soup-rp1');
     expect(res.status).toBe(200);
     const j = (await res.json()) as {
-      recipe: { id: string; totalMinutes: number; category: string };
+      recipe: { id: string; totalMinutes: number; category: string; authorName: string | null };
       locale: { title: string; ingredients: string[]; steps: string[] };
       heroImage: { url: string; style: string } | null;
       stepImages: ({ url: string; style: string } | null)[];
       source: { name: string; license: string };
     };
-    expect(j.recipe).toMatchObject({ id: 'rp1', totalMinutes: 60, category: 'soup' });
+    expect(j.recipe).toMatchObject({ id: 'rp1', totalMinutes: 60, category: 'soup', authorName: 'Chef Ana' });
     expect(j.locale.title).toBe('Tomato Soup');
     expect(j.locale.ingredients).toEqual(['2 cans tomato', '1 onion']);
     expect(j.locale.steps).toEqual(['Chop.', 'Simmer.', 'Serve.']);
@@ -198,6 +308,24 @@ describe('published recipe detail', () => {
     expect(j.stepImages).toEqual([null, { url: `${ORIGIN}/img/recipe/img-step1`, style: 'illustration' }, null]);
     expect(j.source).toMatchObject({ name: 'Test Kitchen', license: 'cc-by' });
   });
+  it('preserves structured ingredients and step refs losslessly', async () => {
+    await seedPublished();
+    await DB.prepare("UPDATE recipe_locales SET ingredients_json = ?, steps_json = ? WHERE recipe_id = 'rp1'").bind(
+      JSON.stringify(['1 onion, chopped', { ref: 'oil', qty: 1, qtyEnd: 2, unit: 'tbsp', name: 'olive oil', note: 'extra virgin' }]),
+      JSON.stringify(['Heat {i:oil} in a pot.', 'Add the onion and simmer.']),
+    ).run();
+    const res = await get('/api/v1/recipes/us/en/tomato-soup-rp1');
+    expect(res.status).toBe(200);
+    const j = (await res.json()) as { locale: { ingredients: unknown[]; steps: string[] } };
+    // Both entries survive: the plain string AND the full structured row with qty/unit/ref contract.
+    expect(j.locale.ingredients).toEqual([
+      '1 onion, chopped',
+      { ref: 'oil', qty: 1, qtyEnd: 2, unit: 'tbsp', name: 'olive oil', note: 'extra virgin' },
+    ]);
+    // Steps keep raw {i:ref} text so the app can link them to the ingredient rows.
+    expect(j.locale.steps).toEqual(['Heat {i:oil} in a pot.', 'Add the onion and simmer.']);
+  });
+
   it('404s drafts, unknown slugs and demo-seed rows', async () => {
     await seedPublished();
     expect((await get('/api/v1/recipes/us/en/nope')).status).toBe(404);
