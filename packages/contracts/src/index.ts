@@ -175,6 +175,9 @@ export interface UiStrings {
   timeRest: string;
   timeTotal: string;
   imageIllustrationNote: string;
+  imageLabelPhoto: string;
+  imageLabelIllustration: string;
+  imageLabelGraphic: string;
   copyIngredients: string;
   ingredientsCopied: string;
   copyRecipeCard: string;
@@ -205,6 +208,9 @@ const UI_STRINGS: Record<string, UiStrings> = {
     testingShort: 'How we test', emptyCategory: 'No recipes in this category yet.',
     timePrep: 'Prep', timeCook: 'Cook', timeRest: 'Rest', timeTotal: 'Total',
     imageIllustrationNote: 'Illustration generated for this recipe - not a photo of the cooked dish.',
+    imageLabelPhoto: 'Photo',
+    imageLabelIllustration: 'AI illustration',
+    imageLabelGraphic: 'Graphic',
     copyIngredients: 'Copy list', ingredientsCopied: 'List copied',
     copyRecipeCard: 'Copy recipe card', recipeCardCopied: 'Card copied',
     shareHeading: 'Share this recipe',
@@ -231,6 +237,9 @@ const UI_STRINGS: Record<string, UiStrings> = {
     testingShort: 'C\u00f3mo probamos', emptyCategory: 'A\u00fan no hay recetas en esta categor\u00eda.',
     timePrep: 'Preparaci\u00f3n', timeCook: 'Cocci\u00f3n', timeRest: 'Reposo', timeTotal: 'Total',
     imageIllustrationNote: 'Ilustraci\u00f3n generada para esta receta: no es una foto del plato cocinado.',
+    imageLabelPhoto: 'Foto',
+    imageLabelIllustration: 'Ilustraci\u00f3n de IA',
+    imageLabelGraphic: 'Gr\u00e1fico',
     copyIngredients: 'Copiar lista', ingredientsCopied: 'Lista copiada',
     copyRecipeCard: 'Copiar ficha', recipeCardCopied: 'Ficha copiada',
     shareHeading: 'Comparte esta receta',
@@ -257,6 +266,9 @@ const UI_STRINGS: Record<string, UiStrings> = {
     testingShort: 'Comment nous testons', emptyCategory: 'Aucune recette dans cette cat\u00e9gorie pour le moment.',
     timePrep: 'Pr\u00e9paration', timeCook: 'Cuisson', timeRest: 'Repos', timeTotal: 'Total',
     imageIllustrationNote: 'Illustration g\u00e9n\u00e9r\u00e9e pour cette recette - ce n\u2019est pas une photo du plat cuisin\u00e9.',
+    imageLabelPhoto: 'Photo',
+    imageLabelIllustration: 'Illustration IA',
+    imageLabelGraphic: 'Graphique',
     copyIngredients: 'Copier la liste', ingredientsCopied: 'Liste copi\u00e9e',
     copyRecipeCard: 'Copier la fiche', recipeCardCopied: 'Fiche copi\u00e9e',
     shareHeading: 'Partager cette recette',
@@ -290,6 +302,15 @@ export const CATEGORIES: Readonly<Record<RecipeCategorySlug, { en: string; es: s
   dumplings: { en: 'Dumplings', es: 'Dumplings', fr: 'Raviolis' },
   'tacos-tortillas': { en: 'Tacos & tortilla dishes', es: 'Tacos y platos de tortilla', fr: 'Tacos et plats \u00e0 la tortilla' },
 };
+
+// Honest-imagery styles the UI is allowed to label (migration 0004 CHECK).
+// Anything else - NULL, unknown or malformed - fails closed: callers render
+// no image rather than guess a label. Defense in depth past the DB CHECK.
+export const IMAGE_STYLES = ['photo', 'illustration', 'graphic'] as const;
+export type ImageStyle = (typeof IMAGE_STYLES)[number];
+export function asImageStyle(v: unknown): ImageStyle | null {
+  return typeof v === 'string' && (IMAGE_STYLES as readonly string[]).includes(v) ? (v as ImageStyle) : null;
+}
 
 /** Localized display label for a stored category slug; null when the slug is
  * missing or unregistered (callers render nothing, never the raw slug). */

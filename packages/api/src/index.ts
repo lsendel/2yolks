@@ -13,11 +13,11 @@ import {
   slugify,
   validateRecipeSubmission,
   isRecipeCategorySlug,
-  type RecipePage,
-} from '@2yolks/contracts';
+  type RecipePage, asImageStyle } from '@2yolks/contracts';
 import { renderHome, renderCountryHome, renderRecipe, renderAbout, renderPrivacy, renderHowWeTest, renderNotFound, type SiteNavItem } from '@2yolks/web/server';
 import { isUntested, localizedCountryName } from '@2yolks/contracts';
-import { recipeSlugAliases,  createDb, recipes, recipeLocales, recipeImages, sources, published } from './db';
+import type { ImageStyle } from '@2yolks/contracts';
+import { recipeSlugAliases,  createDb, recipes, recipeLocales, recipeImages, sources, published, imageCleared } from './db';
 import { appApi } from './appapi';
 import { mcpApp } from './mcp';
 import { accountApp, type AccountBindings } from './account';
@@ -245,6 +245,24 @@ app.get('/img/recipe/:imageId', async (c) => {
 
 // --- SSR pages ----------------------------------------------------------
 
+
+/** Latest rights-cleared hero image per recipe (migration 0004): the list
+ * thumbnail and its honest label. Uncleared rows never reach the list. */
+async function heroImagesByRecipe(db: ReturnType<typeof createDb>) {
+  const rows = await db
+    .select({ recipeId: recipeImages.recipeId, id: recipeImages.id, style: recipeImages.style })
+    .from(recipeImages)
+    .where(and(eq(recipeImages.kind, 'hero'), imageCleared()))
+    .orderBy(desc(recipeImages.createdAt));
+  const byRecipe = new Map<string, { id: string; style: ImageStyle }>();
+  for (const r of rows) {
+    // Fail closed: an unrecorded or malformed style never gets a guessed label.
+    const style = asImageStyle(r.style);
+    if (style && !byRecipe.has(r.recipeId)) byRecipe.set(r.recipeId, { id: r.id, style });
+  }
+  return byRecipe;
+}
+
 app.get('/', async (c) => {
   const requestedLang=c.req.query('lang');
   const lang=['en','es','fr'].includes(requestedLang??'')?requestedLang!:'en';
@@ -271,6 +289,7 @@ app.get('/', async (c) => {
     .innerJoin(recipes, eq(recipeLocales.recipeId, recipes.id))
     .innerJoin(sources, eq(recipes.sourceId, sources.id))
     .where(published(db, demoAllowed(c)));
+  const heroByRecipe = await heroImagesByRecipe(db);
   const nav = await siteNav(db, demoAllowed(c), lang);
   const origin = c.env.CANONICAL_ORIGIN ?? new URL(c.req.url).origin;
   return c.html(
@@ -278,7 +297,7 @@ app.get('/', async (c) => {
       {
         locales: markets,
         lang, activeCategory,
-        recipes: recipeRows.map((r) => ({ id: r.id, country: r.country, lang: r.lang, slug: r.slug, title: r.title, untested: isUntested({ testedAt: r.testedAt }), category: r.category, totalMinutes:r.totalMinutes })),
+        recipes: recipeRows.map((r) => ({ id: r.id, country: r.country, lang: r.lang, slug: r.slug, title: r.title, untested: isUntested({ testedAt: r.testedAt }), category: r.category, totalMinutes:r.totalMinutes, imageId: heroByRecipe.get(r.id)?.id ?? null, imageStyle: heroByRecipe.get(r.id)?.style ?? null })),
       },
       nav,
       origin,
@@ -312,7 +331,11 @@ const countryHome = async (c: Context<{ Bindings: Bindings }>) => {
     country: parsed.country,
     category: r.category ?? null,
     totalMinutes:r.totalMinutes,
+    imageId: null as string | null,
+    imageStyle: null as 'photo' | 'illustration' | 'graphic' | null,
   }));
+  const heroByRecipe = await heroImagesByRecipe(db);
+  for (const r of mapped) { const h = heroByRecipe.get(r.id); r.imageId = h?.id ?? null; r.imageStyle = h?.style ?? null; }
   const categories = [...new Set(mapped.map((r) => r.category).filter((x): x is string => Boolean(x)))].sort();
   const filtered = activeCategory ? mapped.filter((r) => r.category === activeCategory) : mapped;
   const pageLang = defaultLocale(parsed.country) ?? 'en';
@@ -444,14 +467,14 @@ const recipeRoute = async (c: Context<{ Bindings: Bindings }>) => {
   const heroRows = await db
     .select({ id: recipeImages.id, style: recipeImages.style })
     .from(recipeImages)
-    .where(and(eq(recipeImages.recipeId, recipeId), eq(recipeImages.kind, 'hero'), isNotNull(recipeImages.clearedAt)))
+    .where(and(eq(recipeImages.recipeId, recipeId), eq(recipeImages.kind, 'hero'), imageCleared()))
     .orderBy(desc(recipeImages.createdAt))
     .limit(1);
   // Cleared step images, latest first so the newest row per step wins.
   const stepRows = await db
     .select({ id: recipeImages.id, style: recipeImages.style, stepIndex: recipeImages.stepIndex })
     .from(recipeImages)
-    .where(and(eq(recipeImages.recipeId, recipeId), eq(recipeImages.kind, 'step'), isNotNull(recipeImages.clearedAt)))
+    .where(and(eq(recipeImages.recipeId, recipeId), eq(recipeImages.kind, 'step'), imageCleared()))
     .orderBy(desc(recipeImages.createdAt));
   // Aligned to the page locale's steps array by 0-based index; steps without
   // an image stay null.
