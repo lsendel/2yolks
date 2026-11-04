@@ -1,4 +1,4 @@
--- DESIGN REV 5 - smallest separable slice: immutable revisions + exact-content
+-- DESIGN REV 6 - smallest separable slice: immutable revisions + exact-content
 -- consent for the PUBLIC audience only. Family, erasure and the mail outbox
 -- are deliberately NOT in this slice; they ship behind separate reviewed
 -- migrations. This file is design evidence, not wired into testd1/deploy.
@@ -23,7 +23,30 @@
 --   per-row trigger. A missing, extra or drifted locale aborts everything -
 --   no partial mutation.
 -- * Revision manifests are sealed by the first consent event and validated
---   for same-recipe/kind/digest coherence at insert.
+--   for same-recipe/kind/step/style/source/license/digest coherence at
+--   insert; an image row bound to any manifest is content-immutable.
+-- * The publish guard covers EVERY write path: direct INSERT (including
+--   INSERT OR REPLACE / upsert) cannot create or overwrite a published row.
+-- * Fields bound to a published revision are immutable while published
+--   (locale identity + text, recipe timing/yield/category/author/origin,
+--   source rights metadata). Status-only changes (disable/reject) stay
+--   available as the moderation path; correction = disable + new revision.
+-- * Serving consults CURRENT consent: recipe_locales_effective exposes a
+--   published row only while the latest consent event for the exact tuple
+--   (recipe, published head revision, CURRENT owner, public, published
+--   license) is a grant. A revoke removes the row from serving immediately;
+--   the status column remains the audit trail. Ownership changes are
+--   blocked while any locale is published, so a grant can never bind a
+--   previous owner. OPEN PRODUCT QUESTION (surfaced to the owner, not
+--   silently decided): whether withdrawing consent must de-publish
+--   immediately, and what the public license text says about revocation.
+-- * Consent comes from the current owner; publication is performed by an
+--   authenticated actor (publish_requests.requested_by) - at integration
+--   that actor is the admin review flow, keeping publication admin-gated.
+-- * Ownerless catalog recipes (owner_user_id IS NULL) cannot enter this
+--   flow: revisions, consent and publish all require a current owner. The
+--   admin/catalog write path is module-I (RBAC) work, explicitly out of
+--   slice.
 --
 -- Launch dependencies (explicit, NOT implemented in this slice): every
 -- mutation surface (account save, admin MCP, future user MCP) must route
@@ -37,8 +60,14 @@ CREATE TABLE recipe_revisions (
   id            TEXT PRIMARY KEY,   -- fresh id per accepted edit; never reused across edits
   recipe_id     TEXT NOT NULL REFERENCES recipes(id),
   seq           INTEGER NOT NULL,   -- per-recipe head counter; trigger enforces exact head+1
-  content_hash  TEXT NOT NULL,      -- sha256 hex over the canonical serialization (verbatim text, no normalization)
-  snapshot_json TEXT NOT NULL,      -- canonical manifest: recipe + source + locales + images; private evidence, never publicly served
+  content_hash  TEXT NOT NULL      -- sha256 hex over the canonical serialization (verbatim text, no normalization)
+    CHECK (length(content_hash) = 64 AND content_hash NOT GLOB '*[^0-9a-f]*'),
+  snapshot_json TEXT NOT NULL      -- canonical manifest: recipe + source + locales + images; private evidence, never publicly served
+    CHECK (json_valid(snapshot_json)
+      AND json_type(snapshot_json, '$.recipe') IS 'object'
+      AND json_type(snapshot_json, '$.source') IS 'object'
+      AND json_type(snapshot_json, '$.locales') IS 'object'
+      AND json_type(snapshot_json, '$.images') IS 'array'),
   created_by    TEXT NOT NULL REFERENCES users(id),
   created_at    TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE (recipe_id, seq),
@@ -87,8 +116,14 @@ BEGIN
     WHERE i.id = NEW.image_id AND i.recipe_id = r.recipe_id);
   SELECT RAISE(ABORT, 'manifest role does not match the image kind')
   WHERE NEW.role <> (SELECT kind FROM recipe_images WHERE id = NEW.image_id);
+  SELECT RAISE(ABORT, 'manifest fields must match the image record')
+  WHERE NOT EXISTS (
+    SELECT 1 FROM recipe_images i WHERE i.id = NEW.image_id
+      AND IFNULL(i.step_index, -1) = IFNULL(NEW.step_index, -1)
+      AND i.style = NEW.style AND i.source_name = NEW.source_name
+      AND i.source_url = NEW.source_url AND i.license = NEW.license);
   SELECT RAISE(ABORT, 'sha256 must be 64 lowercase hex')
-  WHERE length(NEW.sha256) <> 64 OR NEW.sha256 NOT GLOB '[0-9a-f]*';
+  WHERE length(NEW.sha256) <> 64 OR NEW.sha256 GLOB '*[^0-9a-f]*';
   SELECT RAISE(ABORT, 'revision manifest is sealed once consent exists')
   WHERE EXISTS (SELECT 1 FROM recipe_consent_events e WHERE e.revision_id = NEW.revision_id);
 END;
@@ -117,8 +152,8 @@ CREATE TRIGGER recipe_consent_events_guard BEFORE INSERT ON recipe_consent_event
 BEGIN
   SELECT RAISE(ABORT, 'stale or future consent head')
   WHERE NEW.consent_seq <> COALESCE((SELECT MAX(consent_seq) FROM recipe_consent_events WHERE recipe_id = NEW.recipe_id), 0) + 1;
-  SELECT RAISE(ABORT, 'only the recipe owner can consent')
-  WHERE NEW.user_id <> (SELECT owner_user_id FROM recipes WHERE id = NEW.recipe_id);
+  SELECT RAISE(ABORT, 'only the current recipe owner can consent')
+  WHERE NEW.user_id IS NOT (SELECT owner_user_id FROM recipes WHERE id = NEW.recipe_id);
 END;
 -- A grant authorizes exactly one tuple: (recipe_id, revision_id, user_id,
 -- audience, license_version, license_lang). A revoke names the same tuple.
@@ -131,7 +166,7 @@ CREATE TABLE publish_requests (
   id              TEXT PRIMARY KEY,
   recipe_id       TEXT NOT NULL REFERENCES recipes(id),
   revision_id     TEXT NOT NULL,
-  requested_by    TEXT NOT NULL REFERENCES users(id),
+  requested_by    TEXT NOT NULL REFERENCES users(id),  -- the authenticated actor (admin review flow at integration); the GRANT must come from the current owner
   license_version TEXT NOT NULL,
   license_lang    TEXT NOT NULL,
   created_at      TEXT NOT NULL DEFAULT (datetime('now')),
@@ -140,14 +175,15 @@ CREATE TABLE publish_requests (
 
 CREATE TRIGGER publish_assert BEFORE INSERT ON publish_requests
 BEGIN
-  SELECT RAISE(ABORT, 'only the recipe owner can publish')
-  WHERE NEW.requested_by <> (SELECT owner_user_id FROM recipes WHERE id = NEW.recipe_id);
+  SELECT RAISE(ABORT, 'ownerless catalog recipes publish through the admin flow (module I), not this slice')
+  WHERE (SELECT owner_user_id FROM recipes WHERE id = NEW.recipe_id) IS NULL;
   SELECT RAISE(ABORT, 'revision is not the current head')
   WHERE NEW.revision_id <> (SELECT id FROM recipe_revisions WHERE recipe_id = NEW.recipe_id ORDER BY seq DESC LIMIT 1);
-  SELECT RAISE(ABORT, 'no current grant for this exact revision and license')
+  SELECT RAISE(ABORT, 'no current grant from the current owner for this exact revision and license')
   WHERE NOT EXISTS (
     SELECT 1 FROM recipe_consent_events e
-    WHERE e.recipe_id = NEW.recipe_id AND e.revision_id = NEW.revision_id AND e.user_id = NEW.requested_by
+    WHERE e.recipe_id = NEW.recipe_id AND e.revision_id = NEW.revision_id
+      AND e.user_id = (SELECT owner_user_id FROM recipes WHERE id = NEW.recipe_id)
       AND e.audience = 'public' AND e.license_version = NEW.license_version AND e.license_lang = NEW.license_lang
       AND e.event = 'grant'
       AND e.consent_seq = (SELECT MAX(consent_seq) FROM recipe_consent_events x
@@ -227,13 +263,12 @@ BEGIN
     FROM publish_requests p
     JOIN recipe_revisions r ON r.id = p.revision_id AND r.recipe_id = p.recipe_id
     JOIN recipe_consent_events e ON e.recipe_id = p.recipe_id AND e.revision_id = p.revision_id
-      AND e.user_id = p.requested_by AND e.audience = 'public'
+      AND e.user_id = (SELECT owner_user_id FROM recipes WHERE id = p.recipe_id) AND e.audience = 'public'
       AND e.license_version = p.license_version AND e.license_lang = p.license_lang AND e.event = 'grant'
       AND e.consent_seq = (SELECT MAX(consent_seq) FROM recipe_consent_events x
         WHERE x.recipe_id = e.recipe_id AND x.revision_id = e.revision_id AND x.user_id = e.user_id
           AND x.audience = e.audience AND x.license_version = e.license_version AND x.license_lang = e.license_lang)
     WHERE p.recipe_id = NEW.recipe_id
-      AND p.requested_by = (SELECT owner_user_id FROM recipes WHERE id = NEW.recipe_id)
       AND r.seq = (SELECT MAX(seq) FROM recipe_revisions WHERE recipe_id = NEW.recipe_id)
       AND EXISTS (SELECT 1 FROM json_each(json_extract(r.snapshot_json, '$.locales')) k
         WHERE k.key = NEW.country || ':' || NEW.lang
@@ -251,11 +286,99 @@ END;
 CREATE TRIGGER recipe_locales_no_content_mutation BEFORE UPDATE ON recipe_locales
 WHEN OLD.status = 'published' AND (
   NEW.title <> OLD.title OR NEW.slug <> OLD.slug
+  OR NEW.country <> OLD.country OR NEW.lang <> OLD.lang OR NEW.recipe_id <> OLD.recipe_id
   OR IFNULL(NEW.intro, '') <> IFNULL(OLD.intro, '')
   OR NEW.ingredients_json <> OLD.ingredients_json OR NEW.steps_json <> OLD.steps_json)
 BEGIN
-  SELECT RAISE(ABORT, 'published content is immutable');
+  SELECT RAISE(ABORT, 'published content and locale identity are immutable');
 END;
+
+-- No write path may create a published row directly or overwrite one:
+-- INSERT with status 'published' always aborts (publication only flips a
+-- bound draft row through the guarded UPDATE), and an insert that collides
+-- with an existing published row (INSERT OR REPLACE, upsert) aborts because
+-- that row still exists at BEFORE-INSERT time.
+CREATE TRIGGER recipe_locales_insert_guard BEFORE INSERT ON recipe_locales
+BEGIN
+  SELECT RAISE(ABORT, 'new locale rows start as draft; publication only via the guarded flow')
+  WHERE NEW.status = 'published';
+  SELECT RAISE(ABORT, 'a published locale row cannot be replaced')
+  WHERE EXISTS (SELECT 1 FROM recipe_locales l WHERE l.recipe_id = NEW.recipe_id AND l.country = NEW.country AND l.lang = NEW.lang AND l.status = 'published');
+END;
+
+CREATE TRIGGER recipe_locales_no_delete_published BEFORE DELETE ON recipe_locales
+WHEN OLD.status = 'published'
+BEGIN
+  SELECT RAISE(ABORT, 'a published locale row is never deleted; disable via status');
+END;
+
+-- Fields bound to a published revision are immutable while any locale of the
+-- recipe is published. Flow/moderation fields (submitted_at, attested_at,
+-- image_key) stay writable; correction = disable + new revision + new consent.
+CREATE TRIGGER recipes_bound_fields_guard BEFORE UPDATE ON recipes
+WHEN EXISTS (SELECT 1 FROM recipe_locales l WHERE l.recipe_id = OLD.id AND l.status = 'published') AND (
+  IFNULL(NEW.origin_country, '') <> IFNULL(OLD.origin_country, '')
+  OR IFNULL(NEW.category, '') <> IFNULL(OLD.category, '')
+  OR IFNULL(NEW.prep_minutes, -1) <> IFNULL(OLD.prep_minutes, -1)
+  OR IFNULL(NEW.cook_minutes, -1) <> IFNULL(OLD.cook_minutes, -1)
+  OR IFNULL(NEW.rest_minutes, -1) <> IFNULL(OLD.rest_minutes, -1)
+  OR IFNULL(NEW.total_minutes, -1) <> IFNULL(OLD.total_minutes, -1)
+  OR IFNULL(NEW.base_servings, -1) <> IFNULL(OLD.base_servings, -1)
+  OR IFNULL(NEW.author_name, '') <> IFNULL(OLD.author_name, '')
+  OR NEW.source_id <> OLD.source_id
+  OR NEW.owner_user_id IS NOT OLD.owner_user_id)
+BEGIN
+  SELECT RAISE(ABORT, 'fields bound to a published revision are immutable; disable the locale first');
+END;
+
+CREATE TRIGGER sources_bound_fields_guard BEFORE UPDATE ON sources
+WHEN EXISTS (SELECT 1 FROM recipes o JOIN recipe_locales l ON l.recipe_id = o.id AND l.status = 'published' WHERE o.source_id = OLD.id)
+  AND (NEW.name <> OLD.name OR NEW.url <> OLD.url OR NEW.license <> OLD.license)
+BEGIN
+  SELECT RAISE(ABORT, 'source metadata bound to a published revision is immutable; disable the locale first');
+END;
+
+-- An image row bound to any revision manifest is content-immutable
+-- (revisions are append-only, so the binding is forever). cleared_at stays
+-- writable: it is the rights-review moderation stamp, not bound content.
+CREATE TRIGGER recipe_images_bound_no_update BEFORE UPDATE ON recipe_images
+WHEN EXISTS (SELECT 1 FROM recipe_revision_images m WHERE m.image_id = OLD.id) AND (
+  NEW.kind <> OLD.kind OR IFNULL(NEW.step_index, -1) <> IFNULL(OLD.step_index, -1)
+  OR NEW.r2_key <> OLD.r2_key OR NEW.mime <> OLD.mime OR NEW.bytes <> OLD.bytes
+  OR IFNULL(NEW.width, -1) <> IFNULL(OLD.width, -1) OR IFNULL(NEW.height, -1) <> IFNULL(OLD.height, -1)
+  OR NEW.style <> OLD.style OR NEW.source_name <> OLD.source_name
+  OR NEW.source_url <> OLD.source_url OR NEW.license <> OLD.license)
+BEGIN
+  SELECT RAISE(ABORT, 'an image bound to a revision is immutable');
+END;
+
+CREATE TRIGGER recipe_images_bound_no_delete BEFORE DELETE ON recipe_images
+WHEN EXISTS (SELECT 1 FROM recipe_revision_images m WHERE m.image_id = OLD.id)
+BEGIN
+  SELECT RAISE(ABORT, 'an image bound to a revision is never deleted');
+END;
+
+-- Effective rows for serving: a published locale is served only while the
+-- latest consent event for the exact tuple (recipe, published head revision,
+-- CURRENT owner, public, published license version + lang) is a grant.
+-- Revocation removes the row from serving immediately; the status column
+-- stays as the audit trail of what was published.
+CREATE VIEW recipe_locales_effective AS
+SELECT l.* FROM recipe_locales l
+WHERE l.status = 'published'
+  AND EXISTS (
+    SELECT 1
+    FROM publish_requests p
+    JOIN recipe_revisions r ON r.id = p.revision_id AND r.recipe_id = p.recipe_id
+    JOIN recipe_consent_events e ON e.recipe_id = p.recipe_id AND e.revision_id = p.revision_id
+      AND e.user_id = (SELECT owner_user_id FROM recipes WHERE id = p.recipe_id) AND e.audience = 'public'
+      AND e.license_version = p.license_version AND e.license_lang = p.license_lang AND e.event = 'grant'
+      AND e.consent_seq = (SELECT MAX(consent_seq) FROM recipe_consent_events x
+        WHERE x.recipe_id = e.recipe_id AND x.revision_id = e.revision_id AND x.user_id = e.user_id
+          AND x.audience = e.audience AND x.license_version = e.license_version AND x.license_lang = e.license_lang)
+    WHERE p.recipe_id = l.recipe_id
+      AND r.seq = (SELECT MAX(seq) FROM recipe_revisions WHERE recipe_id = l.recipe_id)
+      AND EXISTS (SELECT 1 FROM json_each(json_extract(r.snapshot_json, '$.locales')) k WHERE k.key = l.country || ':' || l.lang));
 
 -- Append-only enforcement (executable, not comments): revisions, their image
 -- manifests, consent events and publish requests can never be updated or
