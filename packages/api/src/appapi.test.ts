@@ -219,6 +219,31 @@ describe('account deletion', () => {
     expect(row).toBeDefined();
     expect(row!.user_submitted).toBe(1);
   });
+
+  it('never touches other accounts: orphan src- rows from elsewhere survive', async () => {
+    const { token } = await signInAndSeed();
+    // Another account's orphaned pending-review source (no recipe references it).
+    await DB.prepare("INSERT INTO sources (id,name,url,license,cleared_at,notes) VALUES ('src-orphan-b','Other Cook','https://b.example.com','unknown',NULL,'user submission - rights review pending')").run();
+    const res = await del('/api/v1/me/account', { token });
+    expect(res.status).toBe(200);
+    const n = await DB.prepare("SELECT count(*) AS n FROM sources WHERE id = 'src-orphan-b'").first<{ n: number }>().then((r) => r!.n);
+    expect(n).toBe(1);
+  });
+
+  it('keeps a never-submitted recipe that has slug-alias history (FK-safe, stays private)', async () => {
+    const { token, me } = await signInAndSeed();
+    // Simulate a draft that once served publicly: permanent alias row with FK to recipes(id).
+    await DB.prepare("INSERT INTO recipes (id,source_id,origin_country,image_key,created_at,tested_at,tested_by,prep_minutes,cook_minutes,rest_minutes,total_minutes,base_servings,category,owner_user_id,submitted_at,attested_at,author_name) VALUES ('ral','src-p','us',NULL,'2024-02-01T00:00:00Z','2024-02-02T00:00:00Z','Ana',10,20,NULL,30,4,'soup',?,NULL,NULL,'Ana')").bind(me.id).run();
+    await DB.prepare("INSERT INTO recipe_locales (recipe_id,country,lang,title,slug,intro,ingredients_json,steps_json,status) VALUES ('ral','us','en','Aliased Soup','aliased-soup','x','[]','[]','draft')").run();
+    await DB.prepare("INSERT INTO recipe_slug_aliases (country,lang,slug,recipe_id) VALUES ('us','en','old-aliased-soup','ral')").run();
+    const res = await del('/api/v1/me/account', { token });
+    expect(res.status).toBe(200); // no FK rollback
+    const r = await DB.prepare('SELECT owner_user_id AS o FROM recipes WHERE id = \'ral\'').first<{ o: string }>();
+    expect(r).toBeDefined();
+    expect(r!.o).toBe(me.id); // owner link survives on the tombstoned user -> stays private
+    const a = await DB.prepare("SELECT count(*) AS n FROM recipe_slug_aliases WHERE recipe_id = 'ral'").first<{ n: number }>().then((x) => x!.n);
+    expect(a).toBe(1);
+  });
 });
 
 describe('draft detail for edit rehydration', () => {
