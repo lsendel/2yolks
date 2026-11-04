@@ -1,11 +1,13 @@
-// Executable evidence for design/0007-consent-revisions.sql (REV 3):
-// schema validity under enforced FKs, CAS batch semantics, and race negatives.
-// This is a design harness - nothing here is wired into testd1 or deploy.
+// Executable evidence for design/0007-consent-revisions.sql (REV 4):
+// schema validity under enforced FKs, constraint-abort CAS rollback, and
+// stale-head/replay/drift negatives. Single synchronous connection: these are
+// stale-state and rollback proofs, not true-concurrency proofs. This is a
+// design harness - nothing here is wired into testd1 or deploy.
 import { describe, expect, it, beforeEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { createHash } from 'node:crypto';
-import { makeD1, migratedD1All } from './testd1';
+import { makeD1 } from './testd1';
 
 let sqlite: DatabaseSync;
 let DB: D1Database;
@@ -35,32 +37,41 @@ function canonicalSnapshot(fields: { title: string; intro: string; ingredients: 
   const json = JSON.stringify({ fields: { ingredients: fields.ingredients, intro: fields.intro, steps: fields.steps, title: fields.title }, images: manifest });
   return { json, hash: sha(json) };
 }
+const fields = (t: string) => ({ title: t, intro: '', ingredients: ['1 egg'], steps: ['Cook.'] });
 
-// Save-edit CAS batch. Statements run sequentially inside one transaction and
-// see each other's writes, so the head guard can only gate the FIRST insert.
-// Every follow-up statement instead depends on THIS batch's own revision row:
-// if the head race was lost, the insert is a no-op, the row is absent, and
-// every follow-up no-ops too. Callers assert changes === 1 on each statement.
-async function saveEdit(revisionId: string, expectedSeq: number, snap: { json: string; hash: string }, newTitle: string) {
-  const head = `(SELECT COALESCE(MAX(seq),0) FROM recipe_revisions WHERE recipe_id = '${RECIPE}') = ${expectedSeq} AND EXISTS (SELECT 1 FROM recipes WHERE id = '${RECIPE}' AND owner_user_id = '${USER}' AND submitted_at IS NULL)`;
-  const own = `EXISTS (SELECT 1 FROM recipe_revisions WHERE id = '${revisionId}' AND recipe_id = '${RECIPE}' AND seq = ${expectedSeq + 1})`;
-  const res = await DB.batch([
-    DB.prepare(`INSERT INTO recipe_revisions (id, recipe_id, seq, content_hash, snapshot_json, created_by) SELECT ?, '${RECIPE}', ?, ?, ?, '${USER}' WHERE ${head}`).bind(revisionId, expectedSeq + 1, snap.hash, snap.json),
-    DB.prepare(`UPDATE recipe_locales SET title = ? WHERE recipe_id = '${RECIPE}' AND ${own}`).bind(newTitle),
-  ]);
-  return res[0]!.meta.changes === 1 && res[1]!.meta.changes === 1;
+// Constraint-abort CAS: the revision INSERT is plain; a stale head or same-id
+// replay violates UNIQUE(recipe_id, seq) / the PK and ABORTS the whole D1
+// batch (real rollback). The locale write takes its values FROM the snapshot
+// fields and carries its own owner/not-submitted guard; the caller asserts
+// changes === 1 on every statement.
+async function saveEdit(revisionId: string, expectedSeq: number, snap: { json: string; hash: string }, f: { title: string }) {
+  try {
+    const res = await DB.batch([
+      DB.prepare(`INSERT INTO recipe_revisions (id, recipe_id, seq, content_hash, snapshot_json, created_by) VALUES (?, '${RECIPE}', ?, ?, ?, '${USER}')`).bind(revisionId, expectedSeq + 1, snap.hash, snap.json),
+      DB.prepare(`UPDATE recipe_locales SET title = ? WHERE recipe_id = '${RECIPE}' AND EXISTS (SELECT 1 FROM recipes WHERE id = '${RECIPE}' AND owner_user_id = '${USER}' AND submitted_at IS NULL)`).bind(f.title),
+    ]);
+    return res[0]!.meta.changes === 1 && res[1]!.meta.changes === 1;
+  } catch {
+    return false; // constraint abort: stale head or replay - caller returns 409
+  }
 }
 
-// Consent grant/revoke CAS: exact tuple + per-recipe seq backstop.
-async function consentEvent(id: string, revisionId: string, expectedSeq: number, event: 'grant' | 'revoke', licenseVersion = 'public-license-v1', licenseLang = 'en') {
-  const head = `(SELECT COALESCE(MAX(consent_seq),0) FROM recipe_consent_events WHERE recipe_id = '${RECIPE}') = ${expectedSeq}`;
-  const res = await DB.batch([
-    DB.prepare(`INSERT INTO recipe_consent_events (id, recipe_id, revision_id, consent_seq, event, user_id, audience, license_version, license_lang) SELECT ?, '${RECIPE}', ?, ?, ?, '${USER}', 'public', ?, ? WHERE ${head} AND EXISTS (SELECT 1 FROM recipe_revisions r WHERE r.id = ? AND r.recipe_id = '${RECIPE}')`).bind(id, revisionId, expectedSeq + 1, event, licenseVersion, licenseLang, revisionId),
-  ]);
-  return res[0]!.meta.changes === 1;
+// Consent grant/revoke: plain insert, UNIQUE(recipe_id, consent_seq) + PK
+// abort on stale seq/replay; owner identity and revision coherence enforced
+// in the insert itself.
+async function consentEvent(id: string, revisionId: string, expectedSeq: number, event: 'grant' | 'revoke', licenseVersion = 'public-license-v1', licenseLang = 'en', userId = USER) {
+  try {
+    const res = await DB.batch([
+      DB.prepare(`INSERT INTO recipe_consent_events (id, recipe_id, revision_id, consent_seq, event, user_id, audience, license_version, license_lang) SELECT ?, '${RECIPE}', ?, ?, ?, '${userId}', 'public', ?, ? WHERE EXISTS (SELECT 1 FROM recipe_revisions r WHERE r.id = ? AND r.recipe_id = '${RECIPE}') AND EXISTS (SELECT 1 FROM recipes o WHERE o.id = '${RECIPE}' AND o.owner_user_id = '${userId}')`).bind(id, revisionId, expectedSeq + 1, event, licenseVersion, licenseLang, revisionId),
+    ]);
+    return res[0]!.meta.changes === 1;
+  } catch {
+    return false;
+  }
 }
 
-// Publish guard: current head revision + latest event for the EXACT tuple is a grant.
+// Publish: current head revision + latest event for the EXACT tuple is a
+// grant + the live row still equals the bound snapshot content.
 async function tryPublish(revisionId: string, userId = USER, licenseVersion = 'public-license-v1', licenseLang = 'en') {
   const grant = `EXISTS (
     SELECT 1 FROM recipe_consent_events e
@@ -72,13 +83,12 @@ async function tryPublish(revisionId: string, userId = USER, licenseVersion = 'p
           AND x.audience = e.audience AND x.license_version = e.license_version AND x.license_lang = e.license_lang)
   )`;
   const head = `(SELECT MAX(seq) FROM recipe_revisions WHERE recipe_id = '${RECIPE}') = (SELECT seq FROM recipe_revisions WHERE id = ?)`;
+  const bound = `recipe_locales.title = (SELECT json_extract(r2.snapshot_json, '$.fields.title') FROM recipe_revisions r2 WHERE r2.id = ?)`;
   const res = await DB.batch([
-    DB.prepare(`UPDATE recipe_locales SET status = 'published' WHERE recipe_id = '${RECIPE}' AND ${grant} AND ${head}`).bind(revisionId, revisionId),
+    DB.prepare(`UPDATE recipe_locales SET status = 'published' WHERE recipe_id = '${RECIPE}' AND ${grant} AND ${head} AND ${bound}`).bind(revisionId, revisionId, revisionId),
   ]);
   return res[0]!.meta.changes === 1;
 }
-
-const fields = (t: string) => ({ title: t, intro: '', ingredients: ['1 egg'], steps: ['Cook.'] });
 
 beforeEach(fresh);
 
@@ -93,35 +103,57 @@ describe('0007 schema', () => {
   });
 });
 
-describe('CAS save/publish races', () => {
-  it('two concurrent saves with the same expected head: exactly one wins', async () => {
+describe('CAS stale-head negatives (single connection; constraint abort is the rollback proof)', () => {
+  it('two saves with the same expected head: exactly one wins, the loser rolls back', async () => {
     const snap = canonicalSnapshot(fields('Soup'), []);
-    const a = await saveEdit('rev-a', 0, snap, 'Soup A');
-    const b = await saveEdit('rev-b', 0, snap, 'Soup B');
+    const a = await saveEdit('rev-a', 0, snap, fields('Soup A'));
+    const b = await saveEdit('rev-b', 0, snap, fields('Soup B'));
     expect([a, b].sort()).toEqual([false, true]);
     const rows = await DB.prepare(`SELECT seq FROM recipe_revisions WHERE recipe_id = '${RECIPE}'`).all();
     expect(rows.results.length).toBe(1);
   });
+  it('same-id replay with different content aborts and leaves prior state untouched', async () => {
+    const s1 = canonicalSnapshot(fields('Original'), []);
+    expect(await saveEdit('rev-a', 0, s1, fields('Original'))).toBe(true);
+    const s2 = canonicalSnapshot(fields('Changed'), []);
+    expect(await saveEdit('rev-a', 0, s2, fields('Changed'))).toBe(false);
+    const row = await DB.prepare(`SELECT l.title, r.content_hash FROM recipe_locales l JOIN recipe_revisions r ON r.recipe_id = l.recipe_id WHERE l.recipe_id = '${RECIPE}'`).first<{ title: string; content_hash: string }>();
+    expect(row!.title).toBe('Original');
+    expect(row!.content_hash).toBe(s1.hash);
+  });
+  it('stale head after a newer revision aborts the whole batch (locale not mutated)', async () => {
+    expect(await saveEdit('rev-a', 0, canonicalSnapshot(fields('Soup'), []), fields('Soup'))).toBe(true);
+    expect(await saveEdit('rev-b', 1, canonicalSnapshot(fields('Soup v2'), []), fields('Soup v2'))).toBe(true);
+    expect(await saveEdit('rev-c', 0, canonicalSnapshot(fields('Stale'), []), fields('Stale'))).toBe(false);
+    const t = await DB.prepare(`SELECT title FROM recipe_locales WHERE recipe_id = '${RECIPE}'`).first<{ title: string }>();
+    expect(t!.title).toBe('Soup v2');
+    const n = await DB.prepare(`SELECT count(*) n FROM recipe_revisions WHERE recipe_id = '${RECIPE}'`).first<{ n: number }>();
+    expect(n!.n).toBe(2);
+  });
   it('a grant for revision A never authorizes publishing revision B', async () => {
-    const s1 = canonicalSnapshot(fields('Soup'), []);
-    expect(await saveEdit('rev-a', 0, s1, 'Soup')).toBe(true);
+    expect(await saveEdit('rev-a', 0, canonicalSnapshot(fields('Soup'), []), fields('Soup'))).toBe(true);
     expect(await consentEvent('ce-1', 'rev-a', 0, 'grant')).toBe(true);
-    const s2 = canonicalSnapshot(fields('Soup edited'), []);
-    expect(await saveEdit('rev-b', 1, s2, 'Soup edited')).toBe(true);
+    expect(await saveEdit('rev-b', 1, canonicalSnapshot(fields('Soup edited'), []), fields('Soup edited'))).toBe(true);
     expect(await tryPublish('rev-b')).toBe(false);
     const st = await DB.prepare(`SELECT status FROM recipe_locales WHERE recipe_id = '${RECIPE}'`).first<{ status: string }>();
     expect(st!.status).toBe('draft');
     expect(await tryPublish('rev-a')).toBe(false); // no longer head
   });
-  it('publish succeeds only with a matching grant on the head revision', async () => {
-    const s1 = canonicalSnapshot(fields('Soup'), []);
-    expect(await saveEdit('rev-a', 0, s1, 'Soup')).toBe(true);
+  it('publish succeeds only with a matching grant on the head revision and bound content', async () => {
+    expect(await saveEdit('rev-a', 0, canonicalSnapshot(fields('Soup'), []), fields('Soup'))).toBe(true);
     expect(await consentEvent('ce-1', 'rev-a', 0, 'grant')).toBe(true);
     expect(await tryPublish('rev-a')).toBe(true);
   });
+  it('a live row drifted from the consented snapshot cannot be published', async () => {
+    expect(await saveEdit('rev-a', 0, canonicalSnapshot(fields('Consent Soup'), []), fields('Consent Soup'))).toBe(true);
+    expect(await consentEvent('ce-1', 'rev-a', 0, 'grant')).toBe(true);
+    await DB.prepare(`UPDATE recipe_locales SET title = 'Unconsented title' WHERE recipe_id = '${RECIPE}'`).run();
+    expect(await tryPublish('rev-a')).toBe(false);
+    const st = await DB.prepare(`SELECT status FROM recipe_locales WHERE recipe_id = '${RECIPE}'`).first<{ status: string }>();
+    expect(st!.status).toBe('draft');
+  });
   it('a revoke after the grant blocks publish; a re-grant unblocks it', async () => {
-    const s1 = canonicalSnapshot(fields('Soup'), []);
-    expect(await saveEdit('rev-a', 0, s1, 'Soup')).toBe(true);
+    expect(await saveEdit('rev-a', 0, canonicalSnapshot(fields('Soup'), []), fields('Soup'))).toBe(true);
     expect(await consentEvent('ce-1', 'rev-a', 0, 'grant')).toBe(true);
     expect(await consentEvent('ce-2', 'rev-a', 1, 'revoke')).toBe(true);
     expect(await tryPublish('rev-a')).toBe(false);
@@ -129,18 +161,36 @@ describe('CAS save/publish races', () => {
     expect(await tryPublish('rev-a')).toBe(true);
   });
   it('a grant under different license wording or user does not satisfy the guard', async () => {
-    const s1 = canonicalSnapshot(fields('Soup'), []);
-    expect(await saveEdit('rev-a', 0, s1, 'Soup')).toBe(true);
+    expect(await saveEdit('rev-a', 0, canonicalSnapshot(fields('Soup'), []), fields('Soup'))).toBe(true);
     expect(await consentEvent('ce-1', 'rev-a', 0, 'grant', 'public-license-v1', 'en')).toBe(true);
     expect(await tryPublish('rev-a', USER, 'public-license-v2', 'en')).toBe(false);
     expect(await tryPublish('rev-a', 'someone-else', 'public-license-v1', 'en')).toBe(false);
   });
-  it('concurrent consent events with the same expected seq: exactly one wins', async () => {
-    const s1 = canonicalSnapshot(fields('Soup'), []);
-    expect(await saveEdit('rev-a', 0, s1, 'Soup')).toBe(true);
+  it('two consent events with the same expected seq: exactly one wins, the loser aborts', async () => {
+    expect(await saveEdit('rev-a', 0, canonicalSnapshot(fields('Soup'), []), fields('Soup'))).toBe(true);
     const a = await consentEvent('ce-a', 'rev-a', 0, 'grant');
     const b = await consentEvent('ce-b', 'rev-a', 0, 'grant');
     expect([a, b].sort()).toEqual([false, true]);
+  });
+  it('a non-owner cannot grant consent (owner guard at insert)', async () => {
+    expect(await saveEdit('rev-a', 0, canonicalSnapshot(fields('Soup'), []), fields('Soup'))).toBe(true);
+    sqlite.exec(`INSERT INTO users (id, email, created_at) VALUES ('user-2', 'other@example.com', '2026-01-01')`);
+    expect(await consentEvent('ce-9', 'rev-a', 0, 'grant', 'public-license-v1', 'en', 'user-2')).toBe(false);
+    expect(await tryPublish('rev-a', 'user-2')).toBe(false);
+  });
+  it('revisions, manifests and consent events are append-only (triggers abort UPDATE/DELETE)', async () => {
+    expect(await saveEdit('rev-a', 0, canonicalSnapshot(fields('Soup'), []), fields('Soup'))).toBe(true);
+    expect(await consentEvent('ce-1', 'rev-a', 0, 'grant')).toBe(true);
+    await expect(DB.prepare(`UPDATE recipe_revisions SET content_hash = 'x' WHERE id = 'rev-a'`).run()).rejects.toThrow(/append-only/);
+    await expect(DB.prepare(`UPDATE recipe_revisions SET snapshot_json = '{}' WHERE id = 'rev-a'`).run()).rejects.toThrow(/append-only/);
+    await expect(DB.prepare(`DELETE FROM recipe_revisions WHERE id = 'rev-a'`).run()).rejects.toThrow(/append-only/);
+    await expect(DB.prepare(`UPDATE recipe_consent_events SET license_version = 'v9' WHERE id = 'ce-1'`).run()).rejects.toThrow(/append-only/);
+    await expect(DB.prepare(`DELETE FROM recipe_consent_events WHERE id = 'ce-1'`).run()).rejects.toThrow(/append-only/);
+    // A manifest row must exist for its per-row trigger to fire:
+    sqlite.exec(`INSERT INTO recipe_images (id, recipe_id, kind, r2_key, mime, bytes, style, source_name, source_url, license, cleared_at, created_at) VALUES ('img-1', '${RECIPE}', 'hero', 'img/abc.webp', 'image/webp', 100, 'photo', 'Ana', '', 'proprietary', '2026-01-01', '2026-01-01')`);
+    sqlite.exec(`INSERT INTO recipe_revision_images (revision_id, image_id, role, style, source_name, source_url, license, sha256) VALUES ('rev-a', 'img-1', 'hero', 'photo', 'Ana', '', 'proprietary', 'abc')`);
+    await expect(DB.prepare(`UPDATE recipe_revision_images SET sha256 = 'x' WHERE image_id = 'img-1'`).run()).rejects.toThrow(/append-only/);
+    await expect(DB.prepare(`DELETE FROM recipe_revision_images WHERE image_id = 'img-1'`).run()).rejects.toThrow(/append-only/);
   });
   it('whitespace-only text changes produce a different hash (verbatim snapshot)', () => {
     const a = canonicalSnapshot({ ...fields('Soup'), intro: 'Warm.' }, []);

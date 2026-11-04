@@ -72,3 +72,46 @@ CREATE TABLE recipe_consent_events (
 --           ORDER BY e.consent_seq DESC LIMIT 1) ... and that row's event = 'grant'
 -- (expressed in SQL as: latest event for the tuple IS a grant - see the test
 -- file for the exact executable statement).
+
+-- Append-only enforcement (executable, not comments): revisions, their image
+-- manifests and consent events can never be updated or deleted. Revocation is
+-- a new event; correction is a new revision. The reviewed erasure migration
+-- will own the controlled exception path (drop/replace these triggers inside
+-- its own flow) - nothing here anticipates it.
+CREATE TRIGGER recipe_revisions_no_update BEFORE UPDATE ON recipe_revisions
+BEGIN SELECT RAISE(ABORT, 'recipe_revisions is append-only'); END;
+CREATE TRIGGER recipe_revisions_no_delete BEFORE DELETE ON recipe_revisions
+BEGIN SELECT RAISE(ABORT, 'recipe_revisions is append-only'); END;
+CREATE TRIGGER recipe_revision_images_no_update BEFORE UPDATE ON recipe_revision_images
+BEGIN SELECT RAISE(ABORT, 'recipe_revision_images is append-only'); END;
+CREATE TRIGGER recipe_revision_images_no_delete BEFORE DELETE ON recipe_revision_images
+BEGIN SELECT RAISE(ABORT, 'recipe_revision_images is append-only'); END;
+CREATE TRIGGER recipe_consent_events_no_update BEFORE UPDATE ON recipe_consent_events
+BEGIN SELECT RAISE(ABORT, 'recipe_consent_events is append-only'); END;
+CREATE TRIGGER recipe_consent_events_no_delete BEFORE DELETE ON recipe_consent_events
+BEGIN SELECT RAISE(ABORT, 'recipe_consent_events is append-only'); END;
+
+-- CAS model, revised after review counterexamples:
+-- * The revision INSERT is a PLAIN insert (no guard clause): a stale head or
+--   a same-id replay violates UNIQUE(recipe_id, seq) or the PK, which aborts
+--   and rolls back the ENTIRE D1 batch - no half-applied state is possible,
+--   and "the row exists" can never be mistaken for "this batch wrote it".
+--   The caller catches the abort and returns 409.
+-- * Follow-up statements carry their own live guards (owner + not-submitted)
+--   and the caller asserts changes === 1 on each; a violated guard no-ops
+--   that statement and the caller rejects the whole operation.
+-- * The consent-event insert carries the same plain-insert + UNIQUE
+--   (recipe_id, consent_seq) abort scheme, plus an owner-identity guard:
+--   user_id must equal recipes.owner_user_id at insert time.
+-- * Publish binds content, not just sequence: the transition UPDATE requires
+--   the live locale row to EQUAL the bound revision's snapshot fields
+--   (json_extract equality) plus the exact-tuple latest-event grant and the
+--   head-revision check, all in the same SQL. A live row that drifted from
+--   the consented snapshot cannot be published.
+-- * Integration-time launch dependencies (explicit, not implemented here):
+--   every mutation surface (account save, future user MCP, existing admin
+--   MCP) must route content writes through revision creation; the R2
+--   conditional writer (content-addressed key + ifNoneMatch '*') and
+--   serving-bound enforcement (serve only images bound in the published
+--   revision's manifest) are required before this slice can gate launch;
+--   image-rights (cleared_at) checks stay as today until then.
