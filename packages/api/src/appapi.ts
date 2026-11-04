@@ -9,7 +9,8 @@ import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { eq, and, ne, desc, isNotNull } from 'drizzle-orm';
-import { LOCALES, getCountry, validateRecipeSubmission, slugify } from '@2yolks/contracts';
+import { LOCALES, getCountry, validateRecipeSubmission, slugify, isStructured } from '@2yolks/contracts';
+import type { StructuredIngredient } from '@2yolks/contracts';
 import { createDb, recipes, recipeLocales, recipeImages, sources, published } from './db';
 import { sendMail } from './email';
 import {
@@ -25,10 +26,52 @@ type Env = { Bindings: AccountBindings; Variables: { user: User } };
 export const appApi = new Hono<Env>();
 type Ctx = Context<Env>;
 
+// Ingredient rows are lossless: IngredientEntry = string | StructuredIngredient
+// ({ref, qty, qtyEnd?, unit?, name, note?}). Structured rows carry the unit and
+// ref contract the app needs for scaling/unit conversion; steps keep their raw
+// text including {i:ref} references so the app can link them to ingredients.
+export type IngredientDTO = string | StructuredIngredient;
+const parseIngredientEntries = (json: string): IngredientDTO[] => {
+  try {
+    const v: unknown = JSON.parse(json);
+    if (!Array.isArray(v)) return [];
+    return v.filter((x): x is IngredientDTO => typeof x === 'string' || isStructured(x));
+  } catch { return []; }
+};
+const parseStepLines = (json: string): string[] => {
+  try { const v: unknown = JSON.parse(json); return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []; } catch { return []; }
+};
+
 const NO_STORE = { 'cache-control': 'no-store' } as const;
-const err = (c: Ctx, status: 400 | 401 | 404 | 409 | 429 | 503, message: string) =>
+const err = (c: Ctx, status: 400 | 401 | 403 | 404 | 409 | 415 | 429 | 503, message: string) =>
   c.json({ error: message }, status, NO_STORE);
 const errors = (c: Ctx, list: string[]) => c.json({ errors: list }, 400, NO_STORE);
+
+// Native-safe CSRF/budget guard for every mutating route (mirrors the HTML
+// module's Origin check without its cookie assumption): browsers can only send
+// application/json cross-site via CORS preflight, which this API never
+// answers, and a foreign Origin header is rejected outright. An ABSENT Origin
+// is the native app. This keeps a cross-site text/plain form post from
+// burning the daily mail budget through /auth/code.
+const mutationGuard = async (c: Ctx, next: () => Promise<void>) => {
+  if (c.req.method !== 'GET') {
+    // Only requests that actually carry a body must send it as JSON; bodyless
+    // POST/DELETE (logout, submit, remove, account deletion) need no content-type.
+    const ct = c.req.header('content-type');
+    const hasBody = ct !== undefined || (c.req.header('content-length') ?? '0') !== '0' || c.req.header('transfer-encoding') !== undefined;
+    if (hasBody && !(ct ?? '').startsWith('application/json')) return err(c, 415, 'Send application/json.');
+    const origin = c.req.header('origin');
+    if (origin !== undefined) {
+      const allowed = new Set([new URL(c.req.url).origin]);
+      if (c.env.CANONICAL_ORIGIN) allowed.add(c.env.CANONICAL_ORIGIN);
+      if (!allowed.has(origin)) return err(c, 403, 'This request did not come from 2yolks, so it was blocked.');
+    }
+  }
+  await next();
+};
+appApi.use('/auth/*', mutationGuard);
+appApi.use('/me', mutationGuard);
+appApi.use('/me/*', mutationGuard);
 
 appApi.use('*', bodyLimit({
   maxSize: 256 * 1024,
@@ -140,20 +183,37 @@ appApi.get('/me', (c) => {
   return c.json({ user: u }, 200, NO_STORE);
 });
 
-// Deletes the account (App Review guideline 5.1.1(v)): sign-in artifacts and
-// the user row are removed and every locale that is not published (draft or
-// in review) is withdrawn. Published recipes stay live under their per-recipe
-// author credit (author_name): the license/audit trail and other readers'
-// pages do not depend on the account. Content rows are never hard-deleted;
-// "withdraw" = status 'rejected', same as the HTML "remove" flow.
+// Deletes the account. Grounded in the privacy page ("we store your email
+// address, the author name you choose, and the recipe drafts you save") and
+// in the MCP privacy rule (mcp.ts privateRecipeSql): a user recipe is PRIVATE
+// only while owner_user_id IS NOT NULL, so the owner link must never be
+// nulled on retained non-published rows.
+//  - Never-submitted drafts: deleted outright (rows, locales, images,
+//    per-submission source). They never left the owner's private space.
+//  - Submitted-not-published: withdrawn ('rejected') but KEPT with
+//    author_name, source, submitted_at and attested_at intact - the review/
+//    consent audit trail (consent evidence is never destroyed).
+//  - Published: stays live under its per-recipe author credit, attestation
+//    intact (license provenance).
+//  - Identity: sessions and auth codes are deleted and the users row is
+//    anonymized to a tombstone (email/display_name gone), which keeps
+//    owner_user_id valid so retained private content stays private in MCP.
 appApi.delete('/me/account', async (c) => {
   const user = c.get('user')!;
   await c.env.DB.batch([
-    c.env.DB.prepare("UPDATE recipe_locales SET status = 'rejected' WHERE status <> 'published' AND recipe_id IN (SELECT id FROM recipes WHERE owner_user_id = ?)").bind(user.id),
-    c.env.DB.prepare('UPDATE recipes SET owner_user_id = NULL, attested_at = NULL WHERE owner_user_id = ?').bind(user.id),
+    // 1. Never-submitted, never-published drafts: delete content + per-submission source rows.
+    //    (Anything with a published locale is never deleted, even if submitted_at is NULL.)
+    c.env.DB.prepare("DELETE FROM recipe_images WHERE recipe_id IN (SELECT id FROM recipes r WHERE r.owner_user_id = ? AND r.submitted_at IS NULL AND NOT EXISTS (SELECT 1 FROM recipe_locales l WHERE l.recipe_id = r.id AND l.status = 'published'))").bind(user.id),
+    c.env.DB.prepare("DELETE FROM recipe_locales WHERE recipe_id IN (SELECT id FROM recipes r WHERE r.owner_user_id = ? AND r.submitted_at IS NULL AND NOT EXISTS (SELECT 1 FROM recipe_locales l WHERE l.recipe_id = r.id AND l.status = 'published'))").bind(user.id),
+    c.env.DB.prepare("DELETE FROM recipes WHERE owner_user_id = ? AND submitted_at IS NULL AND NOT EXISTS (SELECT 1 FROM recipe_locales l WHERE l.recipe_id = recipes.id AND l.status = 'published')").bind(user.id),
+    c.env.DB.prepare("DELETE FROM sources WHERE id LIKE 'src-%' AND NOT EXISTS (SELECT 1 FROM recipes r WHERE r.source_id = sources.id) AND notes = 'user submission - rights review pending'").bind(),
+    // 2. Submitted but not yet published: withdraw from the queue, keep the evidence.
+    c.env.DB.prepare("UPDATE recipe_locales SET status = 'rejected' WHERE status = 'draft' AND recipe_id IN (SELECT id FROM recipes WHERE owner_user_id = ? AND submitted_at IS NOT NULL)").bind(user.id),
+    // 3. Sign-in artifacts gone; identity anonymized to a tombstone so the
+    //    owner link (and with it the MCP private-draft classification) survives.
     c.env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(user.id),
     c.env.DB.prepare('DELETE FROM auth_codes WHERE email = ?').bind(user.email),
-    c.env.DB.prepare('DELETE FROM users WHERE id = ?').bind(user.id),
+    c.env.DB.prepare("UPDATE users SET email = ?, display_name = NULL WHERE id = ?").bind(`deleted-${user.id}@account-deleted.invalid`, user.id),
   ]);
   return c.json({ ok: true }, 200, NO_STORE);
 });
@@ -175,6 +235,36 @@ appApi.get('/me/recipes', async (c) => {
       ...r,
       state: r.status === 'published' ? 'published' : r.submittedAt ? 'submitted' : 'draft',
     })),
+  }, 200, NO_STORE);
+});
+
+// Full owned-recipe detail for edit rehydration (relaunch-and-continue-editing).
+// Read-only view: the app decides editability from `state` (draft only).
+appApi.get('/me/recipes/:id', async (c) => {
+  const row = await loadOwned(c, c.req.param('id'));
+  if (!row) return err(c, 404, 'Draft not found.');
+  const { r, l, s } = row;
+  const user = c.get('user')!;
+  const adapted = s.license === 'user-adapted';
+  return c.json({
+    id: r.id,
+    title: l.title,
+    intro: l.intro,
+    ingredients: parseIngredientEntries(l.ingredientsJson),
+    steps: parseStepLines(l.stepsJson),
+    locale: `${l.country}:${l.lang}`,
+    slug: l.slug,
+    status: l.status,
+    state: l.status === 'published' ? 'published' : r.submittedAt ? 'submitted' : 'draft',
+    submittedAt: r.submittedAt,
+    prepMinutes: r.prepMinutes,
+    cookMinutes: r.cookMinutes,
+    baseServings: r.baseServings,
+    displayName: r.authorName ?? user.displayName,
+    sourceKind: adapted ? 'adapted' : 'original',
+    // An original recipe's source url is just the site origin placeholder, not user data.
+    sourceUrl: adapted ? s.url : '',
+    attest: r.attestedAt !== null,
   }, 200, NO_STORE);
 });
 
@@ -335,11 +425,8 @@ appApi.get('/recipes/:country/:lang/:slug', async (c) => {
     .where(and(eq(recipeImages.recipeId, recipeId), eq(recipeImages.kind, 'step'), isNotNull(recipeImages.clearedAt)))
     .orderBy(desc(recipeImages.createdAt));
 
-  const parseLines = (json: string): string[] => {
-    try { const v: unknown = JSON.parse(json); return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []; } catch { return []; }
-  };
-  const ingredients = parseLines(row.recipe_locales.ingredientsJson);
-  const steps = parseLines(row.recipe_locales.stepsJson);
+  const ingredients = parseIngredientEntries(row.recipe_locales.ingredientsJson);
+  const steps = parseStepLines(row.recipe_locales.stepsJson);
   const stepImages: ({ url: string; style: string } | null)[] = Array.from({ length: steps.length }, () => null);
   for (const img of stepRows) {
     const idx = img.stepIndex ?? -1;
@@ -359,6 +446,7 @@ appApi.get('/recipes/:country/:lang/:slug', async (c) => {
       totalMinutes: row.recipes.totalMinutes,
       baseServings: row.recipes.baseServings,
       category: row.recipes.category,
+      authorName: row.recipes.authorName,
     },
     locale: {
       recipeId,
