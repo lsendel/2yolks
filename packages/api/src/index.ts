@@ -17,7 +17,8 @@ import {
 } from '@2yolks/contracts';
 import { renderHome, renderCountryHome, renderRecipe, renderAbout, renderPrivacy, renderHowWeTest, renderNotFound, type SiteNavItem } from '@2yolks/web/server';
 import { isUntested, localizedCountryName } from '@2yolks/contracts';
-import { recipeSlugAliases,  createDb, recipes, recipeLocales, recipeImages, sources } from './db';
+import { recipeSlugAliases,  createDb, recipes, recipeLocales, recipeImages, sources, published } from './db';
+import { appApi } from './appapi';
 import { mcpApp } from './mcp';
 import { accountApp, type AccountBindings } from './account';
 
@@ -43,22 +44,7 @@ type Bindings = {
   MCP_NAMED_KEYS?: string;
 } & AccountBindings;
 
-const DEMO_LICENSE = 'internal-demo';
-
 const app = new Hono<{ Bindings: Bindings }>();
-
-/** Published-row predicate: requires a cleared source (license reviewed),
- * and excludes synthetic demo-seed rows unless ALLOW_DEMO_SEED=true
- * (local dev only). This is a production serving gate, not noindex. */
-function published(db: ReturnType<typeof createDb>, allowDemo: boolean) {
-  const conds = [
-    eq(recipeLocales.status, 'published'),
-    // clearedAt NULL means the source rights review has not completed.
-    isNotNull(sources.clearedAt),
-  ];
-  if (!allowDemo) conds.push(ne(sources.license, DEMO_LICENSE));
-  return and(...conds);
-}
 
 const demoAllowed = (c: Context<{ Bindings: Bindings }>) => c.env.ALLOW_DEMO_SEED === 'true';
 
@@ -77,6 +63,9 @@ app.get('/api/health', (c) => c.json({ ok: true }));
 
 // Accounts + private user drafts (email-code sign-in). Registered before /:country.
 app.route('/account', accountApp);
+
+// Native app JSON API (bearer-token sibling of /account). Mounted before /:country.
+app.route('/api/v1', appApi);
 
 // Additive: `countries` and `locales` keep their full-catalogue shape.
 // `published` lists, per country, the locales that currently have at least
