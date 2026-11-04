@@ -255,8 +255,9 @@ function localeOptions(selected: string): string {
 
 // Capture-form chrome follows the recipe's language (the form's locale
 // select): category labels, prompt and live checks re-localize when the cook
-// switches language. The rest of the account UI is English-only today
-// (pre-existing gap, separate decision).
+// switches language. The rest of the account UI is English-only today; the
+// approved all-internationalized outcome covers it as a separate
+// implementation increment after C1.
 const FORM_STRINGS: Record<string, { prompt: string; unsure: string; preamble: string; preambleHint: string }> = {
   en: { prompt: 'What kind of dish is it?', unsure: 'Not sure yet', preamble: 'A sentence or two before the recipe', preambleHint: '(optional - the story or context a cook reads first)' },
   es: { prompt: '¿Qué tipo de plato es?', unsure: 'Aún no lo sé', preamble: 'Una o dos frases antes de la receta', preambleHint: '(opcional - la historia o el contexto que se lee primero)' },
@@ -276,7 +277,8 @@ function categoryOptions(selected: string, lang: string): string {
 function captureDataIslands(): string {
   const catLabels: Record<string, Record<string, string>> = {};
   for (const lang of Object.keys(FORM_STRINGS)) {
-    catLabels[lang] = { __prompt: FORM_STRINGS[lang]!.prompt };
+    const t = FORM_STRINGS[lang]!;
+    catLabels[lang] = { __prompt: t.prompt, __unsure: t.unsure, __preamble: t.preamble, __preambleHint: t.preambleHint };
     for (const cat of RECIPE_CATEGORY_SLUGS) catLabels[lang]![cat] = categoryLabel(cat, lang) ?? cat;
   }
   const json = (v: unknown) => JSON.stringify(v).replace(/</g, '\\u003c');
@@ -295,7 +297,7 @@ ${importOn ? `<form method="post" action="/account/recipes/import"><label>Or imp
 <label><span data-category-prompt>${esc(ft.prompt)}</span><select name="category">${categoryOptions(s.category, lang)}</select></label>
 <label>Recipe name<input type="text" name="title" value="${esc(s.title)}" maxlength="200" required></label>
 <label>Language<select name="locale">${localeOptions(s.locale)}</select></label>
-<label>${esc(ft.preamble)} <small>${esc(ft.preambleHint)}</small><textarea name="intro" maxlength="2000" style="min-height:4rem">${esc(s.intro)}</textarea></label>
+<label><span data-preamble-label>${esc(ft.preamble)}</span> <small data-preamble-hint>${esc(ft.preambleHint)}</small><textarea name="intro" maxlength="2000" style="min-height:4rem">${esc(s.intro)}</textarea></label>
 <label>Ingredients<small>One per line, for example "2 cups flour".</small><textarea name="ingredients" required>${esc(s.ingredients)}</textarea></label>
 <label>Steps<small>One step per line.</small><textarea name="steps" required>${esc(s.steps)}</textarea></label>
 <div class="row"><label>Prep minutes<input type="number" name="prep" min="0" max="20000" value="${esc(s.prep)}"></label><label>Cook minutes<input type="number" name="cook" min="0" max="20000" value="${esc(s.cook)}"></label></div>

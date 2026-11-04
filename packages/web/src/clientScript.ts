@@ -270,10 +270,15 @@ export const CAPTURE_CLIENT_SCRIPT = `(function () {
     var catSel = form.querySelector('[name="category"]');
     var labels = CATLABELS[lang()] || CATLABELS.en;
     Array.prototype.slice.call(catSel.options).forEach(function (o) {
-      if (o.value && labels[o.value]) o.textContent = labels[o.value];
+      if (!o.value) o.textContent = labels.__unsure;
+      else if (labels[o.value]) o.textContent = labels[o.value];
     });
     var prompt = document.querySelector('[data-category-prompt]');
     if (prompt) prompt.textContent = labels.__prompt;
+    var pre = document.querySelector('[data-preamble-label]');
+    if (pre) pre.textContent = labels.__preamble;
+    var preHint = document.querySelector('[data-preamble-hint]');
+    if (preHint) preHint.textContent = labels.__preambleHint;
   }
   function run() {
     var T = ALL[lang()];

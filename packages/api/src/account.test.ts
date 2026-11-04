@@ -83,6 +83,15 @@ describe('capture form (category-first + live checks)', () => {
     expect(html).toContain('Ponle un nombre a la receta');
     expect(html).toContain('Una o dos frases antes de la receta');
   });
+  it('data islands carry every re-localizable string (blank option + preamble included)', async () => {
+    const cookie = await signIn();
+    const html = await (await get('/account/recipes/new', cookie)).text();
+    for (const frag of ['__unsure', '__prompt', '__preamble', '__preambleHint']) expect(html).toContain(frag);
+    for (const frag of ['Aún no lo sé', 'Pas encore sûr', 'Not sure yet']) expect(html).toContain(frag);
+    for (const frag of ['Una o dos frases antes de la receta', 'Une phrase ou deux avant la recette']) expect(html).toContain(frag);
+    expect(html).toContain('data-preamble-label');
+    expect(html).toContain('data-preamble-hint');
+  });
   it('ships idle (neutral) check markup and all three locales of check strings', async () => {
     const cookie = await signIn();
     const html = await (await get('/account/recipes/new', cookie)).text();
