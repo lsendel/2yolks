@@ -183,57 +183,14 @@ appApi.get('/me', (c) => {
   return c.json({ user: u }, 200, NO_STORE);
 });
 
-// Deletes the account. Grounded in the privacy page ("we store your email
-// address, the author name you choose, and the recipe drafts you save") and
-// in the MCP privacy rule (mcp.ts privateRecipeSql): a user recipe is PRIVATE
-// only while owner_user_id IS NOT NULL, so the owner link must never be
-// nulled on retained non-published rows.
-//  - Never-submitted drafts: deleted outright (rows, locales, images,
-//    per-submission source). They never left the owner's private space.
-//  - Submitted-not-published: withdrawn ('rejected') but KEPT with
-//    author_name, source, submitted_at and attested_at intact - the review/
-//    consent audit trail (consent evidence is never destroyed).
-//  - Published: stays live under its per-recipe author credit, attestation
-//    intact (license provenance).
-//  - Identity: sessions and auth codes are deleted and the users row is
-//    anonymized to a tombstone (email/display_name gone), which keeps
-//    owner_user_id valid so retained private content stays private in MCP.
-appApi.delete('/me/account', async (c) => {
-  const user = c.get('user')!;
-  // Deletable = owned, never submitted, never published, and never aliased.
-  // A recipe that once served publicly keeps permanent slug-alias rows with a
-  // FK to recipes(id); deleting it would violate the FK and roll everything
-  // back, so it is excluded and stays private under the tombstoned owner.
-  const deletable = await c.env.DB.prepare(
-    `SELECT r.id, r.source_id FROM recipes r
-     WHERE r.owner_user_id = ? AND r.submitted_at IS NULL
-       AND NOT EXISTS (SELECT 1 FROM recipe_locales l WHERE l.recipe_id = r.id AND l.status = 'published')
-       AND NOT EXISTS (SELECT 1 FROM recipe_slug_aliases a WHERE a.recipe_id = r.id)`
-  ).bind(user.id).all<{ id: string; source_id: string | null }>();
-  const rows = deletable.results ?? [];
-  const recipeIds = rows.map((r) => r.id);
-  const srcIds = [...new Set(rows.map((r) => r.source_id).filter((x): x is string => !!x && x.startsWith('src-')))];
-  const stmts: D1PreparedStatement[] = [];
-  const ph = (n: number) => Array.from({ length: n }, () => '?').join(',');
-  if (recipeIds.length) {
-    // 1. Never-submitted drafts: delete content + ONLY this account's
-    //    per-submission source rows (no global orphan sweep).
-    stmts.push(c.env.DB.prepare(`DELETE FROM recipe_images WHERE recipe_id IN (${ph(recipeIds.length)})`).bind(...recipeIds));
-    stmts.push(c.env.DB.prepare(`DELETE FROM recipe_locales WHERE recipe_id IN (${ph(recipeIds.length)})`).bind(...recipeIds));
-    stmts.push(c.env.DB.prepare(`DELETE FROM recipes WHERE id IN (${ph(recipeIds.length)})`).bind(...recipeIds));
-    if (srcIds.length) {
-      stmts.push(c.env.DB.prepare(`DELETE FROM sources WHERE id IN (${ph(srcIds.length)})`).bind(...srcIds));
-    }
-  }
-  // 2. Submitted but not yet published: withdraw from the queue, keep the evidence.
-  stmts.push(c.env.DB.prepare("UPDATE recipe_locales SET status = 'rejected' WHERE status = 'draft' AND recipe_id IN (SELECT id FROM recipes WHERE owner_user_id = ? AND submitted_at IS NOT NULL)").bind(user.id));
-  // 3. Sign-in artifacts gone; identity anonymized to a tombstone so the
-  //    owner link (and with it the MCP private-draft classification) survives.
-  stmts.push(c.env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(user.id));
-  stmts.push(c.env.DB.prepare('DELETE FROM auth_codes WHERE email = ?').bind(user.email));
-  stmts.push(c.env.DB.prepare("UPDATE users SET email = ?, display_name = NULL WHERE id = ?").bind(`deleted-${user.id}@account-deleted.invalid`, user.id));
-  await c.env.DB.batch(stmts);
-  return c.json({ ok: true }, 200, NO_STORE);
+// Account deletion is NOT RELEASED. The retention/destruction policy
+// (never-submitted drafts vs submitted/published evidence vs license
+// attribution) and the implementation's atomicity are still under review;
+// until both are settled this route must not mutate anything. It stays
+// registered so clients get an explicit, honest answer instead of a 404
+// that could be mistaken for "already deleted".
+appApi.delete('/me/account', (c) => {
+  return c.json({ code: 'ACCOUNT_DELETION_UNAVAILABLE', message: 'Account deletion is not available yet. Your drafts and account are unchanged.' }, 503, NO_STORE);
 });
 
 // --- Own recipes (JSON mirror of the account home list + save/submit/remove) -
