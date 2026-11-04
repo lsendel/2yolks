@@ -580,6 +580,16 @@ describe('account i18n (en/es/fr)', () => {
     expect(fr).toContain('M’envoyer un code');
     const bad = await (await get('/account?lang=de')).text();
     expect(bad).toContain('Your 2yolks account');
+    // site chrome (footer) follows the page language too
+    expect(es).toContain('>Acerca de<');
+    expect(es).toContain('>Cómo probamos<');
+    expect(es).toContain('>Privacidad<');
+    expect(es).not.toContain('About / Acerca de');
+    expect(fr).toContain('>À propos<');
+    expect(fr).toContain('>Comment nous testons<');
+    expect(fr).toContain('>Confidentialité<');
+    expect(fr).not.toContain('About / Acerca de');
+    expect(bad).toContain('>Privacy<');
   });
 
   it('runs the whole sign-in flow in Spanish, including the localized code email', async () => {
