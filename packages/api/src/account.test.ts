@@ -49,6 +49,67 @@ beforeEach(() => {
   }) as typeof fetch;
 });
 
+describe('capture form (category-first + live checks)', () => {
+  it('renders the category select before the title field with the bounded slugs', async () => {
+    const cookie = await signIn();
+    const res = await get('/account/recipes/new', cookie);
+    const html = await res.text();
+    const catIdx = html.indexOf('name="category"');
+    const titleIdx = html.indexOf('name="title"');
+    expect(catIdx).toBeGreaterThan(-1);
+    expect(titleIdx).toBeGreaterThan(catIdx);
+    expect(html).toContain('soups-stews');
+    expect(html).toContain('data-live-checks');
+    expect(html).toContain('A sentence or two before the recipe');
+  });
+  it('saves a valid category on the recipe and rejects an unknown one to uncategorized', async () => {
+    const cookie = await signIn();
+    const res = await post('/account/recipes/save', recipeForm({ category: 'soups-stews' }), { cookie });
+    expect(res.status).toBe(303);
+    const row = await DB.prepare('SELECT category FROM recipes').first<{ category: string }>();
+    expect(row!.category).toBe('soups-stews');
+    const res2 = await post('/account/recipes/save', recipeForm({ title: 'Other Dish', category: 'not-a-real-slug' }), { cookie });
+    expect(res2.status).toBe(303);
+    const rows = await DB.prepare('SELECT category FROM recipes ORDER BY created_at').all<{ category: string | null }>();
+    expect(rows.results[1]!.category).toBeNull();
+  });
+  it('localizes category options and check strings when the recipe language is Spanish', async () => {
+    const cookie = await signIn();
+    await post('/account/recipes/save', recipeForm({ locale: 'us:es', category: 'soups-stews' }), { cookie });
+    const { id } = (await DB.prepare('SELECT id FROM recipes').first<{ id: string }>())!;
+    const html = await (await get(`/account/recipes/${id}/edit`, cookie)).text();
+    expect(html).toContain('<option value="soups-stews" selected>Sopas y guisos</option>');
+    expect(html).toContain('¿Qué tipo de plato es?');
+    expect(html).toContain('Ponle un nombre a la receta');
+    expect(html).toContain('Una o dos frases antes de la receta');
+  });
+  it('data islands carry every re-localizable string (blank option + preamble included)', async () => {
+    const cookie = await signIn();
+    const html = await (await get('/account/recipes/new', cookie)).text();
+    for (const frag of ['__unsure', '__prompt', '__preamble', '__preambleHint']) expect(html).toContain(frag);
+    for (const frag of ['Aún no lo sé', 'Pas encore sûr', 'Not sure yet']) expect(html).toContain(frag);
+    for (const frag of ['Una o dos frases antes de la receta', 'Une phrase ou deux avant la recette']) expect(html).toContain(frag);
+    expect(html).toContain('data-preamble-label');
+    expect(html).toContain('data-preamble-hint');
+  });
+  it('ships idle (neutral) check markup and all three locales of check strings', async () => {
+    const cookie = await signIn();
+    const html = await (await get('/account/recipes/new', cookie)).text();
+    expect(html).toContain('id="capture-check-strings"');
+    expect(html).toContain('id="capture-cat-labels"');
+    for (const frag of ['Ponle un nombre', 'Donnez un nom', 'Give the recipe a name']) expect(html).toContain(frag);
+    for (const frag of ['Sopas y guisos', 'Soupes et rago']) expect(html).toContain(frag);
+  });
+  it('prefills the category when editing a draft', async () => {
+    const cookie = await signIn();
+    await post('/account/recipes/save', recipeForm({ category: 'dumplings' }), { cookie });
+    const { id } = (await DB.prepare('SELECT id FROM recipes').first<{ id: string }>())!;
+    const res = await get(`/account/recipes/${id}/edit`, cookie);
+    const html = await res.text();
+    expect(html).toContain('<option value="dumplings" selected>');
+  });
+});
+
 describe('email-code auth', () => {
   it('signs in with the emailed code, stores only hashes, and signs out', async () => {
     const cookie = await signIn();

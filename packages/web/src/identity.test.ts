@@ -61,3 +61,17 @@ describe('After hours discovery',()=>{
   expect(html).toContain('Second recipe');
  });
 });
+
+import { CAPTURE_CLIENT_SCRIPT, DISCOVERY_CLIENT_SCRIPT, RECIPE_CLIENT_SCRIPT } from './clientScript';
+
+describe('inline client scripts', () => {
+  it('every inline script is syntactically valid JavaScript', () => {
+    for (const src of [CAPTURE_CLIENT_SCRIPT, DISCOVERY_CLIENT_SCRIPT, RECIPE_CLIENT_SCRIPT]) {
+      expect(() => new Function(src)).not.toThrow();
+    }
+  });
+  it('capture checks flag ambiguous cup measures and missing quantities', () => {
+    expect(CAPTURE_CLIENT_SCRIPT).toContain('cup');
+    expect(CAPTURE_CLIENT_SCRIPT).toContain('data-check');
+  });
+});
