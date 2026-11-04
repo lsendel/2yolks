@@ -562,3 +562,78 @@ describe('submissions endpoint stays closed', () => {
     expect(res.status).toBe(503);
   });
 });
+
+describe('account i18n (en/es/fr)', () => {
+  const code6 = (text: string) => /\b(\d{6})\b/.exec(text)![1]!;
+
+  it('renders the sign-in page in Spanish and French, defaulting unknown values to English', async () => {
+    const es = await (await get('/account?lang=es')).text();
+    expect(es).toContain('lang="es"');
+    expect(es).toContain('Tu cuenta de 2yolks');
+    expect(es).toContain('Envíame un código');
+    expect(es).toContain('action="/account/code?lang=es"');
+    expect(es).toContain('/account?lang=en');
+    expect(es).toContain('/account?lang=fr');
+    const fr = await (await get('/account?lang=fr')).text();
+    expect(fr).toContain('lang="fr"');
+    expect(fr).toContain('Votre compte 2yolks');
+    expect(fr).toContain('M’envoyer un code');
+    const bad = await (await get('/account?lang=de')).text();
+    expect(bad).toContain('Your 2yolks account');
+  });
+
+  it('runs the whole sign-in flow in Spanish, including the localized code email', async () => {
+    const res = await post('/account/code?lang=es', { email: 'cook@example.com' });
+    const html = await res.text();
+    expect(html).toContain('Revisa tu correo');
+    expect(html).toContain('action="/account/verify?lang=es"');
+    expect(sent[0]!.subject).toMatch(/^Tu código de 2yolks: \d{6}$/);
+    expect(sent[0]!.text).toContain('Tu código de inicio de sesión de 2yolks es');
+    const code = code6(sent[0]!.subject);
+    const v = await post('/account/verify?lang=es', { email: 'cook@example.com', code });
+    expect(v.status).toBe(303);
+    expect(v.headers.get('location')).toBe('/account?lang=es');
+    const cookie = v.headers.get('set-cookie')!.split(';')[0]!;
+    const home = await (await get('/account?lang=es', cookie)).text();
+    expect(home).toContain('Tus recetas');
+    expect(home).toContain('Cerrar sesión');
+    expect(home).toContain('Añadir una receta');
+  });
+
+  it('rejects a wrong code with a localized error', async () => {
+    await post('/account/code?lang=fr', { email: 'cook@example.com' });
+    const v = await post('/account/verify?lang=fr', { email: 'cook@example.com', code: '000000' });
+    expect(await v.text()).toContain('Ce code n’est pas le bon.');
+  });
+
+  it('renders the draft form in French and keeps the language on save errors', async () => {
+    const cookie = await signIn();
+    const form = await (await get('/account/recipes/new?lang=fr', cookie)).text();
+    expect(form).toContain('Nom de la recette');
+    expect(form).toContain('Enregistrer le brouillon privé');
+    expect(form).toContain('J’ai écrit cette recette ou j’ai le droit de la partager');
+    expect(form).toContain('action="/account/recipes/save?lang=fr"');
+    // capture chrome still follows the RECIPE language (C1 design):
+    expect(form).toContain('What kind of dish is it?');
+    const bad = await post('/account/recipes/save?lang=fr', recipeForm({ display_name: '' }), { cookie });
+    expect(bad.status).toBe(400);
+    expect(await bad.text()).toContain('Ajoutez le nom affiché comme auteur.');
+  });
+
+  it('runs save, submit and removal in Spanish with localized status and redirects', async () => {
+    const cookie = await signIn();
+    const res = await post('/account/recipes/save?lang=es', recipeForm(), { cookie });
+    expect(res.status).toBe(303);
+    expect(res.headers.get('location')).toMatch(/\/account\/recipes\/[a-z0-9]+\/edit\?saved=1&lang=es/);
+    const home = await (await get('/account?lang=es', cookie)).text();
+    expect(home).toContain('Borrador privado');
+    const { id } = (await DB.prepare('SELECT id FROM recipes').first<{ id: string }>())!;
+    const sub = await post(`/account/recipes/${id}/submit?lang=es`, {}, { cookie });
+    expect(await sub.text()).toContain('Gracias, ya la tenemos');
+    const home2 = await (await get('/account?lang=es', cookie)).text();
+    expect(home2).toContain('Enviada a revisión');
+    const del = await post(`/account/recipes/${id}/delete?lang=es`, {}, { cookie });
+    expect(del.status).toBe(404);
+    expect(await del.text()).toContain('ya fue enviado a revisión');
+  });
+});
