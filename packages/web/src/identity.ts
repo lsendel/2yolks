@@ -56,6 +56,10 @@ main.wide.discovery {max-width:1160px;padding:0;margin:auto;background:var(--plu
 .discovery-search:focus {border-color:var(--lime);outline:2px solid var(--lime);outline-offset:1px;}
 .discovery-list {list-style:none;padding:0;margin:0;border-bottom:1px solid #65566e;}
 .discovery-list li {position:relative;display:grid;grid-template-columns:2.2rem minmax(0,1fr) auto;gap:1rem;border-top:1px solid #65566e;padding:1.35rem .75rem;margin:0 -.75rem;transition:background .15s;}
+.discovery-list li.has-thumb {grid-template-columns:2.2rem 4.5rem minmax(0,1fr) auto;}
+.recipe-thumb {position:relative;width:4.5rem;height:4.5rem;border-radius:8px;overflow:hidden;border:1px solid #65566e;}
+.recipe-thumb img {width:100%;height:100%;object-fit:cover;display:block;}
+.thumb-label {position:absolute;left:0;right:0;bottom:0;font-size:.6rem;line-height:1.25;text-align:center;background:rgb(0 0 0 / .55);color:#faf7f4;padding:.1rem 0;}
 .discovery-list li[hidden] {display:none;}
 .discovery-list li:hover {background:rgb(224 250 128 / .06);}
 .recipe-number {font-size:.75rem;font-weight:700;color:#c6b9cd;padding-top:.2rem;font-variant-numeric:tabular-nums;}
