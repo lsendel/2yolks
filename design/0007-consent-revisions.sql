@@ -1,4 +1,4 @@
--- DESIGN REV 7 - smallest separable slice: immutable revisions + exact-content
+-- DESIGN REV 8 - smallest separable slice: immutable revisions + exact-content
 -- consent for the PUBLIC audience only. Family, erasure and the mail outbox
 -- are deliberately NOT in this slice; they ship behind separate reviewed
 -- migrations. This file is design evidence, not wired into testd1/deploy.
@@ -50,10 +50,15 @@
 --   the current owner can never exist for them): adopting the view in any
 --   shared read path is a deliberate per-query opt-in at integration,
 --   never a wholesale switch of public queries.
--- * A publish request authorizes exactly ONE transition batch: the per-row
---   guard requires an UNCONSUMED request and the batch's final statement
---   consumes it. A historical request can never bless a later flip after
---   disable + metadata drift.
+-- * The per-row publish guard re-runs the FULL canonical predicate on
+--   EVERY draft->published flip: unconsumed request by the current owner,
+--   current head, current grant, exact locale set both ways, full locale
+--   text, recipe fields, source rights and sealed image manifest, all
+--   NULL-safe. An orphan request committed alone therefore cannot bless a
+--   later flip after metadata drift, and a same-batch
+--   publish-disable-drift-republish fails on the second flip. consumed_at
+--   (set by the transition batch's final statement, consume-only trigger)
+--   is defense in depth on top, never the mechanism of correctness.
 -- * INSERT-path replay is closed on every table: BEFORE-INSERT guards abort
 --   INSERT OR REPLACE / upsert collisions with existing bound or
 --   append-only rows (SQLite fires delete triggers for REPLACE only under
@@ -99,6 +104,18 @@ BEGIN
   SELECT RAISE(ABORT, 'stale or future head: seq must equal current head + 1')
   WHERE NEW.seq <> COALESCE((SELECT MAX(seq) FROM recipe_revisions WHERE recipe_id = NEW.recipe_id), 0) + 1;
   -- nested snapshot structure: required keys and JSON types, recursively
+  -- every recipe key must be PRESENT (json_type is SQL-NULL for a missing
+  -- key, 'null' for a JSON null); text fields may be text or null, numeric
+  -- fields number or null - matching the IFNULL semantics of the drift asserts
+  SELECT RAISE(ABORT, 'snapshot recipe must carry author_name, category, origin_country (text|null) and minute/serving fields (integer|real|null)')
+  WHERE (json_type(NEW.snapshot_json, '$.recipe.author_name') IS NULL OR json_type(NEW.snapshot_json, '$.recipe.author_name') NOT IN ('text', 'null'))
+     OR (json_type(NEW.snapshot_json, '$.recipe.category') IS NULL OR json_type(NEW.snapshot_json, '$.recipe.category') NOT IN ('text', 'null'))
+     OR (json_type(NEW.snapshot_json, '$.recipe.origin_country') IS NULL OR json_type(NEW.snapshot_json, '$.recipe.origin_country') NOT IN ('text', 'null'))
+     OR (json_type(NEW.snapshot_json, '$.recipe.prep_minutes') IS NULL OR json_type(NEW.snapshot_json, '$.recipe.prep_minutes') NOT IN ('integer', 'real', 'null'))
+     OR (json_type(NEW.snapshot_json, '$.recipe.cook_minutes') IS NULL OR json_type(NEW.snapshot_json, '$.recipe.cook_minutes') NOT IN ('integer', 'real', 'null'))
+     OR (json_type(NEW.snapshot_json, '$.recipe.rest_minutes') IS NULL OR json_type(NEW.snapshot_json, '$.recipe.rest_minutes') NOT IN ('integer', 'real', 'null'))
+     OR (json_type(NEW.snapshot_json, '$.recipe.total_minutes') IS NULL OR json_type(NEW.snapshot_json, '$.recipe.total_minutes') NOT IN ('integer', 'real', 'null'))
+     OR (json_type(NEW.snapshot_json, '$.recipe.base_servings') IS NULL OR json_type(NEW.snapshot_json, '$.recipe.base_servings') NOT IN ('integer', 'real', 'null'));
   SELECT RAISE(ABORT, 'snapshot source must carry name, url and license as text')
   WHERE json_type(NEW.snapshot_json, '$.source.name') IS NOT 'text'
      OR json_type(NEW.snapshot_json, '$.source.url') IS NOT 'text'
@@ -106,13 +123,16 @@ BEGIN
   SELECT RAISE(ABORT, 'every snapshot locale must carry title, slug, intro, ingredients_json and steps_json with the right types')
   WHERE EXISTS (
     SELECT 1 FROM json_each(json_extract(NEW.snapshot_json, '$.locales')) k
-    WHERE k.key NOT GLOB '*:*'
+    WHERE k.key NOT GLOB '[a-z][a-z]:[a-z][a-z]'
        OR json_type(k.value) IS NOT 'object'
        OR json_type(k.value, '$.title') IS NOT 'text'
        OR json_type(k.value, '$.slug') IS NOT 'text'
        OR json_type(k.value, '$.ingredients_json') IS NOT 'text'
        OR json_type(k.value, '$.steps_json') IS NOT 'text'
-       OR (json_type(k.value, '$.intro') IS NOT 'text' AND json_type(k.value, '$.intro') IS NOT 'null'));
+       OR (json_type(k.value, '$.intro') IS NOT 'text' AND json_type(k.value, '$.intro') IS NOT 'null')
+       -- the ingredient/step payloads must themselves parse to JSON arrays
+       OR CASE WHEN json_valid(json_extract(k.value, '$.ingredients_json')) THEN json_type(json_extract(k.value, '$.ingredients_json')) IS NOT 'array' ELSE 1 END
+       OR CASE WHEN json_valid(json_extract(k.value, '$.steps_json')) THEN json_type(json_extract(k.value, '$.steps_json')) IS NOT 'array' ELSE 1 END);
   SELECT RAISE(ABORT, 'every snapshot image must carry image_id, role, style and sha256 as text')
   WHERE EXISTS (
     SELECT 1 FROM json_each(json_extract(NEW.snapshot_json, '$.images')) m
@@ -302,10 +322,13 @@ BEGIN
            AND i.sha256 = json_extract(m.value, '$.sha256')));
 END;
 
--- Per-row publish guard: every draft->published flip must trace to a valid
--- publish request on the current head with a fresh exact-tuple grant by the
--- current owner, and the row's content must equal the consented snapshot
--- entry for its locale key. This guards EVERY writer, not just the flow.
+-- Per-row publish guard: EVERY draft->published flip re-runs the full
+-- canonical predicate (unconsumed request by the current owner, current
+-- head, current grant, exact locale set, full locale text, recipe fields,
+-- source rights, sealed image manifest - all NULL-safe). Authorization can
+-- never outlive the exact state it consented to: an orphan request or a
+-- same-batch disable+drift+republish fails here. This guards EVERY writer,
+-- not just the flow.
 CREATE TRIGGER recipe_locales_publish_guard BEFORE UPDATE OF status ON recipe_locales
 WHEN NEW.status = 'published' AND OLD.status <> 'published'
 BEGIN
@@ -314,22 +337,79 @@ BEGIN
     SELECT 1
     FROM publish_requests p
     JOIN recipe_revisions r ON r.id = p.revision_id AND r.recipe_id = p.recipe_id
-    JOIN recipe_consent_events e ON e.recipe_id = p.recipe_id AND e.revision_id = p.revision_id
-      AND e.user_id = (SELECT owner_user_id FROM recipes WHERE id = p.recipe_id) AND e.audience = 'public'
-      AND e.license_version = p.license_version AND e.license_lang = p.license_lang AND e.event = 'grant'
-      AND e.consent_seq = (SELECT MAX(consent_seq) FROM recipe_consent_events x
-        WHERE x.recipe_id = e.recipe_id AND x.revision_id = e.revision_id AND x.user_id = e.user_id
-          AND x.audience = e.audience AND x.license_version = e.license_version AND x.license_lang = e.license_lang)
     WHERE p.recipe_id = NEW.recipe_id
       AND p.consumed_at IS NULL
       AND r.seq = (SELECT MAX(seq) FROM recipe_revisions WHERE recipe_id = NEW.recipe_id)
-      AND EXISTS (SELECT 1 FROM json_each(json_extract(r.snapshot_json, '$.locales')) k
+      -- current grant by the current owner for this exact revision and license
+      AND EXISTS (
+        SELECT 1 FROM recipe_consent_events e
+        WHERE e.recipe_id = p.recipe_id AND e.revision_id = p.revision_id
+          AND e.user_id = (SELECT owner_user_id FROM recipes WHERE id = p.recipe_id)
+          AND e.audience = 'public' AND e.license_version = p.license_version AND e.license_lang = p.license_lang AND e.event = 'grant'
+          AND e.consent_seq = (SELECT MAX(consent_seq) FROM recipe_consent_events x
+            WHERE x.recipe_id = e.recipe_id AND x.revision_id = e.revision_id AND x.user_id = e.user_id
+              AND x.audience = e.audience AND x.license_version = e.license_version AND x.license_lang = e.license_lang))
+      -- this row's locale is in the consented snapshot and text-equal (NULL-safe)
+      AND EXISTS (
+        SELECT 1 FROM json_each(json_extract(r.snapshot_json, '$.locales')) k
         WHERE k.key = NEW.country || ':' || NEW.lang
-          AND json_extract(k.value, '$.title') = NEW.title
-          AND json_extract(k.value, '$.slug') = NEW.slug
-          AND IFNULL(json_extract(k.value, '$.intro'), '') = IFNULL(NEW.intro, '')
-          AND json_extract(k.value, '$.ingredients_json') = NEW.ingredients_json
-          AND json_extract(k.value, '$.steps_json') = NEW.steps_json));
+          AND json_extract(k.value, '$.title') IS NEW.title
+          AND json_extract(k.value, '$.slug') IS NEW.slug
+          AND IFNULL(json_extract(k.value, '$.intro'), '') IS IFNULL(NEW.intro, '')
+          AND json_extract(k.value, '$.ingredients_json') IS NEW.ingredients_json
+          AND json_extract(k.value, '$.steps_json') IS NEW.steps_json)
+      -- exact locale set, both directions
+      AND NOT EXISTS (
+        SELECT 1 FROM recipe_locales l
+        WHERE l.recipe_id = NEW.recipe_id AND l.status <> 'rejected'
+          AND NOT EXISTS (SELECT 1 FROM json_each(json_extract(r.snapshot_json, '$.locales')) k WHERE k.key = l.country || ':' || l.lang))
+      AND NOT EXISTS (
+        SELECT 1 FROM json_each(json_extract(r.snapshot_json, '$.locales')) k
+        WHERE NOT EXISTS (SELECT 1 FROM recipe_locales l WHERE l.recipe_id = NEW.recipe_id AND l.status <> 'rejected' AND l.country || ':' || l.lang = k.key))
+      -- full locale text equality for every consented locale (the row being
+      -- flipped compares its NEW values, every other row its live values)
+      AND NOT EXISTS (
+        SELECT 1 FROM json_each(json_extract(r.snapshot_json, '$.locales')) k
+        JOIN recipe_locales l ON l.recipe_id = NEW.recipe_id AND l.status <> 'rejected' AND l.country || ':' || l.lang = k.key
+        WHERE json_extract(k.value, '$.title') IS NOT CASE WHEN l.country = NEW.country AND l.lang = NEW.lang THEN NEW.title ELSE l.title END
+           OR json_extract(k.value, '$.slug') IS NOT CASE WHEN l.country = NEW.country AND l.lang = NEW.lang THEN NEW.slug ELSE l.slug END
+           OR IFNULL(json_extract(k.value, '$.intro'), '') IS NOT CASE WHEN l.country = NEW.country AND l.lang = NEW.lang THEN IFNULL(NEW.intro, '') ELSE IFNULL(l.intro, '') END
+           OR json_extract(k.value, '$.ingredients_json') IS NOT CASE WHEN l.country = NEW.country AND l.lang = NEW.lang THEN NEW.ingredients_json ELSE l.ingredients_json END
+           OR json_extract(k.value, '$.steps_json') IS NOT CASE WHEN l.country = NEW.country AND l.lang = NEW.lang THEN NEW.steps_json ELSE l.steps_json END)
+      -- recipe fields equal the snapshot (NULL-safe sentinels)
+      AND NOT EXISTS (
+        SELECT 1 FROM recipes o
+        WHERE o.id = NEW.recipe_id AND (
+          IFNULL(o.origin_country, '') <> IFNULL(json_extract(r.snapshot_json, '$.recipe.origin_country'), '')
+          OR IFNULL(o.category, '') <> IFNULL(json_extract(r.snapshot_json, '$.recipe.category'), '')
+          OR IFNULL(o.prep_minutes, -1) <> IFNULL(json_extract(r.snapshot_json, '$.recipe.prep_minutes'), -1)
+          OR IFNULL(o.cook_minutes, -1) <> IFNULL(json_extract(r.snapshot_json, '$.recipe.cook_minutes'), -1)
+          OR IFNULL(o.rest_minutes, -1) <> IFNULL(json_extract(r.snapshot_json, '$.recipe.rest_minutes'), -1)
+          OR IFNULL(o.total_minutes, -1) <> IFNULL(json_extract(r.snapshot_json, '$.recipe.total_minutes'), -1)
+          OR IFNULL(o.base_servings, -1) <> IFNULL(json_extract(r.snapshot_json, '$.recipe.base_servings'), -1)
+          OR IFNULL(o.author_name, '') <> IFNULL(json_extract(r.snapshot_json, '$.recipe.author_name'), '')))
+      -- source rights metadata equals the snapshot
+      AND NOT EXISTS (
+        SELECT 1 FROM sources s JOIN recipes o ON o.source_id = s.id
+        WHERE o.id = NEW.recipe_id AND (
+          s.name IS NOT json_extract(r.snapshot_json, '$.source.name')
+          OR s.url IS NOT json_extract(r.snapshot_json, '$.source.url')
+          OR s.license IS NOT json_extract(r.snapshot_json, '$.source.license')))
+      -- the sealed manifest equals the snapshot image manifest exactly
+      AND (SELECT count(*) FROM recipe_revision_images WHERE revision_id = p.revision_id)
+          = (SELECT count(*) FROM json_each(json_extract(r.snapshot_json, '$.images')))
+      AND NOT EXISTS (
+        SELECT 1 FROM json_each(json_extract(r.snapshot_json, '$.images')) m
+        WHERE NOT EXISTS (
+          SELECT 1 FROM recipe_revision_images i WHERE i.revision_id = p.revision_id
+            AND i.image_id = json_extract(m.value, '$.image_id')
+            AND i.role = json_extract(m.value, '$.role')
+            AND IFNULL(i.step_index, -1) = IFNULL(json_extract(m.value, '$.step_index'), -1)
+            AND i.style = json_extract(m.value, '$.style')
+            AND i.source_name = json_extract(m.value, '$.source_name')
+            AND i.source_url = json_extract(m.value, '$.source_url')
+            AND i.license = json_extract(m.value, '$.license')
+            AND i.sha256 = json_extract(m.value, '$.sha256'))));
 END;
 
 -- Published content is immutable: a status='published' row's text can never
