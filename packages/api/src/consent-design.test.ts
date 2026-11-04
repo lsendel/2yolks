@@ -309,7 +309,7 @@ describe('publish: atomic, content-bound, owner-bound', () => {
     expect(await tryPublish('rev-a', USER, 'public-license-v2', 'en')).toBe(false);
     expect(await statusOf()).toBe('draft');
   });
-  it('publication is admin-gated: any authenticated actor can publish WITH the owner grant', async () => {
+  it('publication stays admin-authorized: an admin-side actor identity publishes WITH the owner grant (actor RBAC itself is an out-of-schema module-I gate)', async () => {
     sqlite.exec(`INSERT INTO users (id, email, created_at) VALUES ('admin-1', 'admin@example.com', '2026-01-01')`);
     expect(await saveEdit('rev-a', 0, snap1('Soup'))).toBe(true);
     expect(await consentEvent('ce-1', 'rev-a', 0, 'grant')).toBe(true);

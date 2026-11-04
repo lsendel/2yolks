@@ -245,6 +245,12 @@ BEGIN
   WHERE EXISTS (SELECT 1 FROM publish_requests x WHERE x.id = NEW.id);
 END;
 
+-- ACTOR SCOPE: requested_by is an AUDIT identity only. This schema proves
+-- content/owner/grant binding; it does NOT establish who may operate the
+-- publish flow. Publication is an admin-authorized operation - actor
+-- authentication and RBAC (viewer/editor/admin) are enforced outside this
+-- slice and remain an explicit module-I launch gate. Nothing here grants
+-- any regular authenticated user a publish capability.
 CREATE TRIGGER publish_assert BEFORE INSERT ON publish_requests
 BEGIN
   SELECT RAISE(ABORT, 'ownerless catalog recipes publish through the admin flow (module I), not this slice')
