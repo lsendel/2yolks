@@ -7,8 +7,8 @@ import type { Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import { eq, and, ne, desc } from 'drizzle-orm';
-import { LOCALES, getCountry, localizedCountryName, slugify, validateRecipeSubmission, RECIPE_CATEGORY_SLUGS, categoryLabel, isRecipeCategorySlug } from '@2yolks/contracts';
-import { renderAccountPage, escapeHtml as esc, CAPTURE_CLIENT_SCRIPT } from '@2yolks/web/server';
+import { LOCALES, getCountry, localizedCountryName, slugify, validateRecipeSubmission, RECIPE_CATEGORY_SLUGS, categoryLabel, isRecipeCategorySlug, CATEGORIES } from '@2yolks/contracts';
+import { renderAccountPage, escapeHtml as esc, CAPTURE_CLIENT_SCRIPT, CAPTURE_CHECK_STRINGS } from '@2yolks/web/server';
 import { createDb, recipes, recipeLocales, sources, users } from './db';
 import { sendMail, type MailEnv } from './email';
 import { parseRecipeText, parseJsonLdRecipe, type ParsedRecipe } from './parse';
@@ -253,9 +253,34 @@ function localeOptions(selected: string): string {
   })).join('');
 }
 
-function categoryOptions(selected: string): string {
-  const opts = RECIPE_CATEGORY_SLUGS.map((cat) => `<option value="${cat}"${cat === selected ? ' selected' : ''}>${esc(categoryLabel(cat, 'en') ?? cat)}</option>`).join('');
-  return `<option value=""${selected === '' ? ' selected' : ''}>Not sure yet</option>${opts}`;
+// Capture-form chrome follows the recipe's language (the form's locale
+// select): category labels, prompt and live checks re-localize when the cook
+// switches language. The rest of the account UI is English-only today
+// (pre-existing gap, separate decision).
+const FORM_STRINGS: Record<string, { prompt: string; unsure: string; preamble: string; preambleHint: string }> = {
+  en: { prompt: 'What kind of dish is it?', unsure: 'Not sure yet', preamble: 'A sentence or two before the recipe', preambleHint: '(optional - the story or context a cook reads first)' },
+  es: { prompt: '¿Qué tipo de plato es?', unsure: 'Aún no lo sé', preamble: 'Una o dos frases antes de la receta', preambleHint: '(opcional - la historia o el contexto que se lee primero)' },
+  fr: { prompt: 'Quel type de plat est-ce ?', unsure: 'Pas encore sûr', preamble: 'Une phrase ou deux avant la recette', preambleHint: "(facultatif - l'histoire ou le contexte à lire en premier)" },
+};
+const formLang = (s: FormState): string => (FORM_STRINGS[s.locale.split(':')[1] ?? ''] ? s.locale.split(':')[1]! : 'en');
+
+function categoryOptions(selected: string, lang: string): string {
+  const t = FORM_STRINGS[lang]!;
+  const opts = RECIPE_CATEGORY_SLUGS.map((cat) => `<option value="${cat}"${cat === selected ? ' selected' : ''}>${esc(categoryLabel(cat, lang) ?? cat)}</option>`).join('');
+  return `<option value=""${selected === '' ? ' selected' : ''}>${esc(t.unsure)}</option>${opts}`;
+}
+
+/** JSON data islands for the live-check script: check strings + category
+ * labels in every supported UI language (re-localization on language switch
+ * without a reload). */
+function captureDataIslands(): string {
+  const catLabels: Record<string, Record<string, string>> = {};
+  for (const lang of Object.keys(FORM_STRINGS)) {
+    catLabels[lang] = { __prompt: FORM_STRINGS[lang]!.prompt };
+    for (const cat of RECIPE_CATEGORY_SLUGS) catLabels[lang]![cat] = categoryLabel(cat, lang) ?? cat;
+  }
+  const json = (v: unknown) => JSON.stringify(v).replace(/</g, '\\u003c');
+  return `<script type="application/json" id="capture-check-strings">${json(JSON.parse(CAPTURE_CHECK_STRINGS))}</script><script type="application/json" id="capture-cat-labels">${json(catLabels)}</script>`;
 }
 
 function renderForm(s: FormState, errors: string[] = [], note = '', importOn = false): string {
@@ -263,12 +288,14 @@ function renderForm(s: FormState, errors: string[] = [], note = '', importOn = f
   const entry = s.id ? '' : `<div class="panel"><h2>Start faster</h2>
 <form method="post" action="/account/recipes/paste"><label>Paste a recipe<small>Plain text with a title line, then "Ingredients" and "Instructions". You review everything before saving.</small><textarea name="text" maxlength="60000"></textarea></label><button class="quiet" type="submit">Fill the form from this text</button></form>
 ${importOn ? `<form method="post" action="/account/recipes/import"><label>Or import from a link<small>Only your own recipe, or one you have permission to share. We read the page's recipe data and nothing else.</small><input type="url" name="url" maxlength="2000" placeholder="https://"></label><button class="quiet" type="submit">Fill the form from this link</button></form>` : `<p class="hint"><strong>Import from a link</strong> is not available yet. Paste the recipe text above instead.</p>`}</div>`;
+  const lang = formLang(s);
+  const ft = FORM_STRINGS[lang]!;
   return `<h1>${s.id ? 'Edit your draft' : 'Add a recipe'}</h1><p class="lead">Drafts are private to you until you send one in and we review it.</p>${note}${errBox}${entry}
 <form method="post" action="/account/recipes/save">${s.id ? `<input type="hidden" name="id" value="${esc(s.id)}">` : ''}
-<label>What kind of dish is it?<select name="category">${categoryOptions(s.category)}</select></label>
+<label><span data-category-prompt>${esc(ft.prompt)}</span><select name="category">${categoryOptions(s.category, lang)}</select></label>
 <label>Recipe name<input type="text" name="title" value="${esc(s.title)}" maxlength="200" required></label>
 <label>Language<select name="locale">${localeOptions(s.locale)}</select></label>
-<label>A sentence or two before the recipe <small>(optional - the story or context a cook reads first)</small><textarea name="intro" maxlength="2000" style="min-height:4rem">${esc(s.intro)}</textarea></label>
+<label>${esc(ft.preamble)} <small>${esc(ft.preambleHint)}</small><textarea name="intro" maxlength="2000" style="min-height:4rem">${esc(s.intro)}</textarea></label>
 <label>Ingredients<small>One per line, for example "2 cups flour".</small><textarea name="ingredients" required>${esc(s.ingredients)}</textarea></label>
 <label>Steps<small>One step per line.</small><textarea name="steps" required>${esc(s.steps)}</textarea></label>
 <div class="row"><label>Prep minutes<input type="number" name="prep" min="0" max="20000" value="${esc(s.prep)}"></label><label>Cook minutes<input type="number" name="cook" min="0" max="20000" value="${esc(s.cook)}"></label></div>
@@ -278,7 +305,7 @@ ${importOn ? `<form method="post" action="/account/recipes/import"><label>Or imp
 <label>Link to the original <small>(required if adapted or shared with permission)</small><input type="url" name="source_url" value="${esc(s.sourceUrl)}" maxlength="2000" placeholder="https://"></label>
 <label class="check"><input type="checkbox" name="attest" value="1"${s.attest ? ' checked' : ''}><span>I wrote this recipe or have the right to share it. I let 2yolks publish it with credit to the name above, and I understand 2yolks reviews every recipe before it goes live and may decline or edit it.</span></label>
 <ul class="live-checks" data-live-checks><li data-check="title"></li><li data-check="ingredients"></li><li data-check="qty"></li><li data-check="cups"></li><li data-check="steps"></li><li data-check="servings"></li><li data-check="source"></li></ul>
-<button type="submit">Save private draft</button></form><script>${CAPTURE_CLIENT_SCRIPT}</script>`;
+<button type="submit">Save private draft</button></form>${captureDataIslands()}<script>${CAPTURE_CLIENT_SCRIPT}</script>`;
 }
 
 export function parseForm(form: Record<string, unknown>, user: { displayName: string | null }): FormState {

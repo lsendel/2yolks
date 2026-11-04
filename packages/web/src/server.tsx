@@ -32,7 +32,7 @@ import {
   type SiteNavItem,
   type RecipeRow,
 } from './App';
-import { RECIPE_CLIENT_SCRIPT, DISCOVERY_CLIENT_SCRIPT, CAPTURE_CLIENT_SCRIPT } from './clientScript';
+import { RECIPE_CLIENT_SCRIPT, DISCOVERY_CLIENT_SCRIPT, CAPTURE_CLIENT_SCRIPT, CAPTURE_CHECK_STRINGS } from './clientScript';
 import type { RecipePage, IngredientEntry } from '@2yolks/contracts';
 import { uiStrings, renderIngredient, renderStep, defaultUnitSystem, COUNTRY_INTROS, defaultLocale, categoryLabel, recipePathFor } from '@2yolks/contracts';
 
@@ -561,6 +561,7 @@ const ACCOUNT_CSS = `
 .acct button.quiet { background: var(--card); color: var(--ink); border: 1px solid var(--line); }
 .acct .live-checks { list-style: none; padding: 0; margin: 0 0 1rem; font-size: 0.85rem; }
 .acct .live-checks li { padding: 0.15rem 0; }
+.acct .live-checks li.idle { color: #9b8fa3; }
 .acct .live-checks li.ok { color: #3f7a3f; }
 .acct .live-checks li.todo { color: #8a6d3b; }
 .acct .panel { border: 1px solid var(--line); background: var(--card); border-radius: 0.9rem; padding: 1rem 1.1rem; margin: 0 0 1.25rem; }
@@ -578,4 +579,4 @@ export function renderAccountPage(title: string, bodyHtml: string): string {
   return shell(`<style>${ACCOUNT_CSS}</style><main id="main" class="acct">${bodyHtml}</main>`, { title: `${title} - 2yolks`, noindex: true });
 }
 
-export { CAPTURE_CLIENT_SCRIPT };
+export { CAPTURE_CLIENT_SCRIPT, CAPTURE_CHECK_STRINGS };

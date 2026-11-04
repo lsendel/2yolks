@@ -237,35 +237,71 @@ export const RECIPE_CLIENT_SCRIPT = `(function () {
 /**
  * Live quality checks on the capture form: gentle, non-blocking hints while
  * the cook types. Nothing here gates saving - the server still validates.
+ * Strings are localized en/es/fr and follow the form's language select;
+ * checks start in a neutral "not yet checked" state until the cook has typed
+ * something - an untouched field is never a green pass.
+ *
+ * The emitted function takes a template-literal-safe approach: every regex
+ * backslash is double-escaped so the TS template does not eat it.
  */
+export const CAPTURE_CHECK_STRINGS = `{"en":{"title":"Give the recipe a name","ingredients":"List the ingredients, one per line","qty_ok":"Every ingredient line starts with an amount","cups_ok":"No ambiguous cup measures","qty_todo":"## ingredient line(s) do not start with an amount - cooks need quantities","cups_todo":"You use \\"cup\\" - cups vary by country, so consider grams or ml too","steps":"Write the steps, one per line","servings_ok":"Servings (optional) should be a number","servings_bad":"Servings should be a number","source_ok":"Source noted","source_todo":"Add the https:// link to the original","optional":"optional"},"es":{"title":"Ponle un nombre a la receta","ingredients":"Anota los ingredientes, uno por línea","qty_ok":"Cada línea de ingrediente empieza con una cantidad","cups_ok":"Sin medidas ambiguas en tazas","qty_todo":"## línea(s) de ingredientes no empiezan con cantidad - hacen falta cantidades","cups_todo":"Usas \\"taza\\" - las tazas varían por país, considera también gramos o ml","steps":"Escribe los pasos, uno por línea","servings_ok":"Las porciones (opcional) deben ser un número","servings_bad":"Las porciones deben ser un número","source_ok":"Fuente anotada","source_todo":"Agrega el enlace https:// al original","optional":"opcional"},"fr":{"title":"Donnez un nom à la recette","ingredients":"Listez les ingrédients, un par ligne","qty_ok":"Chaque ligne d'ingrédient commence par une quantité","cups_ok":"Pas de mesures ambiguës en tasses","qty_todo":"## ligne(s) d'ingrédients ne commencent pas par une quantité - il faut des quantités","cups_todo":"Vous utilisez \\"tasse\\" - les tasses varient selon les pays, pensez aussi aux grammes ou ml","steps":"Écrivez les étapes, une par ligne","servings_ok":"Les portions (facultatif) doivent être un nombre","servings_bad":"Les portions doivent être un nombre","source_ok":"Source notée","source_todo":"Ajoutez le lien https:// vers l'original","optional":"facultatif"}}`;
+
 export const CAPTURE_CLIENT_SCRIPT = `(function () {
   var form = document.querySelector('form[action="/account/recipes/save"]');
   if (!form) return;
   var box = document.querySelector('[data-live-checks]');
   if (!box) return;
+  var ALL = JSON.parse(document.getElementById('capture-check-strings').textContent);
+  var CATLABELS = JSON.parse(document.getElementById('capture-cat-labels').textContent);
+  function lang() {
+    var v = (form.querySelector('[name="locale"]').value || 'us:en').split(':')[1];
+    return ALL[v] ? v : 'en';
+  }
   function field(name) { return form.querySelector('[name="' + name + '"]'); }
   function lines(v) { return v.split(/\\r?\\n/).map(function (l) { return l.trim(); }).filter(Boolean); }
-  function set(key, ok, text) {
+  function set(key, state, text) {
     var li = box.querySelector('[data-check="' + key + '"]');
     if (!li) return;
-    li.textContent = (ok ? '\u2713 ' : '\u2022 ') + text;
-    li.className = ok ? 'ok' : 'todo';
+    var mark = state === 'ok' ? '\\u2713 ' : state === 'todo' ? '\\u2022 ' : '\\u2013 ';
+    li.textContent = mark + text;
+    li.className = state;
+  }
+  function localizeChrome() {
+    var catSel = form.querySelector('[name="category"]');
+    var labels = CATLABELS[lang()] || CATLABELS.en;
+    Array.prototype.slice.call(catSel.options).forEach(function (o) {
+      if (o.value && labels[o.value]) o.textContent = labels[o.value];
+    });
+    var prompt = document.querySelector('[data-category-prompt]');
+    if (prompt) prompt.textContent = labels.__prompt;
   }
   function run() {
+    var T = ALL[lang()];
+    localizeChrome();
     var title = (field('title').value || '').trim();
-    set('title', title.length >= 3, 'Give the recipe a name');
+    set('title', title.length >= 3 ? 'ok' : title.length ? 'todo' : 'idle', T.title);
     var ings = lines(field('ingredients').value || '');
-    set('ingredients', ings.length > 0, 'List the ingredients, one per line');
-    var noQty = ings.filter(function (l) { return !/\\d/.test(l); }).length;
-    set('qty', ings.length === 0 || noQty === 0, noQty ? noQty + ' ingredient line(s) have no amount - cooks need quantities' : 'Every ingredient has an amount');
-    var cups = ings.filter(function (l) { return /\\bcups?\\b/i.test(l); }).length;
-    set('cups', cups === 0, cups ? 'You use "cup" - cups vary by country, so consider grams or ml too' : 'No ambiguous cup measures');
-    set('steps', lines(field('steps').value || '').length > 0, 'Write the steps, one per line');
+    set('ingredients', ings.length > 0 ? 'ok' : 'idle', T.ingredients);
+    if (ings.length === 0) {
+      set('qty', 'idle', T.qty_ok);
+      set('cups', 'idle', T.cups_ok);
+    } else {
+      // Leading amount only: a digit or unicode fraction at the START of the
+      // line. 'stock for 2 people' does not count; '½ onion' does.
+      var noQty = ings.filter(function (l) { return !/^[0-9\\u00BC-\\u00BE\\u2150-\\u215E]/.test(l); }).length;
+      set('qty', noQty === 0 ? 'ok' : 'todo', noQty === 0 ? T.qty_ok : T.qty_todo.replace('##', String(noQty)));
+      var cups = ings.filter(function (l) { return /\\b(cups?|tazas?|tasses?)\\b/i.test(l); }).length;
+      set('cups', cups === 0 ? 'ok' : 'todo', cups === 0 ? T.cups_ok : T.cups_todo);
+    }
+    var steps = lines(field('steps').value || '');
+    set('steps', steps.length > 0 ? 'ok' : 'idle', T.steps);
     var sv = (field('servings').value || '').trim();
-    set('servings', sv === '' || Number(sv) > 0, 'Servings (optional) should be a number');
+    set('servings', sv === '' ? 'idle' : Number(sv) > 0 ? 'ok' : 'todo', sv === '' ? T.servings_ok : Number(sv) > 0 ? T.servings_ok : T.servings_bad);
     var adapted = field('source_kind').value === 'adapted';
     var url = (field('source_url').value || '').trim();
-    set('source', !adapted || /^https:\\/\\//.test(url), adapted ? 'Add the https:// link to the original' : 'Source noted');
+    var urlOk = false;
+    if (url) { try { var u = new URL(url); urlOk = u.protocol === 'https:' && u.hostname.indexOf('.') > 0; } catch (e) { urlOk = false; } }
+    set('source', !adapted ? 'ok' : urlOk ? 'ok' : url ? 'todo' : 'idle', !adapted ? T.source_ok : T.source_todo);
   }
   form.addEventListener('input', run);
   form.addEventListener('change', run);
