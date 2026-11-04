@@ -7,8 +7,8 @@ import type { Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import { eq, and, ne, desc } from 'drizzle-orm';
-import { LOCALES, getCountry, localizedCountryName, slugify, validateRecipeSubmission } from '@2yolks/contracts';
-import { renderAccountPage, escapeHtml as esc } from '@2yolks/web/server';
+import { LOCALES, getCountry, localizedCountryName, slugify, validateRecipeSubmission, RECIPE_CATEGORY_SLUGS, categoryLabel, isRecipeCategorySlug } from '@2yolks/contracts';
+import { renderAccountPage, escapeHtml as esc, CAPTURE_CLIENT_SCRIPT } from '@2yolks/web/server';
 import { createDb, recipes, recipeLocales, sources, users } from './db';
 import { sendMail, type MailEnv } from './email';
 import { parseRecipeText, parseJsonLdRecipe, type ParsedRecipe } from './parse';
@@ -232,13 +232,13 @@ accountApp.use('/recipes/*', async (c, next) => {
 // --- Draft form --------------------------------------------------------------
 
 export type FormState = {
-  id?: string; title: string; intro: string; ingredients: string; steps: string; locale: string;
+  id?: string; title: string; intro: string; ingredients: string; steps: string; locale: string; category: string;
   prep: string; cook: string; servings: string; displayName: string; sourceKind: 'original' | 'adapted'; sourceUrl: string;
   attest: boolean;
 };
 const LANG_NAMES: Record<string, string> = { en: 'English', es: 'Español', fr: 'Français' };
 const blank = (user: { displayName: string | null }): FormState => ({
-  title: '', intro: '', ingredients: '', steps: '', locale: 'us:en', prep: '', cook: '', servings: '',
+  title: '', intro: '', ingredients: '', steps: '', locale: 'us:en', category: '', prep: '', cook: '', servings: '',
   displayName: user.displayName ?? '', sourceKind: 'original', sourceUrl: '', attest: false,
 });
 const fromParsed = (base: FormState, p: ParsedRecipe): FormState => ({
@@ -253,6 +253,11 @@ function localeOptions(selected: string): string {
   })).join('');
 }
 
+function categoryOptions(selected: string): string {
+  const opts = RECIPE_CATEGORY_SLUGS.map((cat) => `<option value="${cat}"${cat === selected ? ' selected' : ''}>${esc(categoryLabel(cat, 'en') ?? cat)}</option>`).join('');
+  return `<option value=""${selected === '' ? ' selected' : ''}>Not sure yet</option>${opts}`;
+}
+
 function renderForm(s: FormState, errors: string[] = [], note = '', importOn = false): string {
   const errBox = errors.length ? banner('err', `<strong>Fix these first:</strong><ul>${errors.map((e) => `<li>${esc(e)}</li>`).join('')}</ul>`) : '';
   const entry = s.id ? '' : `<div class="panel"><h2>Start faster</h2>
@@ -260,9 +265,10 @@ function renderForm(s: FormState, errors: string[] = [], note = '', importOn = f
 ${importOn ? `<form method="post" action="/account/recipes/import"><label>Or import from a link<small>Only your own recipe, or one you have permission to share. We read the page's recipe data and nothing else.</small><input type="url" name="url" maxlength="2000" placeholder="https://"></label><button class="quiet" type="submit">Fill the form from this link</button></form>` : `<p class="hint"><strong>Import from a link</strong> is not available yet. Paste the recipe text above instead.</p>`}</div>`;
   return `<h1>${s.id ? 'Edit your draft' : 'Add a recipe'}</h1><p class="lead">Drafts are private to you until you send one in and we review it.</p>${note}${errBox}${entry}
 <form method="post" action="/account/recipes/save">${s.id ? `<input type="hidden" name="id" value="${esc(s.id)}">` : ''}
+<label>What kind of dish is it?<select name="category">${categoryOptions(s.category)}</select></label>
 <label>Recipe name<input type="text" name="title" value="${esc(s.title)}" maxlength="200" required></label>
 <label>Language<select name="locale">${localeOptions(s.locale)}</select></label>
-<label>Short intro <small>(optional)</small><textarea name="intro" maxlength="2000" style="min-height:4rem">${esc(s.intro)}</textarea></label>
+<label>A sentence or two before the recipe <small>(optional - the story or context a cook reads first)</small><textarea name="intro" maxlength="2000" style="min-height:4rem">${esc(s.intro)}</textarea></label>
 <label>Ingredients<small>One per line, for example "2 cups flour".</small><textarea name="ingredients" required>${esc(s.ingredients)}</textarea></label>
 <label>Steps<small>One step per line.</small><textarea name="steps" required>${esc(s.steps)}</textarea></label>
 <div class="row"><label>Prep minutes<input type="number" name="prep" min="0" max="20000" value="${esc(s.prep)}"></label><label>Cook minutes<input type="number" name="cook" min="0" max="20000" value="${esc(s.cook)}"></label></div>
@@ -271,7 +277,8 @@ ${importOn ? `<form method="post" action="/account/recipes/import"><label>Or imp
 <label>Where is this recipe from?<select name="source_kind"><option value="original"${s.sourceKind === 'original' ? ' selected' : ''}>I wrote it (my own recipe)</option><option value="adapted"${s.sourceKind === 'adapted' ? ' selected' : ''}>Adapted from, or shared with permission</option></select></label>
 <label>Link to the original <small>(required if adapted or shared with permission)</small><input type="url" name="source_url" value="${esc(s.sourceUrl)}" maxlength="2000" placeholder="https://"></label>
 <label class="check"><input type="checkbox" name="attest" value="1"${s.attest ? ' checked' : ''}><span>I wrote this recipe or have the right to share it. I let 2yolks publish it with credit to the name above, and I understand 2yolks reviews every recipe before it goes live and may decline or edit it.</span></label>
-<button type="submit">Save private draft</button></form>`;
+<ul class="live-checks" data-live-checks><li data-check="title"></li><li data-check="ingredients"></li><li data-check="qty"></li><li data-check="cups"></li><li data-check="steps"></li><li data-check="servings"></li><li data-check="source"></li></ul>
+<button type="submit">Save private draft</button></form><script>${CAPTURE_CLIENT_SCRIPT}</script>`;
 }
 
 export function parseForm(form: Record<string, unknown>, user: { displayName: string | null }): FormState {
@@ -282,7 +289,9 @@ export function parseForm(form: Record<string, unknown>, user: { displayName: st
     id: /^[a-z0-9]{6,12}$/.test(str(form['id'], 14)) ? str(form['id'], 14) : undefined,
     title: str(form['title'], 200).trim(), intro: str(form['intro'], 2000).trim(),
     ingredients: str(form['ingredients'], 60000), steps: str(form['steps'], 60000),
-    locale: loc.includes(':') ? loc : b.locale, prep: str(form['prep'], 8).trim(), cook: str(form['cook'], 8).trim(), servings: str(form['servings'], 8).trim(),
+    locale: loc.includes(':') ? loc : b.locale,
+    category: isRecipeCategorySlug(str(form['category'], 40)) ? str(form['category'], 40) : '',
+    prep: str(form['prep'], 8).trim(), cook: str(form['cook'], 8).trim(), servings: str(form['servings'], 8).trim(),
     displayName: str(form['display_name'], 80).trim(), sourceKind: sk, sourceUrl: str(form['source_url'], 2000).trim(),
     attest: str(form['attest'], 2) === '1',
   };
@@ -303,6 +312,7 @@ export function buildSubmission(s: FormState, origin: string) {
     originCountry: country,
     locales: [{ country, lang, title: s.title, ...(s.intro ? { intro: s.intro } : {}), ingredients: lines(s.ingredients), steps: lines(s.steps) }],
   };
+  if (s.category) body['category'] = s.category;
   const times: Record<string, number | undefined> = { prepMinutes: num(s.prep), cookMinutes: num(s.cook), baseServings: num(s.servings) };
   for (const [k, v] of Object.entries(times)) if (v !== undefined) body[k] = v;
   return body;
@@ -355,6 +365,7 @@ accountApp.get('/recipes/:id/edit', async (c) => {
   const s: FormState = {
     id: row.r.id, title: row.l.title, intro: row.l.intro ?? '', ingredients: ing, steps: (JSON.parse(row.l.stepsJson) as string[]).join('\n'),
     locale: `${row.l.country}:${row.l.lang}`, prep: row.r.prepMinutes?.toString() ?? '', cook: row.r.cookMinutes?.toString() ?? '', servings: row.r.baseServings?.toString() ?? '',
+    category: row.r.category ?? '',
     displayName: row.r.authorName ?? user.displayName ?? '', sourceKind: row.s.license === 'user-adapted' ? 'adapted' : 'original', sourceUrl: row.s.license === 'user-adapted' ? row.s.url : '',
     attest: !!row.r.attestedAt,
   };
@@ -405,7 +416,7 @@ accountApp.post('/recipes/save', async (c) => {
     const res = await D.batch([
       D.prepare(`UPDATE sources SET name = ?, url = ?, license = ? WHERE id = (SELECT source_id FROM recipes WHERE id = ?) AND ${open}`).bind(sub.source.name, sub.source.url, sub.source.license, id, ...guard),
       D.prepare(`UPDATE recipe_locales SET country = ?, lang = ?, title = ?, slug = ?, intro = ?, ingredients_json = ?, steps_json = ? WHERE recipe_id = ? AND ${open}`).bind(loc.country, loc.lang, loc.title, slug, loc.intro ?? null, ing, stp, id, ...guard),
-      D.prepare(`UPDATE recipes SET origin_country = ?, prep_minutes = ?, cook_minutes = ?, base_servings = ?, attested_at = ?, author_name = ? WHERE id = ? AND owner_user_id = ? AND submitted_at IS NULL`).bind(sub.originCountry ?? null, prep, cook, serv, s.attest ? now : null, s.displayName, id, user.id),
+      D.prepare(`UPDATE recipes SET origin_country = ?, prep_minutes = ?, cook_minutes = ?, base_servings = ?, attested_at = ?, author_name = ?, category = ? WHERE id = ? AND owner_user_id = ? AND submitted_at IS NULL`).bind(sub.originCountry ?? null, prep, cook, serv, s.attest ? now : null, s.displayName, s.category || null, id, user.id),
       D.prepare('UPDATE users SET display_name = ? WHERE id = ?').bind(s.displayName, user.id),
     ]);
     if (res[1]!.meta.changes !== 1) return page(c, 'Submitted', banner('err', 'This recipe was already sent in for review, so your changes were not saved.'), 409);
@@ -416,7 +427,7 @@ accountApp.post('/recipes/save', async (c) => {
     const room = "(SELECT count(*) FROM recipes r JOIN recipe_locales l ON l.recipe_id = r.id WHERE r.owner_user_id = ? AND l.status <> 'rejected') < ? AND (SELECT count(*) FROM recipes WHERE owner_user_id = ?) < ?";
     const res = await D.batch([
       D.prepare(`INSERT INTO sources (id,name,url,license,cleared_at,notes) SELECT ?,?,?,?,NULL,? WHERE ${room}`).bind(sourceId, sub.source.name, sub.source.url, sub.source.license, 'user submission - rights review pending', user.id, MAX_DRAFTS_PER_USER, user.id, MAX_ROWS_PER_USER),
-      D.prepare(`INSERT INTO recipes (id,source_id,origin_country,image_key,created_at,prep_minutes,cook_minutes,base_servings,owner_user_id,attested_at,author_name) SELECT ?,?,?,NULL,?,?,?,?,?,?,? WHERE ${room}`).bind(id, sourceId, sub.originCountry ?? null, now, prep, cook, serv, user.id, s.attest ? now : null, s.displayName, user.id, MAX_DRAFTS_PER_USER, user.id, MAX_ROWS_PER_USER),
+      D.prepare(`INSERT INTO recipes (id,source_id,origin_country,image_key,created_at,prep_minutes,cook_minutes,base_servings,owner_user_id,attested_at,author_name,category) SELECT ?,?,?,NULL,?,?,?,?,?,?,?,? WHERE ${room}`).bind(id, sourceId, sub.originCountry ?? null, now, prep, cook, serv, user.id, s.attest ? now : null, s.displayName, s.category || null, user.id, MAX_DRAFTS_PER_USER, user.id, MAX_ROWS_PER_USER),
       D.prepare("INSERT INTO recipe_locales (recipe_id,country,lang,title,slug,intro,ingredients_json,steps_json,status) SELECT ?,?,?,?,?,?,?,?,'draft' WHERE EXISTS (SELECT 1 FROM recipes WHERE id = ?)").bind(id, loc.country, loc.lang, loc.title, slug, loc.intro ?? null, ing, stp, id),
       D.prepare('UPDATE users SET display_name = ? WHERE id = ?').bind(s.displayName, user.id),
     ]);

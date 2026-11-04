@@ -49,6 +49,40 @@ beforeEach(() => {
   }) as typeof fetch;
 });
 
+describe('capture form (category-first + live checks)', () => {
+  it('renders the category select before the title field with the bounded slugs', async () => {
+    const cookie = await signIn();
+    const res = await get('/account/recipes/new', cookie);
+    const html = await res.text();
+    const catIdx = html.indexOf('name="category"');
+    const titleIdx = html.indexOf('name="title"');
+    expect(catIdx).toBeGreaterThan(-1);
+    expect(titleIdx).toBeGreaterThan(catIdx);
+    expect(html).toContain('soups-stews');
+    expect(html).toContain('data-live-checks');
+    expect(html).toContain('A sentence or two before the recipe');
+  });
+  it('saves a valid category on the recipe and rejects an unknown one to uncategorized', async () => {
+    const cookie = await signIn();
+    const res = await post('/account/recipes/save', recipeForm({ category: 'soups-stews' }), { cookie });
+    expect(res.status).toBe(303);
+    const row = await DB.prepare('SELECT category FROM recipes').first<{ category: string }>();
+    expect(row!.category).toBe('soups-stews');
+    const res2 = await post('/account/recipes/save', recipeForm({ title: 'Other Dish', category: 'not-a-real-slug' }), { cookie });
+    expect(res2.status).toBe(303);
+    const rows = await DB.prepare('SELECT category FROM recipes ORDER BY created_at').all<{ category: string | null }>();
+    expect(rows.results[1]!.category).toBeNull();
+  });
+  it('prefills the category when editing a draft', async () => {
+    const cookie = await signIn();
+    await post('/account/recipes/save', recipeForm({ category: 'dumplings' }), { cookie });
+    const { id } = (await DB.prepare('SELECT id FROM recipes').first<{ id: string }>())!;
+    const res = await get(`/account/recipes/${id}/edit`, cookie);
+    const html = await res.text();
+    expect(html).toContain('<option value="dumplings" selected>');
+  });
+});
+
 describe('email-code auth', () => {
   it('signs in with the emailed code, stores only hashes, and signs out', async () => {
     const cookie = await signIn();

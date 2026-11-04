@@ -32,7 +32,7 @@ import {
   type SiteNavItem,
   type RecipeRow,
 } from './App';
-import { RECIPE_CLIENT_SCRIPT, DISCOVERY_CLIENT_SCRIPT } from './clientScript';
+import { RECIPE_CLIENT_SCRIPT, DISCOVERY_CLIENT_SCRIPT, CAPTURE_CLIENT_SCRIPT } from './clientScript';
 import type { RecipePage, IngredientEntry } from '@2yolks/contracts';
 import { uiStrings, renderIngredient, renderStep, defaultUnitSystem, COUNTRY_INTROS, defaultLocale, categoryLabel, recipePathFor } from '@2yolks/contracts';
 
@@ -573,3 +573,5 @@ const ACCOUNT_CSS = `
 export function renderAccountPage(title: string, bodyHtml: string): string {
   return shell(`<style>${ACCOUNT_CSS}</style><main id="main" class="acct">${bodyHtml}</main>`, { title: `${title} - 2yolks`, noindex: true });
 }
+
+export { CAPTURE_CLIENT_SCRIPT };
