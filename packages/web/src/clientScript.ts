@@ -247,14 +247,16 @@ export const RECIPE_CLIENT_SCRIPT = `(function () {
 export const CAPTURE_CHECK_STRINGS = `{"en":{"title":"Give the recipe a name","ingredients":"List the ingredients, one per line","qty_ok":"Every ingredient line starts with an amount","cups_ok":"No ambiguous cup measures","qty_todo":"## ingredient line(s) do not start with an amount - cooks need quantities","cups_todo":"You use \\"cup\\" - cups vary by country, so consider grams or ml too","steps":"Write the steps, one per line","servings_ok":"Servings (optional) should be a number","servings_bad":"Servings should be a number","source_ok":"Source noted","source_todo":"Add the https:// link to the original","optional":"optional"},"es":{"title":"Ponle un nombre a la receta","ingredients":"Anota los ingredientes, uno por línea","qty_ok":"Cada línea de ingrediente empieza con una cantidad","cups_ok":"Sin medidas ambiguas en tazas","qty_todo":"## línea(s) de ingredientes no empiezan con cantidad - hacen falta cantidades","cups_todo":"Usas \\"taza\\" - las tazas varían por país, considera también gramos o ml","steps":"Escribe los pasos, uno por línea","servings_ok":"Las porciones (opcional) deben ser un número","servings_bad":"Las porciones deben ser un número","source_ok":"Fuente anotada","source_todo":"Agrega el enlace https:// al original","optional":"opcional"},"fr":{"title":"Donnez un nom à la recette","ingredients":"Listez les ingrédients, un par ligne","qty_ok":"Chaque ligne d'ingrédient commence par une quantité","cups_ok":"Pas de mesures ambiguës en tasses","qty_todo":"## ligne(s) d'ingrédients ne commencent pas par une quantité - il faut des quantités","cups_todo":"Vous utilisez \\"tasse\\" - les tasses varient selon les pays, pensez aussi aux grammes ou ml","steps":"Écrivez les étapes, une par ligne","servings_ok":"Les portions (facultatif) doivent être un nombre","servings_bad":"Les portions doivent être un nombre","source_ok":"Source notée","source_todo":"Ajoutez le lien https:// vers l'original","optional":"facultatif"}}`;
 
 export const CAPTURE_CLIENT_SCRIPT = `(function () {
-  var form = document.querySelector('form[action="/account/recipes/save"]');
+  var form = document.querySelector('form[data-capture-form]');
   if (!form) return;
   var box = document.querySelector('[data-live-checks]');
   if (!box) return;
   var ALL = JSON.parse(document.getElementById('capture-check-strings').textContent);
   var CATLABELS = JSON.parse(document.getElementById('capture-cat-labels').textContent);
-  function lang() {
-    var v = (form.querySelector('[name="locale"]').value || 'us:en').split(':')[1];
+  // Chrome and live checks follow the account UI language (document lang);
+    // the recipe locale select is recipe data and never re-localizes chrome.
+    function lang() {
+    var v = (document.documentElement && document.documentElement.lang) || 'en';
     return ALL[v] ? v : 'en';
   }
   function field(name) { return form.querySelector('[name="' + name + '"]'); }

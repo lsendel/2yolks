@@ -48,11 +48,11 @@ describe('List photo previews with honest labels',()=>{
 import { CAPTURE_CLIENT_SCRIPT, CAPTURE_CHECK_STRINGS } from './clientScript';
 
 // Minimal DOM stub to execute the capture script for real (EN<->ES/FR switch).
-function stubDom(locale: string) {
+function stubDom(uiLang: string, recipeLocale: string) {
   const listeners: Record<string, () => void> = {};
   const mk = (value = ''): any => ({ value, textContent: '', className: '' });
   const fields: Record<string, any> = {
-    locale: mk(locale), title: mk(''), ingredients: mk(''), steps: mk(''), servings: mk(''),
+    locale: mk(recipeLocale), title: mk(''), ingredients: mk(''), steps: mk(''), servings: mk(''),
     source_kind: mk('original'), source_url: mk(''),
   };
   const checks: Record<string, any> = {};
@@ -76,8 +76,9 @@ function stubDom(locale: string) {
     'capture-cat-labels': '',
   };
   const doc: any = {
+    documentElement: { lang: uiLang },
     querySelector: (sel: string) => {
-      if (sel === 'form[action="/account/recipes/save"]') return form;
+      if (sel === 'form[data-capture-form]') return form;
       if (sel === '[data-live-checks]') return box;
       if (sel === '[data-category-prompt]') return prompt;
       if (sel === '[data-preamble-label]') return pre;
@@ -96,31 +97,33 @@ const CAT_LABELS = JSON.stringify({
 });
 
 describe('capture script locale switch', () => {
-  function run(locale: string) {
-    const d = stubDom(locale);
+  function run(uiLang: string, recipeLocale = 'us:en') {
+    const d = stubDom(uiLang, recipeLocale);
     const patched = CAPTURE_CLIENT_SCRIPT.replace("document.getElementById('capture-cat-labels').textContent", 'CATLABELS_SRC');
     new Function('document', 'CATLABELS_SRC', patched)(d.doc, CAT_LABELS);
     return d;
   }
-  it('blank category option, prompt and preamble follow EN -> ES -> FR', () => {
-    const d = run('us:en');
-    expect(d.options[0]!.textContent).toBe('Not sure yet');
-    expect(d.prompt.textContent).toBe('What kind of dish is it?');
-    d.fields['locale'].value = 'us:es';
-    d.fire('change');
+  it('chrome and live checks follow the account UI language, independent of the recipe locale', () => {
+    const d = run('es', 'us:en');
     expect(d.options[0]!.textContent).toBe('Aún no lo sé');
     expect(d.options[1]!.textContent).toBe('Sopas y guisos');
     expect(d.prompt.textContent).toBe('¿Qué tipo de plato es?');
     expect(d.pre.textContent).toBe('Una o dos frases antes de la receta');
-    expect(d.checks['title']!.textContent).toContain('Ponle un nombre');
+    // switching the RECIPE locale never re-localizes the account chrome
     d.fields['locale'].value = 'us:fr';
     d.fire('change');
-    expect(d.options[0]!.textContent).toBe('Pas encore sûr');
-    expect(d.preHint.textContent).toContain('facultatif');
-    expect(d.checks['steps']!.textContent).toContain('Écrivez les étapes');
+    expect(d.options[0]!.textContent).toBe('Aún no lo sé');
+    expect(d.prompt.textContent).toBe('¿Qué tipo de plato es?');
+    expect(d.checks['title']!.textContent).toContain('Ponle un nombre');
+    const fr = run('fr', 'us:en');
+    expect(fr.options[0]!.textContent).toBe('Pas encore sûr');
+    expect(fr.preHint.textContent).toContain('facultatif');
+    expect(fr.checks['steps']!.textContent).toContain('Écrivez les étapes');
+    const en = run('en', 'mx:es');
+    expect(en.prompt.textContent).toBe('What kind of dish is it?');
   });
   it('quantity hint: leading amount required, unicode fraction counts, mid-line digit does not', () => {
-    const d = run('us:en');
+    const d = run('en', 'us:en');
     d.fields['ingredients'].value = 'stock for 2 people';
     d.fire('input');
     expect(d.checks['qty']!.className).toBe('todo');
@@ -132,7 +135,7 @@ describe('capture script locale switch', () => {
     expect(d.checks['cups']!.className).toBe('todo');
   });
   it('source URL must parse as https with a dotted host', () => {
-    const d = run('us:en');
+    const d = run('en', 'us:en');
     d.fields['source_kind'].value = 'adapted';
     d.fields['source_url'].value = 'https://';
     d.fire('input');
@@ -142,7 +145,7 @@ describe('capture script locale switch', () => {
     expect(d.checks['source']!.className).toBe('ok');
   });
   it('untouched fields stay idle, never green', () => {
-    const d = run('us:en');
+    const d = run('en', 'us:en');
     expect(d.checks['qty']!.className).toBe('idle');
     expect(d.checks['cups']!.className).toBe('idle');
     expect(d.checks['title']!.className).toBe('idle');

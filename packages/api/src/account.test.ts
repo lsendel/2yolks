@@ -73,15 +73,19 @@ describe('capture form (category-first + live checks)', () => {
     const rows = await DB.prepare('SELECT category FROM recipes ORDER BY created_at').all<{ category: string | null }>();
     expect(rows.results[1]!.category).toBeNull();
   });
-  it('localizes category options and check strings when the recipe language is Spanish', async () => {
+  it('form chrome follows the account UI language, not the recipe language', async () => {
     const cookie = await signIn();
     await post('/account/recipes/save', recipeForm({ locale: 'us:es', category: 'soups-stews' }), { cookie });
     const { id } = (await DB.prepare('SELECT id FROM recipes').first<{ id: string }>())!;
+    // EN account UI + Spanish recipe: chrome stays English, recipe locale untouched
     const html = await (await get(`/account/recipes/${id}/edit`, cookie)).text();
-    expect(html).toContain('<option value="soups-stews" selected>Sopas y guisos</option>');
-    expect(html).toContain('¿Qué tipo de plato es?');
-    expect(html).toContain('Ponle un nombre a la receta');
-    expect(html).toContain('Una o dos frases antes de la receta');
+    expect(html).toContain('<option value="soups-stews" selected>Soups &amp; stews</option>');
+    expect(html).toContain('<span data-category-prompt>What kind of dish is it?</span>');
+    expect(html).toMatch(/<option value="us:es"[^>]*selected/);
+    // ES account UI + the same Spanish recipe: chrome switches with ?lang=
+    const es = await (await get(`/account/recipes/${id}/edit?lang=es`, cookie)).text();
+    expect(es).toContain('<option value="soups-stews" selected>Sopas y guisos</option>');
+    expect(es).toContain('<span data-category-prompt>¿Qué tipo de plato es?</span>');
   });
   it('data islands carry every re-localizable string (blank option + preamble included)', async () => {
     const cookie = await signIn();
@@ -592,6 +596,59 @@ describe('account i18n (en/es/fr)', () => {
     expect(bad).toContain('>Privacy<');
   });
 
+  it('the capture script hooks the localized save form via a stable data attribute (selector/action contract)', async () => {
+    const { CAPTURE_CLIENT_SCRIPT } = await import('@2yolks/web/server');
+    // the script must not key off the (language-dependent) action URL
+    expect(CAPTURE_CLIENT_SCRIPT).not.toContain('form[action=');
+    expect(CAPTURE_CLIENT_SCRIPT).toContain("form[data-capture-form]");
+    const cookie = await signIn();
+    for (const lang of ['en', 'es', 'fr']) {
+      const html = await (await get(`/account/recipes/new?lang=${lang}`, cookie)).text();
+      // generated form carries the stable hook AND the localized action
+      expect(html).toContain('data-capture-form');
+      expect(html).toContain(`action="/account/recipes/save${lang === 'en' ? '' : `?lang=${lang}`}"`);
+    }
+  });
+
+  it('form chrome and live checks follow the account UI language while the recipe locale stays independent', async () => {
+    const cookie = await signIn();
+    const es = await (await get('/account/recipes/new?lang=es', cookie)).text();
+    expect(es).toContain('¿Qué tipo de plato es?');
+    expect(es).toContain('Aún no lo sé');
+    expect(es).toContain('Una o dos frases antes de la receta');
+    // recipe data locale untouched by the UI language: still defaults to us:en
+    expect(es).toContain('<select name="locale">');
+    expect(es).toMatch(/<option value="us:en"[^>]*selected/);
+    const fr = await (await get('/account/recipes/new?lang=fr', cookie)).text();
+    expect(fr).toContain('<span data-category-prompt>Quel type de plat est-ce ?</span>');
+    expect(fr).toContain('<option value="" selected>Pas encore sûr</option>');
+    expect(fr).not.toContain('<span data-category-prompt>What kind of dish is it?</span>');
+  });
+
+  it('timing/serving validation errors are localized (ES/FR)', async () => {
+    const cookie = await signIn();
+    for (const [lang, needle] of [['es', 'Revisa los tiempos'], ['fr', 'Vérifiez les temps']] as const) {
+      const res = await post(`/account/recipes/save?lang=${lang}`, recipeForm({ prep: 'abc' }), { cookie });
+      const html = await res.text();
+      expect(res.status).toBe(400);
+      expect(html).toContain(needle);
+      const res2 = await post(`/account/recipes/save?lang=${lang}`, recipeForm({ servings: 'many' }), { cookie });
+      expect(await res2.text()).toContain(needle);
+    }
+  });
+
+  it('paste parse warnings are localized (ES/FR)', async () => {
+    const cookie = await signIn();
+    const es = await (await post('/account/recipes/paste?lang=es', { text: '' }, { cookie })).text();
+    expect(es).toContain('No se encontró el título');
+    expect(es).toContain('No se encontraron ingredientes');
+    expect(es).toContain('No se encontraron pasos');
+    const fr = await (await post('/account/recipes/paste?lang=fr', { text: '' }, { cookie })).text();
+    expect(fr).toContain('Aucun titre trouvé');
+    expect(fr).toContain('Aucun ingrédient trouvé');
+    expect(fr).toContain('Aucune étape trouvée');
+  });
+
   it('runs the whole sign-in flow in Spanish, including the localized code email', async () => {
     const res = await post('/account/code?lang=es', { email: 'cook@example.com' });
     const html = await res.text();
@@ -623,8 +680,9 @@ describe('account i18n (en/es/fr)', () => {
     expect(form).toContain('Enregistrer le brouillon privé');
     expect(form).toContain('J’ai écrit cette recette ou j’ai le droit de la partager');
     expect(form).toContain('action="/account/recipes/save?lang=fr"');
-    // capture chrome still follows the RECIPE language (C1 design):
-    expect(form).toContain('What kind of dish is it?');
+    // capture chrome follows the account UI language (fr here):
+    expect(form).toContain('<span data-category-prompt>Quel type de plat est-ce ?</span>');
+    expect(form).not.toContain('<span data-category-prompt>What kind of dish is it?</span>');
     const bad = await post('/account/recipes/save?lang=fr', recipeForm({ display_name: '' }), { cookie });
     expect(bad.status).toBe(400);
     expect(await bad.text()).toContain('Ajoutez le nom affiché comme auteur.');

@@ -41,6 +41,7 @@ export interface AccountStrings {
   sentInPageTitle: string; sentInTitle: string; sentInLead: string; backToRecipes: string;
   // validator fallbacks (friendly per-field messages)
   errValTitle: string; errValIntro: string; errValIngredients: string; errValSteps: string; errValCategory: string; errValTimes: string; errValSource: string;
+  warnNoTitle: string; warnNoIngredients: string; warnNoSteps: string; warnImportNoIngredients: string; warnImportNoSteps: string;
   // ssrf import errors
   errSsrfUrlLong: string; errSsrfInvalid: string; errSsrfHttps: string; errSsrfCredentials: string; errSsrfPort: string; errSsrfIpHost: string; errSsrfInternal: string; errSsrfResolve: string; errSsrfNoResolve: string; errSsrfNonPublic: string; errSsrfRedirect: string; errSsrfStatus: string; errSsrfNotPage: string; errSsrfTooLarge: string;
 }
@@ -117,6 +118,10 @@ const en: AccountStrings = {
   errValSteps: 'Add at least one step, one per line.',
   errValCategory: 'Pick a category from the list.',
   errValTimes: 'Check the times and servings: whole or decimal numbers only.',
+  warnNoTitle: 'No title found: the first line should be the recipe name.',
+  warnNoIngredients: 'No ingredients found: add a line that says "Ingredients" followed by one per line.',
+  warnNoSteps: 'No steps found: add a line that says "Instructions" followed by one step per line.',
+  warnImportNoIngredients: 'The page listed no ingredients.', warnImportNoSteps: 'The page listed no steps.',
   errValSource: 'Check the source details for this recipe.',
   errSsrfUrlLong: 'That link is too long.', errSsrfInvalid: 'That is not a valid link.',
   errSsrfHttps: 'Only https links can be imported.', errSsrfCredentials: 'Links with credentials are not allowed.',
@@ -199,6 +204,10 @@ const es: AccountStrings = {
   errValSteps: 'Añade al menos un paso, uno por línea.',
   errValCategory: 'Elige una categoría de la lista.',
   errValTimes: 'Revisa los tiempos y las porciones: solo números enteros o decimales.',
+  warnNoTitle: 'No se encontró el título: la primera línea debe ser el nombre de la receta.',
+  warnNoIngredients: 'No se encontraron ingredientes: agrega una línea que diga "Ingredientes" seguida de uno por línea.',
+  warnNoSteps: 'No se encontraron pasos: agrega una línea que diga "Instrucciones" seguida de un paso por línea.',
+  warnImportNoIngredients: 'La página no incluía ingredientes.', warnImportNoSteps: 'La página no incluía pasos.',
   errValSource: 'Revisa los datos de origen de esta receta.',
   errSsrfUrlLong: 'Ese enlace es demasiado largo.', errSsrfInvalid: 'Ese enlace no es válido.',
   errSsrfHttps: 'Solo se pueden importar enlaces https.', errSsrfCredentials: 'No se permiten enlaces con credenciales.',
@@ -281,6 +290,10 @@ const fr: AccountStrings = {
   errValSteps: 'Ajoutez au moins une étape, une par ligne.',
   errValCategory: 'Choisissez une catégorie dans la liste.',
   errValTimes: 'Vérifiez les temps et les portions : nombres entiers ou décimaux uniquement.',
+  warnNoTitle: 'Aucun titre trouvé : la première ligne doit être le nom de la recette.',
+  warnNoIngredients: 'Aucun ingrédient trouvé : ajoutez une ligne « Ingrédients » suivie d’un ingrédient par ligne.',
+  warnNoSteps: 'Aucune étape trouvée : ajoutez une ligne « Instructions » suivie d’une étape par ligne.',
+  warnImportNoIngredients: 'La page ne listait aucun ingrédient.', warnImportNoSteps: 'La page ne listait aucune étape.',
   errValSource: 'Vérifiez les informations de source de cette recette.',
   errSsrfUrlLong: 'Ce lien est trop long.', errSsrfInvalid: 'Ce lien n’est pas valide.',
   errSsrfHttps: 'Seuls les liens https peuvent être importés.', errSsrfCredentials: 'Les liens avec identifiants ne sont pas autorisés.',
@@ -318,8 +331,21 @@ export function validatorMessage(t: AccountStrings, path: string, fallback: stri
   if (p.startsWith('steps')) return t.errValSteps;
   if (p.startsWith('category')) return t.errValCategory;
   if (p.startsWith('times')) return t.errValTimes;
+  if (['prepMinutes', 'cookMinutes', 'restMinutes', 'totalMinutes', 'baseServings'].some((f) => p.startsWith(f))) return t.errValTimes;
   if (p.startsWith('source')) return t.errValSource;
   return fallback;
+}
+
+/** Map a parser warning (paste/import) to a localized one; unknown warnings pass through verbatim. */
+export function parseWarningMessage(t: AccountStrings, warning: string): string {
+  const map: Record<string, string> = {
+    'No title found: the first line should be the recipe name.': t.warnNoTitle,
+    'No ingredients found: add a line that says "Ingredients" followed by one per line.': t.warnNoIngredients,
+    'No steps found: add a line that says "Instructions" followed by one step per line.': t.warnNoSteps,
+    'The page listed no ingredients.': t.warnImportNoIngredients,
+    'The page listed no steps.': t.warnImportNoSteps,
+  };
+  return map[warning] ?? warning;
 }
 
 /** Map an ssrf error message to a localized one; unknown messages get the generic error. */

@@ -7,7 +7,7 @@ import type { Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import { eq, and, ne, desc } from 'drizzle-orm';
-import { LOCALES, getCountry, localizedCountryName, slugify, validateRecipeSubmission, RECIPE_CATEGORY_SLUGS, categoryLabel, isRecipeCategorySlug, CATEGORIES, accountStrings, fill, isAccountLang, validatorMessage, ssrfMessage, type AccountStrings } from '@2yolks/contracts';
+import { LOCALES, getCountry, localizedCountryName, slugify, validateRecipeSubmission, RECIPE_CATEGORY_SLUGS, categoryLabel, isRecipeCategorySlug, CATEGORIES, accountStrings, fill, isAccountLang, validatorMessage, parseWarningMessage, ssrfMessage, type AccountStrings } from '@2yolks/contracts';
 import { renderAccountPage, escapeHtml as esc, CAPTURE_CLIENT_SCRIPT, CAPTURE_CHECK_STRINGS } from '@2yolks/web/server';
 import { createDb, recipes, recipeLocales, sources, users } from './db';
 import { sendMail, type MailEnv } from './email';
@@ -270,17 +270,14 @@ function localeOptions(selected: string): string {
   })).join('');
 }
 
-// Capture-form chrome follows the recipe's language (the form's locale
-// select): category labels, prompt and live checks re-localize when the cook
-// switches language. The rest of the account UI is English-only today; the
-// approved all-internationalized outcome covers it as a separate
-// implementation increment after C1.
+// Capture-form chrome (category labels, prompt, preamble, live checks)
+// follows the ACCOUNT UI language; the recipe locale select is recipe DATA
+// and never re-localizes the chrome.
 const FORM_STRINGS: Record<string, { prompt: string; unsure: string; preamble: string; preambleHint: string }> = {
   en: { prompt: 'What kind of dish is it?', unsure: 'Not sure yet', preamble: 'A sentence or two before the recipe', preambleHint: '(optional - the story or context a cook reads first)' },
   es: { prompt: '¿Qué tipo de plato es?', unsure: 'Aún no lo sé', preamble: 'Una o dos frases antes de la receta', preambleHint: '(opcional - la historia o el contexto que se lee primero)' },
   fr: { prompt: 'Quel type de plat est-ce ?', unsure: 'Pas encore sûr', preamble: 'Une phrase ou deux avant la recette', preambleHint: "(facultatif - l'histoire ou le contexte à lire en premier)" },
 };
-const formLang = (s: FormState): string => (FORM_STRINGS[s.locale.split(':')[1] ?? ''] ? s.locale.split(':')[1]! : 'en');
 
 function categoryOptions(selected: string, lang: string): string {
   const t = FORM_STRINGS[lang]!;
@@ -307,10 +304,10 @@ function renderForm(s: FormState, t: AccountStrings, acctLang: string, errors: s
   const entry = s.id ? '' : `<div class="panel"><h2>${t.startFaster}</h2>
 <form method="post" action="/account/recipes/paste${qs(acctLang)}"><label>${t.pasteLabel}<small>${t.pasteHint}</small><textarea name="text" maxlength="60000"></textarea></label><button class="quiet" type="submit">${t.pasteButton}</button></form>
 ${importOn ? `<form method="post" action="/account/recipes/import${qs(acctLang)}"><label>${t.importLabel}<small>${t.importHint}</small><input type="url" name="url" maxlength="2000" placeholder="https://"></label><button class="quiet" type="submit">${t.importButton}</button></form>` : `<p class="hint"><strong>${t.importOffName}</strong> ${t.importOffText}</p>`}</div>`;
-  const lang = formLang(s);
+  const lang = acctLang;
   const ft = FORM_STRINGS[lang]!;
   return `<h1>${s.id ? t.formTitleEdit : t.formTitleNew}</h1><p class="lead">${t.formLead}</p>${note}${errBox}${entry}
-<form method="post" action="/account/recipes/save${qs(acctLang)}">${s.id ? `<input type="hidden" name="id" value="${esc(s.id)}">` : ''}
+<form method="post" action="/account/recipes/save${qs(acctLang)}" data-capture-form>${s.id ? `<input type="hidden" name="id" value="${esc(s.id)}">` : ''}
 <label><span data-category-prompt>${esc(ft.prompt)}</span><select name="category">${categoryOptions(s.category, lang)}</select></label>
 <label>${t.labelTitle}<input type="text" name="title" value="${esc(s.title)}" maxlength="200" required></label>
 <label>${t.labelLanguage}<select name="locale">${localeOptions(s.locale)}</select></label>
@@ -384,7 +381,7 @@ accountApp.post('/recipes/paste', async (c) => {
   const form = await c.req.parseBody();
   const p = parseRecipeText(str(form['text'], 60000));
   const t = accountStrings(langOf(c));
-  const warn = p.warnings.length ? banner('err', p.warnings.map(esc).join('<br>')) : banner('ok', t.pasteFilled);
+  const warn = p.warnings.length ? banner('err', p.warnings.map((w) => esc(parseWarningMessage(t, w))).join('<br>')) : banner('ok', t.pasteFilled);
   return page(c, t.formTitleNew, rf(c, fromParsed(blank(c.get('user')), p), [], warn));
 });
 
