@@ -153,96 +153,18 @@ describe('own recipes', () => {
   });
 });
 
-describe('account deletion', () => {
-  async function signInAndSeed() {
+describe('account deletion (not released)', () => {
+  it('is explicitly unavailable and mutates nothing', async () => {
     const token = await signIn();
-    const me = ((await (await get('/api/v1/me', { token })).json()) as { user: { id: string } }).user;
-    // 1. a never-submitted draft (should be fully deleted)
     const { id: draftId } = (await (await post('/api/v1/me/recipes', draftBody(), { token })).json()) as { id: string };
-    // 2. an attested, submitted draft (should be withdrawn, evidence kept)
-    const { id: subId } = (await (await post('/api/v1/me/recipes', draftBody({ title: 'Sent Soup' }), { token })).json()) as { id: string };
-    expect((await post(`/api/v1/me/recipes/${subId}/submit`, {}, { token })).status).toBe(200);
-    // 3. a published owned recipe (stays live, credit + attestation intact)
-    await seedPublished(me.id);
-    return { token, me, draftId, subId };
-  }
-
-  it('deletes drafts and identity, withdraws submitted with evidence, keeps published credit', async () => {
-    const { token, me, draftId, subId } = await signInAndSeed();
     const res = await del('/api/v1/me/account', { token });
-    expect(res.status).toBe(200);
-    expect((await get('/api/v1/me', { token })).status).toBe(401);
-    // Identity gone: no sessions, no codes, email/display_name anonymized.
-    expect(await DB.prepare('SELECT count(*) AS n FROM sessions').first<{ n: number }>().then((r) => r!.n)).toBe(0);
-    expect(await DB.prepare('SELECT count(*) AS n FROM auth_codes').first<{ n: number }>().then((r) => r!.n)).toBe(0);
-    const u = await DB.prepare('SELECT email, display_name AS dn FROM users WHERE id = ?').bind(me.id).first<{ email: string; dn: string | null }>();
-    expect(u!.email).toBe(`deleted-${me.id}@account-deleted.invalid`);
-    expect(u!.email).not.toContain('cook@example.com');
-    expect(u!.dn).toBeNull();
-    // Never-submitted draft: rows fully deleted (recipe, locale, source).
-    const count = async (sql: string, ...bind: string[]) => (await DB.prepare(sql).bind(...bind).first<{ n: number }>())!.n;
-    expect(await count('SELECT count(*) AS n FROM recipes WHERE id = ?', draftId)).toBe(0);
-    expect(await count('SELECT count(*) AS n FROM recipe_locales WHERE recipe_id = ?', draftId)).toBe(0);
-    expect(await count('SELECT count(*) AS n FROM sources WHERE id = ?', `src-${draftId}`)).toBe(0);
-    // Submitted-not-published: withdrawn, but evidence (attestation, credit, owner link, source) intact.
-    const subLoc = await DB.prepare('SELECT status FROM recipe_locales WHERE recipe_id = ?').bind(subId).first<{ status: string }>();
-    expect(subLoc!.status).toBe('rejected');
-    const subR = await DB.prepare('SELECT owner_user_id AS o, attested_at AS a, submitted_at AS s, author_name AS an FROM recipes WHERE id = ?').bind(subId).first<{ o: string; a: string; s: string; an: string }>();
-    expect(subR!.o).toBe(me.id);
-    expect(subR!.a).toBeTruthy();
-    expect(subR!.s).toBeTruthy();
-    expect(subR!.an).toBe('Ana');
-    // Published: still served, credit + attestation intact, owner link preserved.
-    const pubR = await DB.prepare('SELECT owner_user_id AS o, attested_at AS a, author_name AS an FROM recipes WHERE id = ?').bind('rp1').first<{ o: string; a: string | null; an: string }>();
-    expect(pubR!.o).toBe(me.id);
-    expect(pubR!.an).toBe('Chef Ana');
-    expect((await get('/api/v1/recipes/us/en/tomato-soup-rp1')).status).toBe(200);
-  });
-
-  it('keeps withdrawn content private in MCP (viewer/editor cannot see it)', async () => {
-    const { token, subId } = await signInAndSeed();
-    await del('/api/v1/me/account', { token });
-    const mcpEnv = { MCP_READ_KEY: 'read-key', ADMIN_MCP_API_KEY: 'admin-key' };
-    const rpc = (key: string) =>
-      app.request(`${ORIGIN}/api/admin/mcp`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
-        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'recipes.list', arguments: {} } }),
-      }, env(mcpEnv));
-    const viewer = (await (await rpc('read-key')).json()) as { result: { content: { text: string }[] } };
-    const viewerData = JSON.parse(viewer.result.content[0]!.text) as { recipes: { id: string }[] };
-    expect(viewerData.recipes.map((r) => r.id)).not.toContain(subId);
-    const admin = (await (await rpc('admin-key')).json()) as typeof viewer;
-    const adminData = JSON.parse(admin.result.content[0]!.text) as { recipes: { id: string; user_submitted: number }[] };
-    const row = adminData.recipes.find((r) => r.id === subId);
-    // Admin audit still sees the withdrawn submission, flagged as user-submitted.
-    expect(row).toBeDefined();
-    expect(row!.user_submitted).toBe(1);
-  });
-
-  it('never touches other accounts: orphan src- rows from elsewhere survive', async () => {
-    const { token } = await signInAndSeed();
-    // Another account's orphaned pending-review source (no recipe references it).
-    await DB.prepare("INSERT INTO sources (id,name,url,license,cleared_at,notes) VALUES ('src-orphan-b','Other Cook','https://b.example.com','unknown',NULL,'user submission - rights review pending')").run();
-    const res = await del('/api/v1/me/account', { token });
-    expect(res.status).toBe(200);
-    const n = await DB.prepare("SELECT count(*) AS n FROM sources WHERE id = 'src-orphan-b'").first<{ n: number }>().then((r) => r!.n);
-    expect(n).toBe(1);
-  });
-
-  it('keeps a never-submitted recipe that has slug-alias history (FK-safe, stays private)', async () => {
-    const { token, me } = await signInAndSeed();
-    // Simulate a draft that once served publicly: permanent alias row with FK to recipes(id).
-    await DB.prepare("INSERT INTO recipes (id,source_id,origin_country,image_key,created_at,tested_at,tested_by,prep_minutes,cook_minutes,rest_minutes,total_minutes,base_servings,category,owner_user_id,submitted_at,attested_at,author_name) VALUES ('ral','src-p','us',NULL,'2024-02-01T00:00:00Z','2024-02-02T00:00:00Z','Ana',10,20,NULL,30,4,'soup',?,NULL,NULL,'Ana')").bind(me.id).run();
-    await DB.prepare("INSERT INTO recipe_locales (recipe_id,country,lang,title,slug,intro,ingredients_json,steps_json,status) VALUES ('ral','us','en','Aliased Soup','aliased-soup','x','[]','[]','draft')").run();
-    await DB.prepare("INSERT INTO recipe_slug_aliases (country,lang,slug,recipe_id) VALUES ('us','en','old-aliased-soup','ral')").run();
-    const res = await del('/api/v1/me/account', { token });
-    expect(res.status).toBe(200); // no FK rollback
-    const r = await DB.prepare('SELECT owner_user_id AS o FROM recipes WHERE id = \'ral\'').first<{ o: string }>();
-    expect(r).toBeDefined();
-    expect(r!.o).toBe(me.id); // owner link survives on the tombstoned user -> stays private
-    const a = await DB.prepare("SELECT count(*) AS n FROM recipe_slug_aliases WHERE recipe_id = 'ral'").first<{ n: number }>().then((x) => x!.n);
-    expect(a).toBe(1);
+    expect(res.status).toBe(503);
+    expect(((await res.json()) as { code: string }).code).toBe('ACCOUNT_DELETION_UNAVAILABLE');
+    // Nothing changed: session still valid, draft still owned and listed.
+    expect((await get('/api/v1/me', { token })).status).toBe(200);
+    const mine = (await (await get('/api/v1/me/recipes', { token })).json()) as { recipes: { id: string }[] };
+    expect(mine.recipes.map((r) => r.id)).toContain(draftId);
+    expect(await DB.prepare('SELECT count(*) AS n FROM recipes WHERE id = ?').bind(draftId).first<{ n: number }>().then((r) => r!.n)).toBe(1);
   });
 });
 
