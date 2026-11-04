@@ -28,36 +28,36 @@ export type AccountBindings = MailEnv & {
 };
 
 export const SESSION_COOKIE = '__Host-2y_sid';
-const SESSION_DAYS = 30;
+export const SESSION_DAYS = 30;
 const CODE_TTL_MS = 10 * 60_000;
-const MAX_ATTEMPTS = 5;
-const CODES_PER_EMAIL_10MIN = 3;
-const CODES_PER_DAY = 32; // login codes per rolling 24h, counted by kind. The Resend free plan (100/day, 3,000/month) is shared with other sites
-const NOTICES_PER_DAY = 8; // review notices per rolling 24h, counted by kind; 32 + 8 = 40/day hard total
-const MAX_DRAFTS_PER_USER = 50; // active (not removed) drafts
-const MAX_ROWS_PER_USER = 500; // lifetime rows incl. removed ones, so remove/recreate loops cannot grow storage forever
+export const MAX_ATTEMPTS = 5;
+export const CODES_PER_EMAIL_10MIN = 3;
+export const CODES_PER_DAY = 32; // login codes per rolling 24h, counted by kind. The Resend free plan (100/day, 3,000/month) is shared with other sites
+export const NOTICES_PER_DAY = 8; // review notices per rolling 24h, counted by kind; 32 + 8 = 40/day hard total
+export const MAX_DRAFTS_PER_USER = 50; // active (not removed) drafts
+export const MAX_ROWS_PER_USER = 500; // lifetime rows incl. removed ones, so remove/recreate loops cannot grow storage forever
 
 export const accountApp = new Hono<{ Bindings: AccountBindings; Variables: { user: { id: string; email: string; displayName: string | null } } }>();
 type Ctx = Context<{ Bindings: AccountBindings; Variables: { user: { id: string; email: string; displayName: string | null } } }>;
 
-async function sha256Hex(s: string): Promise<string> {
+export async function sha256Hex(s: string): Promise<string> {
   const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
   return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
-function randomCode(): string {
+export function randomCode(): string {
   const a = new Uint32Array(1);
   for (;;) { crypto.getRandomValues(a); if (a[0]! < 4_294_000_000) return String(a[0]! % 1_000_000).padStart(6, '0'); }
 }
-function randomToken(): string {
+export function randomToken(): string {
   const b = crypto.getRandomValues(new Uint8Array(32));
   return [...b].map((x) => x.toString(16).padStart(2, '0')).join('');
 }
-const newId = () => crypto.randomUUID().replace(/-/g, '').slice(0, 10);
-const normEmail = (v: unknown): string | null => {
+export const newId = () => crypto.randomUUID().replace(/-/g, '').slice(0, 10);
+export const normEmail = (v: unknown): string | null => {
   const e = typeof v === 'string' ? v.trim().toLowerCase() : '';
   return e.length <= 254 && /^[^\s@<>"',;]+@[^\s@<>"',;]+\.[^\s@<>"',;]{2,}$/.test(e) ? e : null;
 };
-const str = (v: unknown, max = 5000): string => (typeof v === 'string' ? v.replace(/\r/g, '').slice(0, max) : '');
+export const str = (v: unknown, max = 5000): string => (typeof v === 'string' ? v.replace(/\r/g, '').slice(0, max) : '');
 
 function page(c: Ctx, title: string, body: string, status: 200 | 400 | 403 | 404 | 409 | 429 | 503 = 200) {
   return c.html(renderAccountPage(title, body), status, { 'cache-control': 'no-store', 'x-robots-tag': 'noindex' });
@@ -76,7 +76,7 @@ accountApp.use('*', async (c, next) => {
 });
 
 /** Atomically reserve one outbound email against the daily budget (single conditional INSERT). */
-async function reserveMail(db: D1Database, kind: 'code' | 'notice', cap: number): Promise<boolean> {
+export async function reserveMail(db: D1Database, kind: 'code' | 'notice', cap: number): Promise<boolean> {
   const now = Date.now();
   const r = await db.prepare(
     'INSERT INTO mail_log (id, kind, created_at) SELECT ?, ?, ? WHERE (SELECT count(*) FROM mail_log WHERE kind = ? AND created_at > ?) < ?',
@@ -85,7 +85,7 @@ async function reserveMail(db: D1Database, kind: 'code' | 'notice', cap: number)
 }
 
 /** Drop expired sign-in artifacts only (codes, sessions, old mail counters). Never touches recipes or users. */
-async function cleanupExpired(db: D1Database, now: number): Promise<void> {
+export async function cleanupExpired(db: D1Database, now: number): Promise<void> {
   try {
     await db.batch([
       db.prepare('DELETE FROM auth_codes WHERE expires_at < ?').bind(now - 86_400_000),
@@ -101,7 +101,7 @@ accountApp.use('*', bodyLimit({
   onError: (c) => c.html(renderAccountPage('Too large', '<div class="err" role="alert">That request is too large.</div>'), 413),
 }));
 
-async function limited(rl: RateLimiter | undefined, c: Ctx, scope: string): Promise<boolean> {
+export async function limited(rl: RateLimiter | undefined, c: Ctx, scope: string): Promise<boolean> {
   if (!rl) return false;
   const ip = c.req.header('cf-connecting-ip') ?? 'unknown';
   try { return !(await rl.limit({ key: `${scope}:${ip}` })).success; } catch { return false; }
@@ -231,7 +231,7 @@ accountApp.use('/recipes/*', async (c, next) => {
 
 // --- Draft form --------------------------------------------------------------
 
-type FormState = {
+export type FormState = {
   id?: string; title: string; intro: string; ingredients: string; steps: string; locale: string;
   prep: string; cook: string; servings: string; displayName: string; sourceKind: 'original' | 'adapted'; sourceUrl: string;
   attest: boolean;
@@ -274,7 +274,7 @@ ${importOn ? `<form method="post" action="/account/recipes/import"><label>Or imp
 <button type="submit">Save private draft</button></form>`;
 }
 
-function parseForm(form: Record<string, unknown>, user: { displayName: string | null }): FormState {
+export function parseForm(form: Record<string, unknown>, user: { displayName: string | null }): FormState {
   const b = blank(user);
   const sk = str(form['source_kind'], 10) === 'adapted' ? 'adapted' : 'original';
   const loc = str(form['locale'], 10);
@@ -292,7 +292,7 @@ function lines(s: string, max = 80): string[] {
   return s.split('\n').map((l) => l.replace(/\s+/g, ' ').trim()).filter(Boolean).slice(0, max);
 }
 
-function buildSubmission(s: FormState, origin: string) {
+export function buildSubmission(s: FormState, origin: string) {
   const [country, lang] = s.locale.split(':');
   const host = (() => { try { return new URL(s.sourceUrl).hostname; } catch { return ''; } })();
   const num = (v: string) => (v === '' ? undefined : Number(v));
@@ -308,7 +308,7 @@ function buildSubmission(s: FormState, origin: string) {
   return body;
 }
 
-async function loadOwned(c: Ctx, id: string) {
+export async function loadOwned(c: Ctx, id: string) {
   const user = c.get('user');
   const db = createDb(c.env.DB);
   const rows = await db.select({ r: recipes, l: recipeLocales, s: sources })
