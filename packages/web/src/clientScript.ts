@@ -244,7 +244,7 @@ export const CAPTURE_CLIENT_SCRIPT = `(function () {
   var box = document.querySelector('[data-live-checks]');
   if (!box) return;
   function field(name) { return form.querySelector('[name="' + name + '"]'); }
-  function lines(v) { return v.split(/\r?\n/).map(function (l) { return l.trim(); }).filter(Boolean); }
+  function lines(v) { return v.split(/\\r?\\n/).map(function (l) { return l.trim(); }).filter(Boolean); }
   function set(key, ok, text) {
     var li = box.querySelector('[data-check="' + key + '"]');
     if (!li) return;
@@ -256,16 +256,16 @@ export const CAPTURE_CLIENT_SCRIPT = `(function () {
     set('title', title.length >= 3, 'Give the recipe a name');
     var ings = lines(field('ingredients').value || '');
     set('ingredients', ings.length > 0, 'List the ingredients, one per line');
-    var noQty = ings.filter(function (l) { return !/\d/.test(l); }).length;
+    var noQty = ings.filter(function (l) { return !/\\d/.test(l); }).length;
     set('qty', ings.length === 0 || noQty === 0, noQty ? noQty + ' ingredient line(s) have no amount - cooks need quantities' : 'Every ingredient has an amount');
-    var cups = ings.filter(function (l) { return /\bcups?\b/i.test(l); }).length;
+    var cups = ings.filter(function (l) { return /\\bcups?\\b/i.test(l); }).length;
     set('cups', cups === 0, cups ? 'You use "cup" - cups vary by country, so consider grams or ml too' : 'No ambiguous cup measures');
     set('steps', lines(field('steps').value || '').length > 0, 'Write the steps, one per line');
     var sv = (field('servings').value || '').trim();
     set('servings', sv === '' || Number(sv) > 0, 'Servings (optional) should be a number');
     var adapted = field('source_kind').value === 'adapted';
     var url = (field('source_url').value || '').trim();
-    set('source', !adapted || /^https:\/\//.test(url), adapted ? 'Add the https:// link to the original' : 'Source noted');
+    set('source', !adapted || /^https:\\/\\//.test(url), adapted ? 'Add the https:// link to the original' : 'Source noted');
   }
   form.addEventListener('input', run);
   form.addEventListener('change', run);

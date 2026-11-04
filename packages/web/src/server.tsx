@@ -559,6 +559,10 @@ const ACCOUNT_CSS = `
 .acct .check input { margin-top: 0.25rem; }
 .acct button, .acct .btn { background: var(--brand); color: #fff; border: 0; border-radius: 999px; padding: 0.7rem 1.4rem; font: inherit; font-weight: 700; cursor: pointer; text-decoration: none; justify-self: start; }
 .acct button.quiet { background: var(--card); color: var(--ink); border: 1px solid var(--line); }
+.acct .live-checks { list-style: none; padding: 0; margin: 0 0 1rem; font-size: 0.85rem; }
+.acct .live-checks li { padding: 0.15rem 0; }
+.acct .live-checks li.ok { color: #3f7a3f; }
+.acct .live-checks li.todo { color: #8a6d3b; }
 .acct .panel { border: 1px solid var(--line); background: var(--card); border-radius: 0.9rem; padding: 1rem 1.1rem; margin: 0 0 1.25rem; }
 .acct .panel h2 { margin: 0 0 0.5rem; font-size: 1.05rem; }
 .acct .err { border-left: 4px solid #b3261e; background: #fdecea; padding: 0.7rem 1rem; border-radius: 0.4rem; margin: 0 0 1rem; }
