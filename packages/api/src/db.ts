@@ -1,3 +1,4 @@
+import { eq, and, ne, isNotNull } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
 import { sqliteTable, text, integer, real, primaryKey, index } from 'drizzle-orm/sqlite-core';
 
@@ -106,4 +107,20 @@ export const recipeSlugAliases = sqliteTable(
 
 export function createDb(d1: D1Database) {
   return drizzle(d1, { schema: { users, sources, recipes, recipeLocales, recipeImages, recipeSlugAliases } });
+}
+
+const DEMO_LICENSE = 'internal-demo';
+
+/** Published-row predicate: requires a cleared source (license reviewed),
+ * and excludes synthetic demo-seed rows unless ALLOW_DEMO_SEED=true
+ * (local dev only). This is a production serving gate, not noindex.
+ * Shared by the HTML routes (index.ts) and the native app JSON API (appapi.ts). */
+export function published(db: ReturnType<typeof createDb>, allowDemo: boolean) {
+  const conds = [
+    eq(recipeLocales.status, 'published'),
+    // clearedAt NULL means the source rights review has not completed.
+    isNotNull(sources.clearedAt),
+  ];
+  if (!allowDemo) conds.push(ne(sources.license, DEMO_LICENSE));
+  return and(...conds);
 }
