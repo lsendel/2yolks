@@ -487,6 +487,36 @@ describe('the full canonical predicate re-runs on EVERY publish flip', () => {
   });
 });
 
+describe('REPLACE replay on referenced identity rows is closed', () => {
+  it('INSERT OR REPLACE on a bound source row aborts and leaves published serving intact', async () => {
+    expect(await saveEdit('rev-a', 0, snap1('Soup'))).toBe(true);
+    expect(await consentEvent('ce-1', 'rev-a', 0, 'grant')).toBe(true);
+    expect(await tryPublish('rev-a')).toBe(true);
+    expect(() => sqlite.exec(`INSERT OR REPLACE INTO sources (id, name, url, license) VALUES ('src-1', 'Unconsented', 'https://evil.example/', 'stolen')`)).toThrow(/cannot be replaced/);
+    const src = await DB.prepare(`SELECT name FROM sources WHERE id = 'src-1'`).first<{ name: string }>();
+    expect(src!.name).toBe('Ana');
+    const served = await DB.prepare(`SELECT count(*) n FROM recipe_locales_effective WHERE recipe_id = '${RECIPE}'`).first<{ n: number }>();
+    expect(served!.n).toBe(1);
+  });
+  it('INSERT OR REPLACE on a recipe row with published content aborts and leaves the row intact', async () => {
+    expect(await saveEdit('rev-a', 0, snap1('Soup'))).toBe(true);
+    expect(await consentEvent('ce-1', 'rev-a', 0, 'grant')).toBe(true);
+    expect(await tryPublish('rev-a')).toBe(true);
+    expect(() => sqlite.exec(`INSERT OR REPLACE INTO recipes (id, source_id, origin_country, created_at, owner_user_id, author_name) VALUES ('${RECIPE}', 'src-1', 'us', '2026-01-01', '${USER}', 'Drifted')`)).toThrow(/cannot be replaced/);
+    const r = await DB.prepare(`SELECT author_name FROM recipes WHERE id = '${RECIPE}'`).first<{ author_name: string | null }>();
+    expect(r!.author_name).toBeNull();
+    expect(await statusOf()).toBe('published');
+  });
+  it('INSERT OR REPLACE on a published locale row aborts', async () => {
+    expect(await saveEdit('rev-a', 0, snap1('Soup'))).toBe(true);
+    expect(await consentEvent('ce-1', 'rev-a', 0, 'grant')).toBe(true);
+    expect(await tryPublish('rev-a')).toBe(true);
+    expect(() => sqlite.exec(`INSERT OR REPLACE INTO recipe_locales (recipe_id, country, lang, title, slug, intro, ingredients_json, steps_json, status) VALUES ('${RECIPE}', 'us', 'en', 'Drifted', 'soup-x', NULL, '["1 egg"]', '["Cook."]', 'published')`)).toThrow(/cannot be replaced|guarded flow/);
+    const l = await DB.prepare(`SELECT title FROM recipe_locales WHERE recipe_id = '${RECIPE}'`).first<{ title: string }>();
+    expect(l!.title).toBe('Soup');
+  });
+});
+
 describe('INSERT OR REPLACE / upsert replay is closed', () => {
   it('append-only tables reject REPLACE collisions', async () => {
     expect(await saveEdit('rev-a', 0, snap1('Soup'))).toBe(true);

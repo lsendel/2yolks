@@ -1,4 +1,4 @@
--- DESIGN REV 8 - smallest separable slice: immutable revisions + exact-content
+-- DESIGN REV 9 - smallest separable slice: immutable revisions + exact-content
 -- consent for the PUBLIC audience only. Family, erasure and the mail outbox
 -- are deliberately NOT in this slice; they ship behind separate reviewed
 -- migrations. This file is design evidence, not wired into testd1/deploy.
@@ -59,10 +59,17 @@
 --   publish-disable-drift-republish fails on the second flip. consumed_at
 --   (set by the transition batch's final statement, consume-only trigger)
 --   is defense in depth on top, never the mechanism of correctness.
--- * INSERT-path replay is closed on every table: BEFORE-INSERT guards abort
---   INSERT OR REPLACE / upsert collisions with existing bound or
---   append-only rows (SQLite fires delete triggers for REPLACE only under
+-- * INSERT-path replay is closed on the append-only tables
+--   (recipe_revisions, recipe_consent_events, recipe_revision_images,
+--   publish_requests), on bound recipe_images, on published
+--   recipe_locales, and on the identity rows published content references
+--   (recipes, sources): BEFORE-INSERT guards abort INSERT OR REPLACE /
+--   upsert collisions (SQLite fires delete triggers for REPLACE only under
 --   recursive_triggers, so delete triggers alone are NOT sufficient).
+-- * Domain-level canonical validation (permissible country/lang pairs
+--   against the real rollout list, array contents, slug rules) stays with
+--   the server canonical validator at integration - an explicit launch
+--   gate, not claimed by this slice.
 -- * Snapshot structure is validated recursively at insert (nested required
 --   keys + JSON types), and drift asserts are NULL-safe (IS NOT / NOT
 --   EXISTS) so missing keys can never compare equal-by-NULL.
@@ -475,6 +482,24 @@ WHEN EXISTS (SELECT 1 FROM recipes o JOIN recipe_locales l ON l.recipe_id = o.id
   AND (NEW.name <> OLD.name OR NEW.url <> OLD.url OR NEW.license <> OLD.license)
 BEGIN
   SELECT RAISE(ABORT, 'source metadata bound to a published revision is immutable; disable the locale first');
+END;
+
+-- REPLACE/reinsert replay on the identity rows published content
+-- references: the UPDATE guards above catch UPDATE; a BEFORE-INSERT guard
+-- catches INSERT OR REPLACE / upsert collisions (its implicit delete never
+-- fires delete triggers with recursive_triggers off).
+CREATE TRIGGER recipes_insert_guard BEFORE INSERT ON recipes
+BEGIN
+  SELECT RAISE(ABORT, 'a recipe row bound to published content cannot be replaced')
+  WHERE EXISTS (SELECT 1 FROM recipes x WHERE x.id = NEW.id)
+    AND EXISTS (SELECT 1 FROM recipe_locales l WHERE l.recipe_id = NEW.id AND l.status = 'published');
+END;
+
+CREATE TRIGGER sources_insert_guard BEFORE INSERT ON sources
+BEGIN
+  SELECT RAISE(ABORT, 'source metadata bound to published content cannot be replaced')
+  WHERE EXISTS (SELECT 1 FROM sources x WHERE x.id = NEW.id)
+    AND EXISTS (SELECT 1 FROM recipes o JOIN recipe_locales l ON l.recipe_id = o.id AND l.status = 'published' WHERE o.source_id = NEW.id);
 END;
 
 -- An image row bound to any revision manifest is content-immutable
