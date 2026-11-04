@@ -574,9 +574,13 @@ const ACCOUNT_CSS = `
 @media (max-width: 640px) { .acct .row { grid-template-columns: 1fr; } .acct { margin: 1rem 0.75rem; padding: 1.25rem 1rem 1.5rem; } }
 `;
 
-/** Private, never-indexed page in the After hours shell (account + submissions). */
-export function renderAccountPage(title: string, bodyHtml: string): string {
-  return shell(`<style>${ACCOUNT_CSS}</style><main id="main" class="acct">${bodyHtml}</main>`, { title: `${title} - 2yolks`, noindex: true });
+/** Private, never-indexed page in the After hours shell (account + submissions).
+ * The account UI is localized en/es/fr: `lang` sets the document language and
+ * the header/footer chrome, `path` is the current request path used to build
+ * the language-switch links (query string replaced, lang preserved). */
+export function renderAccountPage(title: string, bodyHtml: string, lang = 'en', path = '/account'): string {
+  const nav = ['en', 'es', 'fr'].map((l) => ({ href: `${path}?lang=${l}`, label: l === 'en' ? 'English' : l === 'es' ? 'Español' : 'Français', current: l === lang }));
+  return shell(`<style>${ACCOUNT_CSS}</style><main id="main" class="acct">${bodyHtml}</main>`, { title: `${title} - 2yolks`, noindex: true, lang, nav });
 }
 
 export { CAPTURE_CLIENT_SCRIPT, CAPTURE_CHECK_STRINGS };
