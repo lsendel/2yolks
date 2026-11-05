@@ -342,6 +342,50 @@ describe('G2 all-writer fence regressions', () => {
     expect(await sealed(id1)).toBe(1);
   });
 
+  it('post-submit grant is rejected by the revisions guard (grants are pre-submit only)', async () => {
+    const cookie = await signIn('cook@example.com');
+    const id = await makeDraft(cookie);
+    expect((await post(`/account/recipes/${id}/submit`, {}, { cookie })).status).toBe(200);
+    // the permission page still RENDERS for a submitted recipe...
+    const sh = await shownHash(id, cookie);
+    // ...but its grant POST aborts at recipe_revisions_guard (submitted_at IS NULL required)
+    const res = await staleGrant(id, cookie, sh);
+    expect(res.status).toBe(409);
+    expect(await sealed(id)).toBe(0);
+  });
+
+  it('post-submit owner edit is rejected at the app level (409 already sent)', async () => {
+    const cookie = await signIn('cook@example.com');
+    const id = await makeDraft(cookie);
+    expect((await post(`/account/recipes/${id}/submit`, {}, { cookie })).status).toBe(200);
+    const res = await post('/account/recipes/save', {
+      id, title: 'Late edit', locale: 'us:en', intro: 'Warm.', ingredients: '2 cups stock\n1 onion', steps: 'Chop.\nSimmer.',
+      prep: '10', cook: '30', servings: '4', display_name: 'Ana', source_kind: 'original', source_url: '', attest: '1', category: 'soups-stews',
+    }, { cookie });
+    expect(res.status).toBe(409);
+  });
+
+  it('DOCUMENTED GAP: an admin edit on a submitted draft leaves the recipe stuck (no re-grant, no publish)', async () => {
+    const cookie = await signIn('cook@example.com');
+    const id = await makeDraft(cookie);
+    const sh = await shownHash(id, cookie);
+    expect((await post(`/account/recipes/${id}/permission`, { grant: '1', shown_hash: sh.hash, shown_seq: sh.seq }, { cookie })).status).toBe(200);
+    expect((await post(`/account/recipes/${id}/submit`, {}, { cookie })).status).toBe(200);
+    // admin edits the submitted draft (in the queue, so MCP can see it)
+    const edit = await toolCall(ADMIN_KEY, 'recipes.update_draft', { id, locales: [{ country: 'us', lang: 'en', title: 'Admin correction' }], confirmed: true });
+    expect(edit.isError).toBe(false);
+    // the live rows no longer match the consented head revision...
+    // ...the owner cannot re-grant (submitted), even with a freshly displayed form
+    const sh2 = await shownHash(id, cookie);
+    expect((await staleGrant(id, cookie, sh2)).status).toBe(409);
+    expect(await sealed(id)).toBe(1); // still only the pre-submit revision
+    // ...and the admin cannot publish: the guard's canonical predicate fails
+    const pub = await toolCall(ADMIN_KEY, 'recipes.publish', { id, confirmed: true });
+    expect(pub.isError).toBe(true);
+    expect((await DB.prepare(`SELECT status FROM recipe_locales WHERE recipe_id = ?`).bind(id).first<{ status: string }>())!.status).toBe('draft');
+    // recovery requires a design decision (design/0011 G9 options A/B) - no path exists today
+  });
+
   it('structural inventory: the full guard + fence trigger set is intact', async () => {
     const rows = await DB.prepare(`SELECT name FROM sqlite_master WHERE type = 'trigger' ORDER BY name`).all<{ name: string }>();
     expect((rows.results ?? []).map((r) => r.name)).toEqual([
