@@ -203,138 +203,70 @@ when, cohesively):
   already-qualified edit/grant flow with zero changes.
 - Failure modes fail closed: a failed return leaves the recipe submitted
   (unchanged); a return never makes anything publishable by itself.
-MECHANICS, second correction after review (design only - implementation
-awaits plan review; would land as design/0012-corrections-epoch.sql):
+MECHANICS, final correction after two review rounds (design only; NOT
+mounted as routes/tools and NOT applied to any live DB):
+The executable artifacts ARE the design: design/0012-corrections-epoch.sql
+(schema + guards + amended predicates) and its executable proof
+packages/api/src/corrections-epoch-probe.test.ts (15 tests, raw SQL on the
+actual 0001-0010 + 0012 schema). Summary:
 
-1. DURABLE NEVER-PUBLISHED MARKER (not inferable from requests): a
-   consumed publish_request is NOT durable proof - legacy flips and orphan
-   actual flips can lack request rows. Instead:
-   - recipes ADD COLUMN first_published_at TEXT (NULL = VERIFIED never
-     published)
-   - recipe_first_publish_stamp: AFTER UPDATE OF status ON recipe_locales
-     WHEN NEW.status = 'published' AND OLD.status <> 'published' ->
-     stamp recipes.first_published_at = COALESCE(first_published_at,
-     datetime('now')). EVERY actual draft->published transition stamps it,
-     on every write path, because it is a table trigger.
-   - Migration backfill classification: every recipe with a currently
-     published locale gets stamped; every other LEGACY recipe gets a
-     sentinel (e.g. '1900-01-01T00:00:00Z' = history UNKNOWN) because
-     pre-marker flips are unprovable. Unknown history fails closed: the
-     return requires first_published_at IS NULL, so only recipes whose
-     whole life postdates the marker are returnable. The current
-     non-published guard (NOT EXISTS a published locale) is retained as a
-     separate conjunct.
+- DURABLE NEVER-PUBLISHED MARKER: recipes.first_published_at, stamped by a
+  table trigger at EVERY actual draft->published flip (every write path),
+  never inferred from consumed requests (legacy/orphan flips can lack
+  them). Marker is trusted history: NULL->stamp only; clear/change/forged
+  INSERT/REPLACE reset all abort; the 0007 published-INSERT guard is
+  retained. Migration classifies BEFORE the tool mounts: currently
+  published = stamped; every other legacy recipe = sentinel (unknown
+  history fails closed - the return requires verified NULL).
+- CORRECTIONS EPOCH: recipes.corrections_epoch; consent events and publish
+  requests carry an epoch written from the recipe's current epoch inside
+  the existing atomic batches; integrity triggers reject ANY mis-stamped
+  event/request from ANY writer. The qualified currency predicates
+  (publish_assert, publish_assert_scope, recipe_locales_publish_guard,
+  recipe_locales_effective) are preserved verbatim with ONLY epoch
+  conjuncts added - e.epoch AND p.epoch = current, at request, flip and
+  view, for BOTH scopes. These amendments RE-QUALIFY under the probe
+  before any apply (the epoch adds guarded state; this is a reviewed
+  amendment, not "invariants untouched"). The shown_epoch addition to the
+  permission form + grant expected tuple is likewise a behavior change
+  that re-qualifies with the route work, not a cosmetic note.
+- RETURN OPERATION (unique durable identity, append-only, consume-once):
+  return_operations carries the full expected tuple (owner, head revision,
+  head seq NULL-safe, epoch, submission, actor, note). Its INSERT trigger
+  asserts the tuple against CURRENT state and RAISEs inside the batch on
+  ANY mismatch - a losing race, stale expectation or replay has ZERO
+  effects (no op row, no transition, no audit). The SQL entry guard on
+  recipes lets the epoch advance ONLY through the exact return shape bound
+  to a validated unconsumed op - shape alone is not authority. Batch:
+  insert op -> guarded transition -> consume op -> audit keyed on THIS
+  op's consumption; any failure rolls everything back (proven: audit
+  failure leaves epoch, submission, op and audit untouched).
+- FRESH-REVISION SCOPE, specified: SQL mandates FRESH GRANTS (epoch-bound)
+  + the existing exact-head binding; revision novelty is the route flow's
+  convention, not a SQL invariant. Same-content re-grant after a return is
+  meaningful re-consent on the bound displayed hash.
+- RACES, corrected: grant-first ADVANCES THE HEAD (new revision sealed),
+  so the return's expected-head CAS REJECTS - the admin re-inspects and
+  re-issues; return-first rejects the old displayed form (old epoch/fence/
+  hash) and the admin's stale inspected state likewise fails the op CAS.
+  Both directions require fresh inspection, never silent success.
 
-2. CORRECTIONS EPOCH (additive columns + added conjuncts ONLY; amended
-   predicates re-qualify under the test plan):
-   - recipes ADD COLUMN corrections_epoch INTEGER NOT NULL DEFAULT 0
-   - recipe_consent_events ADD COLUMN epoch INTEGER NOT NULL DEFAULT 0,
-     written at grant time from the recipe's current epoch inside
-     grantPermission's existing atomic batch
-   - publish_requests ADD COLUMN epoch INTEGER NOT NULL DEFAULT 0, written
-     at request time likewise
-   - Epoch integrity triggers (SQL, apply to EVERY writer incl. legacy):
-     * BEFORE INSERT on recipe_consent_events and on publish_requests:
-       RAISE when NEW.epoch <> the recipe's current corrections_epoch -
-       no path can stamp a wrong epoch
-     * BEFORE UPDATE OF corrections_epoch ON recipes: RAISE unless the
-       transition is EXACTLY epoch+1 AND submitted_at IS NOT NULL ->
-       NULL AND owner unchanged AND first_published_at IS NULL - this is
-       the SQL-aborting entry guard; only the audited return shape passes;
-       direct epoch writes and decreases abort
-     * BEFORE INSERT ON recipes: RAISE when a same-id row exists whose
-       epoch, first_published_at or submitted_at would be reset by an
-       INSERT OR REPLACE - REPLACE can never silently reset guarded flow
-       state (existing append-only/collision guards retained)
-   - Currency conjunct at ALL THREE enforcement points, on BOTH tuple
-     members: publish_assert_scope (request), recipe_locales_publish_guard
-     (flip) and recipe_locales_effective (view) require
-     e.epoch = current recipe epoch on the consent check AND
-     p.epoch = current recipe epoch on the request join (the view's
-     request join gets p.epoch too, not only the event epoch).
-
-3. FRESH-REVISION SCOPE, specified: SQL mandates FRESH GRANTS (epoch-bound)
-   plus the existing exact-head binding; it does NOT mandate revision
-   novelty. A same-content re-grant after a return is meaningful re-consent
-   on the bound displayed hash. Fresh-head-per-grant is the route flow's
-   behavior (every grant POST seals expectedRevSeq+1), a convention, not a
-   SQL invariant.
-
-4. PERMISSION FORM carries a shown_epoch hidden field alongside shown_hash
-   and shown_seq; grantPermission's expected tuple becomes (hash, fence
-   seq, epoch), all asserted in the same atomic batch. After a return, an
-   OLD displayed form (old epoch, old fence seq, or old hash) is REJECTED
-   409 - the return can never stamp a new epoch onto an old approval,
-   because consent INSERTs only happen through the grant flow at the
-   recipe's current epoch (integrity trigger, point 2).
-
-5. RETURN TOOL: recipes.return_for_corrections - role admin (ROLE_RANK is
-   the RBAC source), confirmed: true, note required, member of
-   RECIPE_ID_TOOLS (privacy boundary source-grounded: submitted owned
-   drafts are admin-visible, editor-invisible). Args carry an EXPECTED CAS
-   TUPLE read from inspected state (recipes.get): expected_owner,
-   expected_head_revision, expected_head_seq (NULL-safe IS comparison -
-   MAX(seq) is NULL on never-revised recipes), expected_epoch,
-   expected_submission. ONE D1 batch:
-   - stmt 1 UPDATE recipes SET submitted_at = NULL, corrections_epoch =
-     corrections_epoch + 1 WHERE id = ? AND owner_user_id = :expected_owner
-     AND owner_user_id IS NOT NULL AND submitted_at IS NOT NULL AND
-     submitted_at = :expected_submission AND corrections_epoch =
-     :expected_epoch AND first_published_at IS NULL AND NOT EXISTS
-     (SELECT 1 FROM recipe_locales l WHERE l.recipe_id = recipes.id AND
-     l.status = 'published') AND (SELECT MAX(seq) FROM recipe_revisions r
-     WHERE r.recipe_id = recipes.id) IS :expected_head_seq AND (SELECT r.id
-     FROM recipe_revisions r WHERE r.recipe_id = recipes.id ORDER BY seq
-     DESC LIMIT 1) IS :expected_head_revision
-   - stmt 2 audit INSERT keyed on the POST-state: INSERT INTO mcp_audit
-     ... SELECT ... FROM recipes WHERE id = ? AND submitted_at IS NULL AND
-     corrections_epoch = :expected_epoch + 1 - an audit row exists only if
-     THIS batch's transition actually happened with the expected values.
-   Audit truthfulness, corrected: audit-first-in-one-batch is NOT same-
-   state proof (statement/trigger effects can intervene, and post-commit
-   changes=1 is not rollback proof). The truthfulness structure is instead:
-   the SQL entry guard (point 2) protects the transition against EVERY
-   writer; the CAS predicate binds the update to the inspected tuple; the
-   audit insert is keyed on the post-state with the expected values; and
-   the whole batch is one transaction, so any failure (trigger abort,
-   constraint, later statement) rolls back BOTH statements. The tool maps
-   update changes = 0 (or audit insert = 0) to 409.
-
-6. RACES: concurrent returns serialize - the loser's CAS
-   (submitted_at IS NOT NULL / epoch) fails -> 409, zero audit rows. Grant
-   racing return: grant-first -> the return still fires and the grant's
-   epoch dies; return-first -> the grant records the NEW epoch (the
-   intended re-grant). A publish request racing a return: request-first ->
-   the flip guard's p.epoch check kills it after the return; return-first
-   -> the request insert aborts on the epoch integrity trigger.
-
-7. IMMUTABLE HISTORY: revision, consent, request and audit rows stay
-   append-only and untouched; invalidation is structural via epoch, nothing
-   rewritten. The return sends no notice and adds no public behavior.
+PROBE PROOF MAP (all passing, 384/384 suite, tsc clean): happy return;
+old grant cannot request publish post-return; pre-return orphan request
+cannot flip; race loser zero-effects; replay zero-effects; per-dimension
+CAS mismatches; epoch tamper (direct write, decrease, op-less transition,
+REPLACE reset); mis-stamped event/request rejected; unchanged-content
+recovery publishes at the new epoch; marker stamps once and never moves;
+marker clear/change/forged-insert/published-insert abort; sentinel,
+ownerless, unsubmitted and currently-published returns rejected; audit
+failure full rollback; both-scopes barrier on an image-binding head; the
+serving view carries both epoch conjuncts.
 
 OWNER NOTICE: the returned recipe simply reappears in the owner's drafts -
 zero new authority. An email notice is a NEW kind with new wording and
 audience; it is NOT covered by any existing grant and is proposed only as
 an optional approval-gated addition, with wording drafted separately for
 approval before any send.
-
-TEST PLAN (hard gate - all required when implementation is approved):
-legacy unknown-history sentinel excluded; currently-published backfill
-stamped; legacy disabled-after-orphan-flip (no request row) classified
-sentinel and excluded; CAS mismatch on EACH dimension (owner, head
-revision, head seq, epoch, submission) -> 409; concurrent-return race;
-old displayed form after return (old epoch / old fence seq / old hash)
--> 409; epoch tamper: direct UPDATE not matching the transition shape
-aborts, decrease aborts, INSERT OR REPLACE reset aborts, consent/request
-insert with wrong epoch aborts; audit failure and zero-update both leave
-ZERO audit rows (rollback, not post-commit checks); both scopes (text-only
-and text+images grants invalidated); unchanged return + resubmit ->
-request and flip fail until a fresh grant at the new epoch; old orphan
-request -> flip aborts; published-then-disabled reject; ownerless
-excluded; epoch recorded on consent/request rows equals the recipe's epoch
-at write time; fresh recovery (return -> edit -> re-grant at new epoch ->
-submit -> publish succeeds); re-qualification of the three amended
-predicates.
 
 CUTOVER GATE, hard: the tested recovery loop (this option-A design, once
 reviewed and implemented with its test plan) is a HARD precondition for
