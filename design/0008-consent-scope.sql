@@ -42,9 +42,12 @@ END;
 
 -- Scoped per-row flip + serving (closes the cross-scope MAX(consent_seq)
 -- hole: an images-scope grant must never make a revoked text consent look
--- current). The 0007 trigger and view are replaced with scope-exact
--- equivalents; the images-scope request-time predicate stays in
--- publish_assert_scope above.
+-- current, and a revoked images consent must never leave image-binding
+-- content published or publishable). The 0007 trigger and view are replaced
+-- with scope-exact equivalents: TEXT is required everywhere, and IMAGES is
+-- required whenever the head revision's manifest binds images, at request
+-- time (publish_assert_scope), at the flip (this trigger), and at serving
+-- time (the view below).
 DROP TRIGGER recipe_locales_publish_guard;
 CREATE TRIGGER recipe_locales_publish_guard BEFORE UPDATE OF status ON recipe_locales
 WHEN NEW.status = 'published' AND OLD.status <> 'published'
@@ -68,6 +71,21 @@ BEGIN
             WHERE x.recipe_id = e.recipe_id AND x.revision_id = e.revision_id AND x.user_id = e.user_id
               AND x.audience = e.audience AND x.license_version = e.license_version AND x.license_lang = e.license_lang
               AND x.scope = e.scope))
+      -- when the head revision binds images, a current images-scope grant by
+      -- the current owner for the same exact revision and license is also
+      -- required at this enforcement point
+      AND (
+        NOT EXISTS (SELECT 1 FROM recipe_revision_images ri WHERE ri.revision_id = p.revision_id)
+        OR EXISTS (
+          SELECT 1 FROM recipe_consent_events ei
+          WHERE ei.recipe_id = p.recipe_id AND ei.revision_id = p.revision_id
+            AND ei.user_id = (SELECT owner_user_id FROM recipes WHERE id = p.recipe_id)
+            AND ei.audience = 'public' AND ei.license_version = p.license_version AND ei.license_lang = p.license_lang
+            AND ei.scope = 'images' AND ei.event = 'grant'
+            AND ei.consent_seq = (SELECT MAX(consent_seq) FROM recipe_consent_events xi
+              WHERE xi.recipe_id = ei.recipe_id AND xi.revision_id = ei.revision_id AND xi.user_id = ei.user_id
+                AND xi.audience = ei.audience AND xi.license_version = ei.license_version AND xi.license_lang = ei.license_lang
+                AND xi.scope = ei.scope)))
       -- this row's locale is in the consented snapshot and text-equal (NULL-safe)
       AND EXISTS (
         SELECT 1 FROM json_each(json_extract(r.snapshot_json, '$.locales')) k
@@ -151,4 +169,19 @@ WHERE l.status = 'published'
           AND x.scope = e.scope)
     WHERE p.recipe_id = l.recipe_id
       AND r.seq = (SELECT MAX(seq) FROM recipe_revisions WHERE recipe_id = l.recipe_id)
+      -- when the head revision binds images, a current images-scope grant by
+      -- the current owner for the same exact revision and license is also
+      -- required at this enforcement point
+      AND (
+        NOT EXISTS (SELECT 1 FROM recipe_revision_images ri WHERE ri.revision_id = p.revision_id)
+        OR EXISTS (
+          SELECT 1 FROM recipe_consent_events ei
+          WHERE ei.recipe_id = p.recipe_id AND ei.revision_id = p.revision_id
+            AND ei.user_id = (SELECT owner_user_id FROM recipes WHERE id = p.recipe_id)
+            AND ei.audience = 'public' AND ei.license_version = p.license_version AND ei.license_lang = p.license_lang
+            AND ei.scope = 'images' AND ei.event = 'grant'
+            AND ei.consent_seq = (SELECT MAX(consent_seq) FROM recipe_consent_events xi
+              WHERE xi.recipe_id = ei.recipe_id AND xi.revision_id = ei.revision_id AND xi.user_id = ei.user_id
+                AND xi.audience = ei.audience AND xi.license_version = ei.license_version AND xi.license_lang = ei.license_lang
+                AND xi.scope = ei.scope)))
       AND EXISTS (SELECT 1 FROM json_each(json_extract(r.snapshot_json, '$.locales')) k WHERE k.key = l.country || ':' || l.lang));

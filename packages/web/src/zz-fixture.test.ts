@@ -1,5 +1,12 @@
 import { it } from 'vitest';
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, mkdirSync, mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+// Render fixtures land in FIXTURE_OUT when set (pixel pipeline), else a fresh
+// temp dir so the suite is green on any machine.
+const OUT = process.env['FIXTURE_OUT'] ?? mkdtempSync(join(tmpdir(), '2yolks-fixtures-'));
+mkdirSync(OUT, { recursive: true });
 import { renderHome, renderCountryHome } from './server';
 
 const rows = [
@@ -13,7 +20,7 @@ const rows = [
 it('writes fixture HTML', () => {
   const locales = [{ country: 'us', countryName: 'United States', lang: 'en' }, { country: 'us', countryName: 'United States', lang: 'es' }];
   for (const lang of ['en', 'es', 'fr']) {
-    writeFileSync(`/downloads/render-fixtures/home-${lang}.html`, renderHome({ recipes: rows, locales, lang }));
+    writeFileSync(`${OUT}/home-${lang}.html`, renderHome({ recipes: rows, locales, lang }));
   }
-  writeFileSync('/downloads/render-fixtures/country-us.html', renderCountryHome({ country: 'us', countryName: 'United States', recipes: rows }));
+  writeFileSync(`${OUT}/country-us.html`, renderCountryHome({ country: 'us', countryName: 'United States', recipes: rows }));
 });

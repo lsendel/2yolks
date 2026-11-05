@@ -53,10 +53,13 @@ async function addImage(recipeId: string, opts: { digest?: boolean } = {}) {
     VALUES ('img-1', ?, 'hero', NULL, 'r2/img-1', 'image/jpeg', 12345, 'photo', 'Ana', 'https://2yolks.com/', 'proprietary', ?)`).bind(recipeId, opts.digest === false ? null : DIGEST).run();
 }
 
-/** The content hash the permission form currently displays. */
-async function shownHash(id: string, cookie: string): Promise<string> {
+/** The displayed-state binding the permission form currently shows. */
+async function shownHash(id: string, cookie: string): Promise<{ hash: string; seq: string }> {
   const html = await (await get(`/account/recipes/${id}/permission`, cookie, ON)).text();
-  return /name="shown_hash" value="([0-9a-f]{64})"/.exec(html)![1]!;
+  const hash = /name="shown_hash" value="([0-9a-f]{64})"/.exec(html);
+  const seq = /name="shown_seq" value="(\d+)"/.exec(html);
+  if (!hash || !seq) throw new Error('displayed-state binding missing from the form');
+  return { hash: hash[1]!, seq: seq[1]! };
 }
 
 function buildDB(schema: 'none' | '0007' | '0008'): D1Database {
@@ -70,6 +73,7 @@ function buildDB(schema: 'none' | '0007' | '0008'): D1Database {
   if (schema === '0008') {
     sqlite.exec(readFileSync(new URL('../../../design/0008-consent-scope.sql', import.meta.url), 'utf8'));
     sqlite.exec(readFileSync(new URL('../../../design/0009-image-provenance.sql', import.meta.url), 'utf8'));
+    sqlite.exec(readFileSync(new URL('../../../design/0010-content-fence.sql', import.meta.url), 'utf8'));
   }
   return makeD1(sqlite);
 }
@@ -110,14 +114,16 @@ describe('C2 permission step routes (flag-gated)', () => {
     expect(html).not.toContain('name="grant_images"');
     expect(html).not.toMatch(/name="grant"[^>]*checked/);
     expect(html).toContain('public-v1');
-    const sh = /name="shown_hash" value="([0-9a-f]{64})"/.exec(html)![1]!;
+    const shM = /name="shown_hash" value="([0-9a-f]{64})"/.exec(html);
+    const sqM = /name="shown_seq" value="(\d+)"/.exec(html);
+    const sh = { hash: shM![1]!, seq: sqM![1]! };
 
-    expect((await post(`/account/recipes/${id}/permission`, { shown_hash: sh }, { cookie, e: ON })).status).toBe(400);
-    const ok = await post(`/account/recipes/${id}/permission?lang=es`, { grant: '1', shown_hash: sh }, { cookie, e: ON });
+    expect((await post(`/account/recipes/${id}/permission`, { shown_hash: sh.hash, shown_seq: sh.seq }, { cookie, e: ON })).status).toBe(400);
+    const ok = await post(`/account/recipes/${id}/permission?lang=es`, { grant: '1', shown_hash: sh.hash, shown_seq: sh.seq }, { cookie, e: ON });
     expect(ok.status).toBe(200);
     const rev = await DB.prepare(`SELECT id, seq, content_hash FROM recipe_revisions WHERE recipe_id = ?`).bind(id).first<{ id: string; seq: number; content_hash: string }>();
     expect(rev!.seq).toBe(1);
-    expect(rev!.content_hash).toBe(sh); // the granted revision IS the displayed content
+    expect(rev!.content_hash).toBe(sh.hash); // the granted revision IS the displayed content
     const ev = await DB.prepare(`SELECT event, revision_id, license_version, license_lang, audience, scope FROM recipe_consent_events WHERE recipe_id = ?`).bind(id).first<Record<string, string>>();
     expect(ev).toMatchObject({ event: 'grant', revision_id: rev!.id, license_version: 'public-v1', license_lang: 'es', audience: 'public', scope: 'text' });
     const receipt = sent.find((m) => m.subject.includes('Abuela Soup'));
@@ -130,7 +136,7 @@ describe('C2 permission step routes (flag-gated)', () => {
     const after = await get(`/account/recipes/${id}/permission`, cookie, ON);
     const html2 = await after.text();
     expect(html2).toContain('Permission is on for license public-v1');
-    expect(html2).toContain(sh.slice(0, 12));
+    expect(html2).toContain(sh.hash.slice(0, 12));
     expect(html2).not.toContain('name="grant"');
     expect(html2).not.toContain('Withdraw permission');
   });
@@ -147,23 +153,23 @@ describe('C2 permission step routes (flag-gated)', () => {
     const sh = await shownHash(id, cookie);
 
     // images grant without provenance is refused, and NOTHING is written
-    const noProv = await post(`/account/recipes/${id}/permission`, { grant_images: '1', shown_hash: sh }, { cookie, e: ON });
+    const noProv = await post(`/account/recipes/${id}/permission`, { grant_images: '1', shown_hash: sh.hash, shown_seq: sh.seq }, { cookie, e: ON });
     expect(noProv.status).toBe(400);
     // 'other' provenance without whose-permission is refused, and NOTHING is written
-    const noNote = await post(`/account/recipes/${id}/permission`, { grant_images: '1', shown_hash: sh, 'prov_img-1': 'other' }, { cookie, e: ON });
+    const noNote = await post(`/account/recipes/${id}/permission`, { grant_images: '1', shown_hash: sh.hash, shown_seq: sh.seq, 'prov_img-1': 'other' }, { cookie, e: ON });
     expect(noNote.status).toBe(400);
     expect((await DB.prepare(`SELECT provenance p FROM recipe_images WHERE id = 'img-1'`).first<{ p: string | null }>())!.p).toBeNull();
     expect((await DB.prepare(`SELECT count(*) n FROM recipe_revisions`).first<{ n: number }>())!.n).toBe(0);
     expect((await DB.prepare(`SELECT count(*) n FROM recipe_consent_events`).first<{ n: number }>())!.n).toBe(0);
 
     // text only: no image event
-    await post(`/account/recipes/${id}/permission`, { grant: '1', shown_hash: sh }, { cookie, e: ON });
+    await post(`/account/recipes/${id}/permission`, { grant: '1', shown_hash: sh.hash, shown_seq: sh.seq }, { cookie, e: ON });
     let evs = await DB.prepare(`SELECT scope, event FROM recipe_consent_events WHERE recipe_id = ? ORDER BY consent_seq`).bind(id).all<{ scope: string; event: string }>();
     expect(evs.results!.map((r) => r.scope)).toEqual(['text']);
 
     // images afterwards, bound to a NEW revision (separately versioned)
     const sh2 = await shownHash(id, cookie);
-    const ok = await post(`/account/recipes/${id}/permission`, { grant_images: '1', shown_hash: sh2, 'prov_img-1': 'own' }, { cookie, e: ON });
+    const ok = await post(`/account/recipes/${id}/permission`, { grant_images: '1', shown_hash: sh2.hash, shown_seq: sh2.seq, 'prov_img-1': 'own' }, { cookie, e: ON });
     expect(ok.status).toBe(200);
     evs = await DB.prepare(`SELECT scope, event FROM recipe_consent_events WHERE recipe_id = ? ORDER BY consent_seq`).bind(id).all<{ scope: string; event: string }>();
     expect(evs.results!.map((r) => r.scope)).toEqual(['text', 'images']);
@@ -184,7 +190,7 @@ describe('C2 permission step routes (flag-gated)', () => {
     const id = await makeDraft(cookie);
     await addImage(id, { digest: false });
     const sh = await shownHash(id, cookie);
-    const res = await post(`/account/recipes/${id}/permission`, { grant_images: '1', shown_hash: sh, 'prov_img-1': 'own' }, { cookie, e: ON });
+    const res = await post(`/account/recipes/${id}/permission`, { grant_images: '1', shown_hash: sh.hash, shown_seq: sh.seq, 'prov_img-1': 'own' }, { cookie, e: ON });
     expect(res.status).toBe(400);
     expect((await DB.prepare(`SELECT count(*) n FROM recipe_consent_events`).first<{ n: number }>())!.n).toBe(0);
   });
@@ -194,7 +200,7 @@ describe('C2 permission step routes (flag-gated)', () => {
     const id = await makeDraft(cookie);
     const sh = await shownHash(id, cookie);
     await DB.prepare(`UPDATE recipe_locales SET title = 'UNSEEN EDIT' WHERE recipe_id = ?`).bind(id).run();
-    const res = await post(`/account/recipes/${id}/permission`, { grant: '1', shown_hash: sh }, { cookie, e: ON });
+    const res = await post(`/account/recipes/${id}/permission`, { grant: '1', shown_hash: sh.hash, shown_seq: sh.seq }, { cookie, e: ON });
     expect(res.status).toBe(409);
     expect((await DB.prepare(`SELECT count(*) n FROM recipe_revisions`).first<{ n: number }>())!.n).toBe(0);
     expect((await DB.prepare(`SELECT count(*) n FROM recipe_consent_events`).first<{ n: number }>())!.n).toBe(0);
@@ -206,7 +212,7 @@ describe('C2 permission step routes (flag-gated)', () => {
     await DB.prepare(`INSERT INTO mail_log (id, kind, created_at) SELECT 'x' || hex(randomblob(4)), 'receipt', ? FROM (SELECT 1 UNION SELECT 2 UNION SELECT 3 UNION SELECT 4 UNION SELECT 5 UNION SELECT 6 UNION SELECT 7 UNION SELECT 8)`).bind(Date.now()).run();
     const before = sent.length;
     const sh = await shownHash(id, cookie);
-    const ok = await post(`/account/recipes/${id}/permission`, { grant: '1', shown_hash: sh }, { cookie, e: ON });
+    const ok = await post(`/account/recipes/${id}/permission`, { grant: '1', shown_hash: sh.hash, shown_seq: sh.seq }, { cookie, e: ON });
     expect(ok.status).toBe(200); // the grant still lands; only the email is skipped
     expect(sent.length).toBe(before);
   });
@@ -223,7 +229,7 @@ describe('C2 permission step routes (flag-gated)', () => {
     const id = await makeDraft(cookie);
     await addImage(id);
     const sh = await shownHash(id, cookie);
-    await post(`/account/recipes/${id}/permission`, { grant: '1', shown_hash: sh }, { cookie, e: ON });
+    await post(`/account/recipes/${id}/permission`, { grant: '1', shown_hash: sh.hash, shown_seq: sh.seq }, { cookie, e: ON });
     const edit = await post(`/account/recipes/save`, {
       id,
       title: 'Abuela Soup v2', locale: 'us:en', intro: 'Warm.', ingredients: '2 cups stock\n1 onion', steps: 'Chop.\nSimmer.',
@@ -235,7 +241,7 @@ describe('C2 permission step routes (flag-gated)', () => {
     expect(html).toContain('covers that saved version only, not the current draft');
     // image consent recorded on a NEW revision must not make the old text consent cover it
     const sh2 = await shownHash(id, cookie);
-    await post(`/account/recipes/${id}/permission`, { grant_images: '1', shown_hash: sh2, 'prov_img-1': 'own' }, { cookie, e: ON });
+    await post(`/account/recipes/${id}/permission`, { grant_images: '1', shown_hash: sh2.hash, shown_seq: sh2.seq, 'prov_img-1': 'own' }, { cookie, e: ON });
     const html2 = await (await get(`/account/recipes/${id}/permission`, cookie, ON)).text();
     expect(html2).toContain('covers that saved version only, not the current draft');
     expect(html2).toContain('name="grant"'); // text re-grant box offered again
@@ -245,7 +251,7 @@ describe('C2 permission step routes (flag-gated)', () => {
     const cookie = await signIn('cook@example.com');
     const id = await makeDraft(cookie);
     const sh = await shownHash(id, cookie);
-    await post(`/account/recipes/${id}/permission`, { grant: '1', shown_hash: sh }, { cookie, e: ON });
+    await post(`/account/recipes/${id}/permission`, { grant: '1', shown_hash: sh.hash, shown_seq: sh.seq }, { cookie, e: ON });
     const res = await post(`/account/recipes/${id}/permission/withdraw`, {}, { cookie, e: ON });
     expect(res.status).toBe(404);
     const evs = await DB.prepare(`SELECT event FROM recipe_consent_events WHERE recipe_id = ?`).bind(id).all<{ event: string }>();
@@ -258,6 +264,38 @@ describe('C2 permission step routes (flag-gated)', () => {
     const other = await signIn('other@example.com');
     expect((await get(`/account/recipes/${id}/permission`, other, ON)).status).toBe(404);
     const sh = await shownHash(id, owner);
-    expect((await post(`/account/recipes/${id}/permission`, { grant: '1', shown_hash: sh }, { cookie: other, e: ON })).status).toBe(404);
+    expect((await post(`/account/recipes/${id}/permission`, { grant: '1', shown_hash: sh.hash, shown_seq: sh.seq }, { cookie: other, e: ON })).status).toBe(404);
+  });
+
+  it('a content-preserving write still moves the fence and conflicts the grant', async () => {
+    const cookie = await signIn('cook@example.com');
+    const id = await makeDraft(cookie);
+    const sh = await shownHash(id, cookie);
+    // legacy writer, no content change: the displayed hash stays valid but the
+    // fence moved, so the batch must conflict instead of sealing
+    await DB.prepare(`UPDATE recipe_locales SET title = title WHERE recipe_id = ?`).bind(id).run();
+    const res = await post(`/account/recipes/${id}/permission`, { grant: '1', shown_hash: sh.hash, shown_seq: sh.seq }, { cookie, e: ON });
+    expect(res.status).toBe(409);
+    expect((await DB.prepare(`SELECT count(*) n FROM recipe_revisions WHERE recipe_id = ?`).bind(id).first<{ n: number }>())!.n).toBe(0);
+    expect((await DB.prepare(`SELECT count(*) n FROM recipe_consent_events WHERE recipe_id = ?`).bind(id).first<{ n: number }>())!.n).toBe(0);
+    expect((await DB.prepare(`SELECT count(*) n FROM consent_fence_probe`).first<{ n: number }>())!.n).toBe(0);
+  });
+
+  it('a raced edit between the snapshot read and the batch is never sealed', async () => {
+    const cookie = await signIn('cook@example.com');
+    const id = await makeDraft(cookie);
+    const sh = await shownHash(id, cookie);
+    // inject the legacy write between the single snapshot read and the batch
+    const realBatch = DB.batch.bind(DB);
+    const racy: D1Database = Object.assign(Object.create(Object.getPrototypeOf(DB)) as D1Database, DB, {
+      batch: (async (stmts: Parameters<D1Database['batch']>[0]) => {
+        await DB.prepare(`UPDATE recipe_locales SET title = 'RACED UNSEEN' WHERE recipe_id = ?`).bind(id).run();
+        return realBatch(stmts);
+      }) as D1Database['batch'],
+    });
+    const res = await post(`/account/recipes/${id}/permission`, { grant: '1', shown_hash: sh.hash, shown_seq: sh.seq }, { cookie, e: { ...ON, DB: racy } });
+    expect(res.status).toBe(409);
+    expect((await DB.prepare(`SELECT count(*) n FROM recipe_revisions WHERE recipe_id = ?`).bind(id).first<{ n: number }>())!.n).toBe(0);
+    expect((await DB.prepare(`SELECT count(*) n FROM recipe_consent_events WHERE recipe_id = ?`).bind(id).first<{ n: number }>())!.n).toBe(0);
   });
 });

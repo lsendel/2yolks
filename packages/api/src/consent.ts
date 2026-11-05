@@ -27,8 +27,8 @@ export function consentFlowEnabled(env: { CONSENT_FLOW_ENABLED?: string }): bool
 
 /** True only when the 0007 tables exist. The flow never runs without them. */
 export async function schemaProbe(DB: D1Database): Promise<boolean> {
-  const row = await DB.prepare(`SELECT count(*) n FROM sqlite_master WHERE type = 'table' AND name IN ('recipe_revisions', 'recipe_consent_events', 'recipe_revision_images', 'publish_requests')`).first<{ n: number }>();
-  if (row!.n !== 4) return false;
+  const row = await DB.prepare(`SELECT count(*) n FROM sqlite_master WHERE type = 'table' AND name IN ('recipe_revisions', 'recipe_consent_events', 'recipe_revision_images', 'publish_requests', 'recipe_content_fence', 'consent_fence_probe')`).first<{ n: number }>();
+  if (row!.n !== 6) return false;
   // REV 10: consent events carry an explicit text|images scope.
   const cols = await DB.prepare(`SELECT count(*) n FROM pragma_table_info('recipe_consent_events') WHERE name = 'scope'`).first<{ n: number }>();
   if (cols!.n !== 1) return false;
@@ -45,6 +45,13 @@ export async function schemaProbe(DB: D1Database): Promise<boolean> {
 export const PUBLIC_LICENSE_VERSION = 'public-v1';
 
 /** Current revision counter for a recipe (0 when none). Next insert uses +1. */
+/** Displayed-state fence: create the row lazily, then read the current seq. */
+export async function contentFenceSeq(DB: D1Database, recipeId: string): Promise<number> {
+  await DB.prepare(`INSERT OR IGNORE INTO recipe_content_fence (recipe_id, seq) VALUES (?, 0)`).bind(recipeId).run();
+  const row = await DB.prepare(`SELECT seq FROM recipe_content_fence WHERE recipe_id = ?`).bind(recipeId).first<{ seq: number }>();
+  return row?.seq ?? 0;
+}
+
 export async function latestRevisionSeq(DB: D1Database, recipeId: string): Promise<number> {
   const row = await DB.prepare(`SELECT COALESCE(max(seq), 0) AS s FROM recipe_revisions WHERE recipe_id = ?`).bind(recipeId).first<{ s: number }>();
   return row!.s;
@@ -69,7 +76,7 @@ export type WriteResult = { ok: true } | { ok: false; reason: string };
  * a sealed digest (sha256) are publishable content and enter the snapshot;
  * `provOverrides` applies provenance declared in the same request, so the
  * hash matches what the atomic grant batch persists. */
-export async function buildSnapshotFromLive(DB: D1Database, recipeId: string, provOverrides?: Map<string, { prov: 'own' | 'ai' | 'other'; note: string }>): Promise<{ json: string; hash: string } | null> {
+export async function buildSnapshotFromLive(DB: D1Database, recipeId: string, provOverrides?: Map<string, { prov: 'own' | 'ai' | 'other'; note: string }>): Promise<{ json: string; hash: string; baseJson: string; baseHash: string } | null> {
   const r = await DB.prepare(`SELECT origin_country, category, prep_minutes, cook_minutes, rest_minutes, total_minutes, base_servings, author_name FROM recipes WHERE id = ?`).bind(recipeId).first<Record<string, unknown>>();
   if (!r) return null;
   const src = await DB.prepare(`SELECT s.name, s.url, s.license FROM sources s JOIN recipes o ON o.source_id = s.id WHERE o.id = ?`).bind(recipeId).first<{ name: string; url: string; license: string }>();
@@ -83,21 +90,28 @@ export async function buildSnapshotFromLive(DB: D1Database, recipeId: string, pr
     };
   }
   const imageRows = await DB.prepare(`SELECT id, kind, step_index, style, source_name, source_url, license, sha256, provenance, provenance_note FROM recipe_images WHERE recipe_id = ? AND sha256 IS NOT NULL ORDER BY id`).bind(recipeId).all<Record<string, unknown>>();
-  const images: SnapshotInput['images'] = (imageRows.results ?? []).map((i) => {
-    const id = String(i['id']);
-    const over = provOverrides?.get(id);
-    const prov = (over?.prov ?? (i['provenance'] as 'own' | 'ai' | 'other' | null)) || null;
-    return {
-      image_id: id, role: i['kind'] === 'hero' ? 'hero' as const : 'step' as const,
-      step_index: (i['step_index'] as number | null) ?? null,
-      style: String(i['style']) as 'photo' | 'illustration' | 'graphic',
-      source_name: String(i['source_name']), source_url: String(i['source_url']), license: String(i['license']),
-      sha256: String(i['sha256']),
-      provenance: prov,
-      provenance_note: over ? over.note || null : ((i['provenance_note'] as string | null) ?? null),
-    };
-  });
-  return canonicalSnapshot({
+  // One live read feeds BOTH hashes. An image enters a snapshot only with an
+  // effective provenance declaration (a sealed digest alone never binds an
+  // image): the base (displayed) view uses the stored declaration, the
+  // candidate view applies declarations made in this request.
+  const mapImages = (withOverrides: boolean): SnapshotInput['images'] =>
+    (imageRows.results ?? []).map((i) => {
+      const id = String(i['id']);
+      const over = withOverrides ? provOverrides?.get(id) : undefined;
+      const prov = (over?.prov ?? (i['provenance'] as 'own' | 'ai' | 'other' | null)) || null;
+      return {
+        image_id: id, role: i['kind'] === 'hero' ? 'hero' as const : 'step' as const,
+        step_index: (i['step_index'] as number | null) ?? null,
+        style: String(i['style']) as 'photo' | 'illustration' | 'graphic',
+        source_name: String(i['source_name']), source_url: String(i['source_url']), license: String(i['license']),
+        sha256: String(i['sha256']),
+        provenance: prov,
+        provenance_note: over ? over.note || null : ((i['provenance_note'] as string | null) ?? null),
+      };
+    }).filter((i) => i.provenance !== null);
+  const baseImages = mapImages(false);
+  const images = provOverrides && provOverrides.size > 0 ? mapImages(true) : baseImages;
+  const base = await canonicalSnapshot({
     recipe: {
       author_name: (r['author_name'] as string | null) ?? null, base_servings: (r['base_servings'] as number | null) ?? null,
       category: (r['category'] as string | null) ?? null, cook_minutes: (r['cook_minutes'] as number | null) ?? null,
@@ -106,8 +120,18 @@ export async function buildSnapshotFromLive(DB: D1Database, recipeId: string, pr
     },
     source: src,
     locales,
+    images: baseImages,
+  });
+  if (!provOverrides || provOverrides.size === 0) {
+    return { json: base.json, hash: base.hash, baseJson: base.json, baseHash: base.hash };
+  }
+  const candidate = await canonicalSnapshot({
+    recipe: (JSON.parse(base.json) as { recipe: SnapshotInput['recipe'] }).recipe,
+    source: src,
+    locales,
     images,
   });
+  return { json: candidate.json, hash: candidate.hash, baseJson: base.json, baseHash: base.hash };
 }
 
 /**
@@ -215,10 +239,14 @@ export async function grantPermission(DB: D1Database, input: {
   provenance: Array<{ imageId: string; prov: 'own' | 'ai' | 'other'; note: string | null }>;
   consents: Array<{ id: string; scope: 'text' | 'images'; licenseVersion: string; licenseLang: string }>;
   consentBaseSeq: number;
+  fenceSeq: number;
 }): Promise<WriteResult> {
   const parsed = JSON.parse(input.snap.json) as { locales: Record<string, unknown>; images: Array<Record<string, unknown>> };
   const keys = Object.keys(parsed.locales);
   const stmts: D1PreparedStatement[] = [];
+  // Content fence probe: aborts the whole batch when any writer moved the
+  // live state past the seq the permission form displayed (0010).
+  stmts.push(DB.prepare(`INSERT INTO consent_fence_probe (recipe_id, expected_seq) VALUES (?, ?)`).bind(input.recipeId, input.fenceSeq));
   for (const p of input.provenance) {
     stmts.push(DB.prepare(`UPDATE recipe_images SET provenance = ?, provenance_note = ? WHERE id = ? AND recipe_id = ?`).bind(p.prov, p.note, p.imageId, input.recipeId));
   }
@@ -258,6 +286,7 @@ export async function grantPermission(DB: D1Database, input: {
     stmts.push(DB.prepare(`INSERT INTO recipe_consent_events (id, recipe_id, revision_id, consent_seq, event, user_id, audience, license_version, license_lang, scope) VALUES (?, ?, ?, ?, 'grant', ?, 'public', ?, ?, ?)`)
       .bind(cs.id, input.recipeId, input.revisionId, input.consentBaseSeq + i + 1, input.userId, cs.licenseVersion, cs.licenseLang, cs.scope));
   });
+  stmts.push(DB.prepare(`DELETE FROM consent_fence_probe WHERE recipe_id = ?`).bind(input.recipeId));
   try {
     await DB.batch(stmts);
     return { ok: true };

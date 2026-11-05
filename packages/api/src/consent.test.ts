@@ -21,6 +21,7 @@ function fresh() {
   sqlite.exec(readFileSync(new URL('../../../design/0007-consent-revisions.sql', import.meta.url), 'utf8'));
   sqlite.exec(readFileSync(new URL('../../../design/0008-consent-scope.sql', import.meta.url), 'utf8'));
   sqlite.exec(readFileSync(new URL('../../../design/0009-image-provenance.sql', import.meta.url), 'utf8'));
+    sqlite.exec(readFileSync(new URL('../../../design/0010-content-fence.sql', import.meta.url), 'utf8'));
   sqlite.exec(`INSERT INTO users (id, email, created_at) VALUES ('${USER}', 'ana@example.com', '2026-01-01'), ('admin-1', 'admin@example.com', '2026-01-01')`);
   sqlite.exec(`INSERT INTO sources (id, name, url, license) VALUES ('src-1', 'Ana', 'https://2yolks.com/', 'user-original')`);
   sqlite.exec(`INSERT INTO recipes (id, source_id, origin_country, created_at, owner_user_id) VALUES ('${RECIPE}', 'src-1', 'us', '2026-01-01', '${USER}')`);
@@ -167,5 +168,40 @@ describe('scope-aware publication (REV 10 trigger)', () => {
     await DB.prepare(`UPDATE recipe_locales SET status = 'draft' WHERE recipe_id = ?`).bind(RECIPE).run();
     const flip = await DB.prepare(`UPDATE recipe_locales SET status = 'published' WHERE recipe_id = ?`).bind(RECIPE).run().then(() => ({ ok: true as const })).catch((e: unknown) => ({ ok: false as const, reason: String(e) }));
     expect(flip.ok).toBe(false);
+  });
+
+  it('revoking images removes serving, an orphan request cannot bypass the flip, and a later text grant cannot resurrect it', async () => {
+    const snap = await canonicalSnapshot({
+      recipe: { author_name: 'Ana', base_servings: 4, category: 'soups-stews', cook_minutes: 30, origin_country: 'us', prep_minutes: 10, rest_minutes: null, total_minutes: null },
+      source: { name: 'Ana', url: 'https://2yolks.com/', license: 'user-original' },
+      locales: { 'us:en': { title: 'Soup', slug: 'soup', intro: null, ingredients: ['stock'], steps: ['Cook.'] } },
+      images: [{ image_id: 'img-9', role: 'hero', step_index: null, style: 'photo', source_name: 'Ana', source_url: 'https://2yolks.com/', license: 'proprietary', sha256: 'a'.repeat(64), provenance: 'own', provenance_note: null }],
+    });
+    await DB.prepare(`INSERT INTO recipe_locales (recipe_id, country, lang, title, slug, ingredients_json, steps_json, status) VALUES (?, 'us', 'en', 'Soup', 'soup', '["stock"]', '["Cook."]', 'draft')`).bind(RECIPE).run();
+    expect(await saveRevision(DB, RECIPE, USER, 'rev-img', 0, snap)).toEqual({ ok: true });
+    await DB.prepare(`INSERT INTO recipe_images (id, recipe_id, kind, step_index, r2_key, mime, bytes, style, source_name, source_url, license, provenance, sha256)
+      VALUES ('img-9', ?, 'hero', NULL, 'r2/img-9', 'image/jpeg', 100, 'photo', 'Ana', 'https://2yolks.com/', 'proprietary', 'own', ?)`).bind(RECIPE, 'a'.repeat(64)).run();
+    await DB.prepare(`INSERT INTO recipe_revision_images (revision_id, image_id, role, step_index, style, source_name, source_url, license, sha256, provenance)
+      VALUES ('rev-img', 'img-9', 'hero', NULL, 'photo', 'Ana', 'https://2yolks.com/', 'proprietary', ?, 'own')`).bind('a'.repeat(64)).run();
+    expect(await recordConsent(DB, RECIPE, { id: 'ce-t1', revisionId: 'rev-img', expectedSeq: 0, event: 'grant', userId: USER, licenseVersion: 'public-license-v1', licenseLang: 'en', scope: 'text' })).toEqual({ ok: true });
+    expect(await recordConsent(DB, RECIPE, { id: 'ce-i1', revisionId: 'rev-img', expectedSeq: 1, event: 'grant', userId: USER, licenseVersion: 'public-license-v1', licenseLang: 'en', scope: 'images' })).toEqual({ ok: true });
+    expect(await publishRevision(DB, RECIPE, 'rev-img', 'admin-1', 'public-license-v1', 'en', 'pub-1')).toEqual({ ok: true });
+    expect((await DB.prepare(`SELECT count(*) n FROM recipe_locales_effective WHERE recipe_id = ?`).bind(RECIPE).first<{ n: number }>())!.n).toBe(1);
+    // orphan publish request: inserted while both grants were current, left unconsumed
+    await DB.prepare(`INSERT INTO publish_requests (id, recipe_id, revision_id, requested_by, license_version, license_lang) VALUES ('pub-orphan', ?, 'rev-img', 'admin-1', 'public-license-v1', 'en')`).bind(RECIPE).run();
+    // revoke IMAGES: published content must leave effective serving immediately
+    expect(await recordConsent(DB, RECIPE, { id: 'ce-rvi', revisionId: 'rev-img', expectedSeq: 2, event: 'revoke', userId: USER, licenseVersion: 'public-license-v1', licenseLang: 'en', scope: 'images' })).toEqual({ ok: true });
+    expect((await DB.prepare(`SELECT count(*) n FROM recipe_locales_effective WHERE recipe_id = ?`).bind(RECIPE).first<{ n: number }>())!.n).toBe(0);
+    await DB.prepare(`UPDATE recipe_locales SET status = 'draft' WHERE recipe_id = ?`).bind(RECIPE).run();
+    // a later TEXT grant must not resurrect the revoked images consent
+    expect(await recordConsent(DB, RECIPE, { id: 'ce-t2', revisionId: 'rev-img', expectedSeq: 3, event: 'grant', userId: USER, licenseVersion: 'public-license-v1', licenseLang: 'en', scope: 'text' })).toEqual({ ok: true });
+    const flip = await DB.prepare(`UPDATE recipe_locales SET status = 'published' WHERE recipe_id = ?`).bind(RECIPE).run().then(() => ({ ok: true as const })).catch((e: unknown) => ({ ok: false as const, reason: String(e) }));
+    expect(flip.ok).toBe(false);
+    expect((await DB.prepare(`SELECT count(*) n FROM recipe_locales_effective WHERE recipe_id = ?`).bind(RECIPE).first<{ n: number }>())!.n).toBe(0);
+    // re-granting IMAGES restores both enforcement points for the exact head revision
+    expect(await recordConsent(DB, RECIPE, { id: 'ce-i2', revisionId: 'rev-img', expectedSeq: 4, event: 'grant', userId: USER, licenseVersion: 'public-license-v1', licenseLang: 'en', scope: 'images' })).toEqual({ ok: true });
+    const flip2 = await DB.prepare(`UPDATE recipe_locales SET status = 'published' WHERE recipe_id = ?`).bind(RECIPE).run().then(() => ({ ok: true as const })).catch((e: unknown) => ({ ok: false as const, reason: String(e) }));
+    expect(flip2.ok).toBe(true);
+    expect((await DB.prepare(`SELECT count(*) n FROM recipe_locales_effective WHERE recipe_id = ?`).bind(RECIPE).first<{ n: number }>())!.n).toBe(1);
   });
 });

@@ -9,7 +9,7 @@ import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import { eq, and, ne, desc } from 'drizzle-orm';
 import { LOCALES, getCountry, localizedCountryName, slugify, validateRecipeSubmission, RECIPE_CATEGORY_SLUGS, categoryLabel, isRecipeCategorySlug, CATEGORIES, accountStrings, fill, isAccountLang, validatorMessage, parseWarningMessage, ssrfMessage, type AccountStrings } from '@2yolks/contracts';
 import { renderAccountPage, escapeHtml as esc, CAPTURE_CLIENT_SCRIPT, CAPTURE_CHECK_STRINGS } from '@2yolks/web/server';
-import { consentFlowEnabled, schemaProbe, buildSnapshotFromLive, grantPermission, latestRevisionSeq, latestConsentSeq, latestConsent, PUBLIC_LICENSE_VERSION } from './consent';
+import { consentFlowEnabled, schemaProbe, buildSnapshotFromLive, grantPermission, latestRevisionSeq, latestConsentSeq, latestConsent, contentFenceSeq, PUBLIC_LICENSE_VERSION } from './consent';
 import { createDb, recipes, recipeLocales, sources, users } from './db';
 import { sendMail, type MailEnv } from './email';
 import { parseRecipeText, parseJsonLdRecipe, type ParsedRecipe } from './parse';
@@ -542,6 +542,7 @@ accountApp.get('/recipes/:id/permission', async (c) => {
   const hasImages = images.length > 0;
   const snap = await buildSnapshotFromLive(c.env.DB, row.r.id);
   const currentHash = snap?.hash ?? '';
+  const shownSeq = await contentFenceSeq(c.env.DB, row.r.id);
   const q = `?lang=${lang}`;
   // Display state is bound to the EXACT revision: a grant names its revision's
   // content hash, and a grant on an older revision never covers the current draft.
@@ -579,6 +580,7 @@ accountApp.get('/recipes/:id/permission', async (c) => {
     }).join('\n') : '';
     form = `<form method="post" action="/account/recipes/${row.r.id}/permission${q}">
     <input type="hidden" name="shown_hash" value="${currentHash}">
+    <input type="hidden" name="shown_seq" value="${shownSeq}">
     ${boxes}
     ${pickers}
     <p class="hint">${fill(t.c2LicenseLine, { version: PUBLIC_LICENSE_VERSION, lang })}</p>
@@ -619,21 +621,29 @@ accountApp.post('/recipes/:id/permission', async (c) => {
   }
 
   // --- Optimistic binding: the grant covers the content the form DISPLAYED.
-  // Another writer (or another tab) changing the draft since the GET conflicts.
-  const current = await buildSnapshotFromLive(c.env.DB, row.r.id);
-  if (!current) return page(c, t.titleNotFound, banner('err', t.errDraftNotFound), 404);
-  if (str(f['shown_hash'], 64) !== current.hash) return page(c, t.c2PageTitle, banner('err', t.c2ErrConflict), 409);
+  // ONE live read feeds both the displayed-hash comparison (base) and the
+  // candidate to seal - no compare-then-rebuild window. The content fence
+  // (0010) then guards the batch itself against any writer racing between
+  // this read and the commit, including legacy writers outside this flow.
+  const cand = await buildSnapshotFromLive(c.env.DB, row.r.id, declared);
+  if (!cand) return page(c, t.titleNotFound, banner('err', t.errDraftNotFound), 404);
+  if (str(f['shown_hash'], 64) !== cand.baseHash) return page(c, t.c2PageTitle, banner('err', t.c2ErrConflict), 409);
+  const shownSeqRaw = Number(str(f['shown_seq'], 20));
+  if (!Number.isInteger(shownSeqRaw) || shownSeqRaw < 0) return page(c, t.c2PageTitle, banner('err', t.c2ErrConflict), 409);
 
-  // --- One atomic batch: provenance persistence + revision + manifest + consent.
-  const snap = (await buildSnapshotFromLive(c.env.DB, row.r.id, declared))!;
+  // --- One atomic batch: fence probe + provenance persistence + revision + manifest + consent.
   const wr = await grantPermission(c.env.DB, {
-    recipeId: row.r.id, userId: user.id, revisionId: `rev-${newId()}`, expectedRevSeq: await latestRevisionSeq(c.env.DB, row.r.id), snap,
+    recipeId: row.r.id, userId: user.id, revisionId: `rev-${newId()}`, expectedRevSeq: await latestRevisionSeq(c.env.DB, row.r.id), snap: { json: cand.json, hash: cand.hash },
     provenance: [...declared.entries()].map(([imageId, d]) => ({ imageId, prov: d.prov, note: d.note || null })),
     consents: [...(wantText ? ['text' as const] : []), ...(wantImages && hasImages ? ['images' as const] : [])]
       .map((scope) => ({ id: `ce-${newId()}`, scope, licenseVersion: PUBLIC_LICENSE_VERSION, licenseLang: lang })),
     consentBaseSeq: await latestConsentSeq(c.env.DB, row.r.id),
+    fenceSeq: shownSeqRaw,
   });
-  if (!wr.ok) return page(c, t.c2PageTitle, banner('err', t.errGeneric), 409);
+  if (!wr.ok) {
+    const raced = 'reason' in wr && String(wr.reason).includes('live state changed');
+    return page(c, t.c2PageTitle, banner('err', raced ? t.c2ErrConflict : t.errGeneric), 409);
+  }
 
   // Contributor receipt: the cook's own verified (session) address only, own
   // daily cap inside the combined site budget, never sent when a cap is out.
@@ -641,7 +651,7 @@ accountApp.post('/recipes/:id/permission', async (c) => {
     await sendMail(c.env, {
       to: user.email,
       subject: fill(t.c2MailSubject, { title: row.l.title }).slice(0, 180),
-      text: fill(t.c2MailBody, { title: row.l.title, hash: snap.hash.slice(0, 12), license: PUBLIC_LICENSE_VERSION, lang, scope: [...(wantText ? ['text'] : []), ...(wantImages && hasImages ? ['images'] : [])].join(' + ') }),
+      text: fill(t.c2MailBody, { title: row.l.title, hash: cand.hash.slice(0, 12), license: PUBLIC_LICENSE_VERSION, lang, scope: [...(wantText ? ['text'] : []), ...(wantImages && hasImages ? ['images'] : [])].join(' + ') }),
     }).catch(() => false);
   }
   return page(c, t.c2PageTitle, `<h1>${t.c2Title}</h1>${banner('ok', t.c2OkGranted)}<p><a href="/account/recipes/${row.r.id}/permission?lang=${lang}">${t.c2PageTitle}</a></p>`);
