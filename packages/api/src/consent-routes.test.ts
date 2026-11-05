@@ -59,6 +59,7 @@ function buildDB(schema: 'none' | '0007' | '0008'): D1Database {
   // Design SQL is test-only preparation, NOT a live DB apply.
   if (schema !== 'none') sqlite.exec(readFileSync(new URL('../../../design/0007-consent-revisions.sql', import.meta.url), 'utf8'));
   if (schema === '0008') sqlite.exec(readFileSync(new URL('../../../design/0008-consent-scope.sql', import.meta.url), 'utf8'));
+  if (schema === '0008') sqlite.exec(readFileSync(new URL('../../../design/0009-image-provenance.sql', import.meta.url), 'utf8'));
   return makeD1(sqlite);
 }
 
@@ -132,13 +133,20 @@ describe('C2 permission step routes (flag-gated)', () => {
     expect(html).toContain('name="grant_images"');
     expect(html).not.toMatch(/name="grant_images"[^>]*checked/);
 
+    // images grant without provenance is refused
+    const noProv = await post(`/account/recipes/${id}/permission`, { grant_images: '1' }, { cookie, e: ON });
+    expect(noProv.status).toBe(400);
+    // 'other' provenance without whose-permission is refused
+    const noNote = await post(`/account/recipes/${id}/permission`, { grant_images: '1', 'prov_img-1': 'other' }, { cookie, e: ON });
+    expect(noNote.status).toBe(400);
+
     // text only: no image event
     await post(`/account/recipes/${id}/permission`, { grant: '1' }, { cookie, e: ON });
     let evs = await DB.prepare(`SELECT scope, event FROM recipe_consent_events WHERE recipe_id = ? ORDER BY consent_seq`).bind(id).all<{ scope: string; event: string }>();
     expect(evs.results!.map((r) => r.scope)).toEqual(['text']);
 
     // images afterwards, bound to a NEW revision (separately versioned)
-    const ok = await post(`/account/recipes/${id}/permission`, { grant_images: '1' }, { cookie, e: ON });
+    const ok = await post(`/account/recipes/${id}/permission`, { grant_images: '1', 'prov_img-1': 'own' }, { cookie, e: ON });
     expect(ok.status).toBe(200);
     evs = await DB.prepare(`SELECT scope, event FROM recipe_consent_events WHERE recipe_id = ? ORDER BY consent_seq`).bind(id).all<{ scope: string; event: string }>();
     expect(evs.results!.map((r) => r.scope)).toEqual(['text', 'images']);
@@ -157,6 +165,29 @@ describe('C2 permission step routes (flag-gated)', () => {
     const ok = await post(`/account/recipes/${id}/permission`, { grant: '1' }, { cookie, e: ON });
     expect(ok.status).toBe(200); // the grant still lands; only the email is skipped
     expect(sent.length).toBe(before);
+  });
+
+  it('display state is bound to the exact revision: edits and later image grants make prior text consent stale', async () => {
+    const cookie = await signIn('cook@example.com');
+    const id = await makeDraft(cookie);
+    await addImage(id);
+    await post(`/account/recipes/${id}/permission`, { grant: '1' }, { cookie, e: ON });
+    // edit the draft (new title) - the granted revision no longer matches live content
+    const edit = await post(`/account/recipes/save`, {
+      id,
+      title: 'Abuela Soup v2', locale: 'us:en', intro: 'Warm.', ingredients: '2 cups stock\n1 onion', steps: 'Chop.\nSimmer.',
+      prep: '10', cook: '30', servings: '4', display_name: 'Ana', source_kind: 'original', source_url: '', attest: '1', category: 'soups-stews',
+    }, { cookie });
+    expect([200, 303]).toContain(edit.status);
+    const after = await get(`/account/recipes/${id}/permission`, cookie, ON);
+    const html = await after.text();
+    expect(html).toContain('covers that saved version only, not the current draft');
+    // image consent recorded on a NEW revision must not make the old text consent cover it
+    await post(`/account/recipes/${id}/permission`, { grant_images: '1', 'prov_img-1': 'own' }, { cookie, e: ON });
+    const after2 = await get(`/account/recipes/${id}/permission`, cookie, ON);
+    const html2 = await after2.text();
+    expect(html2).toContain('covers that saved version only, not the current draft'); // text grant still stale
+    expect(html2).toContain('name="grant"'); // text re-grant box offered again
   });
 
   it('withdrawal is unreachable even with the flag on', async () => {

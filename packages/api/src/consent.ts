@@ -31,7 +31,10 @@ export async function schemaProbe(DB: D1Database): Promise<boolean> {
   if (row!.n !== 4) return false;
   // REV 10: consent events carry an explicit text|images scope.
   const cols = await DB.prepare(`SELECT count(*) n FROM pragma_table_info('recipe_consent_events') WHERE name = 'scope'`).first<{ n: number }>();
-  return cols!.n === 1;
+  if (cols!.n !== 1) return false;
+  // REV 11: images carry per-image provenance.
+  const prov = await DB.prepare(`SELECT count(*) n FROM pragma_table_info('recipe_images') WHERE name = 'provenance'`).first<{ n: number }>();
+  return prov!.n === 1;
 }
 
 

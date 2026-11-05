@@ -545,31 +545,54 @@ accountApp.get('/recipes/:id/permission', async (c) => {
   const row = await loadOwned(c, c.req.param('id'));
   if (!row) return page(c, t.titleNotFound, banner('err', t.errDraftNotFound), 404);
   if (!(await schemaProbe(c.env.DB))) return page(c, t.c2PageTitle, banner('err', t.c2ErrUnavailable), 503);
-  const imgCount = await c.env.DB.prepare(`SELECT count(*) AS n FROM recipe_images WHERE recipe_id = ?`).bind(row.r.id).first<{ n: number }>();
-  const hasImages = (imgCount?.n ?? 0) > 0;
-  const textState = await latestConsent(c.env.DB, row.r.id, 'text');
-  const imgState = hasImages ? await latestConsent(c.env.DB, row.r.id, 'images') : null;
+  const images = (await c.env.DB.prepare(`SELECT id, kind, step_index, style, provenance, provenance_note FROM recipe_images WHERE recipe_id = ? ORDER BY id`).bind(row.r.id).all<Record<string, unknown>>()).results ?? [];
+  const hasImages = images.length > 0;
+  const snap = await buildSnapshotFromLive(c.env.DB, row.r.id);
+  const currentHash = snap?.hash ?? '';
   const q = `?lang=${lang}`;
-  const stateLine = (st: typeof textState, granted: string, label?: string) => {
-    const body = !st ? t.c2StateNone : st.event === 'grant' ? fill(granted, { version: esc(st.licenseVersion), date: esc(st.createdAt) }) : t.c2StateWithdrawn;
+  // Display state is bound to the EXACT revision: a grant names its revision's
+  // content hash, and a grant on an older revision never covers the current draft.
+  const stateLine = async (scope: 'text' | 'images', granted: string, label?: string) => {
+    const st = await latestConsent(c.env.DB, row.r.id, scope);
+    let body: string;
+    if (!st) body = t.c2StateNone;
+    else if (st.event !== 'grant') body = t.c2StateWithdrawn;
+    else {
+      const rev = await c.env.DB.prepare(`SELECT content_hash AS h FROM recipe_revisions WHERE id = ?`).bind(st.revisionId).first<{ h: string }>();
+      const short = (rev?.h ?? '').slice(0, 12);
+      body = fill(granted, { version: esc(st.licenseVersion), date: esc(st.createdAt), hash: esc(short) });
+      if (rev && rev.h !== currentHash) body += ` <em>${t.c2StateStale}</em>`;
+    }
     return `<p>${label ? `<strong>${label}:</strong> ` : ''}${body}</p>`;
   };
-  const textGranted = textState?.event === 'grant';
-  const imagesGranted = imgState?.event === 'grant';
+  const textState = await latestConsent(c.env.DB, row.r.id, 'text');
+  const imgState = hasImages ? await latestConsent(c.env.DB, row.r.id, 'images') : null;
+  const textCurrent = textState?.event === 'grant' && (await c.env.DB.prepare(`SELECT content_hash AS h FROM recipe_revisions WHERE id = ?`).bind(textState.revisionId).first<{ h: string }>())?.h === currentHash;
+  const imgCurrent = imgState?.event === 'grant' && (await c.env.DB.prepare(`SELECT content_hash AS h FROM recipe_revisions WHERE id = ?`).bind(imgState.revisionId).first<{ h: string }>())?.h === currentHash;
   let form = '';
-  if (!textGranted || (hasImages && !imagesGranted)) {
+  if (!textCurrent || (hasImages && !imgCurrent)) {
     const boxes = [
-      textGranted ? '' : `<label class="check"><input type="checkbox" name="grant" value="1"> ${t.c2GrantLabel}</label>`,
-      hasImages && !imagesGranted ? `<label class="check"><input type="checkbox" name="grant_images" value="1"> ${t.c2GrantImagesLabel}</label>` : '',
+      textCurrent ? '' : `<label class="check"><input type="checkbox" name="grant" value="1"> ${t.c2GrantLabel}</label>`,
+      hasImages && !imgCurrent ? `<label class="check"><input type="checkbox" name="grant_images" value="1"> ${t.c2GrantImagesLabel}</label>` : '',
     ].filter(Boolean).join('\n');
+    const pickers = hasImages ? images.map((img, i) => {
+      const id = String(img['id']);
+      const prov = String(img['provenance'] ?? '');
+      const opt = (v: string, label: string) => `<option value="${v}"${prov === v ? ' selected' : ''}>${label}</option>`;
+      return `<fieldset><legend>${fill(t.c2ImageN, { n: String(i + 1) })} (${esc(String(img['kind']))})</legend>
+        <label>${t.c2ProvLabel} <select name="prov_${esc(id)}">${opt('', t.c2ProvChoose)}${opt('own', t.c2ProvOwn)}${opt('ai', t.c2ProvAi)}${opt('other', t.c2ProvOther)}</select></label>
+        <label>${t.c2ProvNoteLabel} <input type="text" name="provnote_${esc(id)}" value="${esc(String(img['provenance_note'] ?? ''))}" maxlength="300"></label>
+      </fieldset>`;
+    }).join('\n') : '';
     form = `<form method="post" action="/account/recipes/${row.r.id}/permission${q}">
     ${boxes}
+    ${pickers}
     <p class="hint">${fill(t.c2LicenseLine, { version: PUBLIC_LICENSE_VERSION, lang })}</p>
     ${hasImages ? `<p class="hint">${t.c2ImagesLine}</p>` : ''}
     <button class="btn" type="submit">${t.c2GrantButton}</button>
   </form>`;
   }
-  return page(c, t.c2PageTitle, `<h1>${t.c2Title}</h1><p class="lead">${t.c2Lead}</p>${stateLine(textState, t.c2StateGranted, hasImages ? t.c2StateTextLabel : undefined)}${hasImages ? stateLine(imgState, t.c2StateGrantedImages, t.c2StateImagesLabel) : ''}${form}<p><a href="/account/recipes/${row.r.id}/edit${q}">${t.c2BackToEdit}</a></p>`);
+  return page(c, t.c2PageTitle, `<h1>${t.c2Title}</h1><p class="lead">${t.c2Lead}</p>${await stateLine('text', t.c2StateGranted, hasImages ? t.c2StateTextLabel : undefined)}${hasImages ? await stateLine('images', t.c2StateGrantedImages, t.c2StateImagesLabel) : ''}${form}<p><a href="/account/recipes/${row.r.id}/edit${q}">${t.c2BackToEdit}</a></p>`);
 });
 
 accountApp.post('/recipes/:id/permission', async (c) => {
@@ -584,8 +607,25 @@ accountApp.post('/recipes/:id/permission', async (c) => {
   const wantText = f['grant'] === '1';
   const wantImages = f['grant_images'] === '1';
   if (!wantText && !wantImages) return page(c, t.c2PageTitle, banner('err', t.c2ErrTick), 400);
-  const imgCount = await c.env.DB.prepare(`SELECT count(*) AS n FROM recipe_images WHERE recipe_id = ?`).bind(row.r.id).first<{ n: number }>();
-  const hasImages = (imgCount?.n ?? 0) > 0;
+  const images = (await c.env.DB.prepare(`SELECT id, provenance, provenance_note FROM recipe_images WHERE recipe_id = ? ORDER BY id`).bind(row.r.id).all<Record<string, unknown>>()).results ?? [];
+  const hasImages = images.length > 0;
+  // Persist provenance declarations from the form, then enforce: an
+  // images-scope grant requires provenance for EVERY image, and 'other'
+  // requires whose permission the cook has.
+  const declared = new Map<string, { prov: string; note: string }>();
+  for (const img of images) {
+    const id = String(img['id']);
+    const raw = str(f[`prov_${id}`], 10);
+    const prov = raw === 'own' || raw === 'ai' || raw === 'other' ? raw : String(img['provenance'] ?? '');
+    const note = str(f[`provnote_${id}`], 300) || String(img['provenance_note'] ?? '');
+    declared.set(id, { prov, note });
+    if (raw) await c.env.DB.prepare(`UPDATE recipe_images SET provenance = ?, provenance_note = ? WHERE id = ? AND recipe_id = ?`).bind(prov, note || null, id, row.r.id).run();
+  }
+  if (wantImages) {
+    for (const { prov, note } of declared.values()) {
+      if (!prov || (prov === 'other' && !note)) return page(c, t.c2PageTitle, banner('err', t.c2ErrProvenance), 400);
+    }
+  }
   const snap = await buildSnapshotFromLive(c.env.DB, row.r.id);
   if (!snap) return page(c, t.titleNotFound, banner('err', t.errDraftNotFound), 404);
   const revId = `rev-${newId()}`;
