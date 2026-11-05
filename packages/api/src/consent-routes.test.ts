@@ -384,5 +384,42 @@ describe('C2 permission step routes (flag-gated)', () => {
       expect(res.status).toBe(200); // recovery with the current displayed state
       expect(await sealed(id)).toBe(1);
     });
+
+    it('a different image id colliding on r2_key displaces the old parent image and moves its fence', async () => {
+      const cookie = await signIn('cook@example.com');
+      const a = await makeDraft(cookie);
+      const b = await makeDraft(cookie);
+      await addImage(a);
+      const sha = await shownHash(a, cookie);
+      const shb = await shownHash(b, cookie);
+      await DB.prepare(`INSERT OR REPLACE INTO recipe_images (id, recipe_id, kind, r2_key, mime, bytes, style, source_name, source_url, license, sha256)
+        VALUES ('different-id', ?, 'hero', 'r2/img-1', 'image/jpeg', 12345, 'photo', 'Ana', 'https://2yolks.com/', 'proprietary', ?)`).bind(b, DIGEST).run();
+      // the displaced old parent's image is gone and its fence moved
+      expect((await DB.prepare(`SELECT count(*) n FROM recipe_images WHERE recipe_id = ?`).bind(a).first<{ n: number }>())!.n).toBe(0);
+      expect((await DB.prepare(`SELECT seq FROM recipe_content_fence WHERE recipe_id = ?`).bind(a).first<{ seq: number }>())!.seq).toBeGreaterThan(Number(sha.seq));
+      expect((await post(`/account/recipes/${a}/permission`, { grant: '1', shown_hash: sha.hash, shown_seq: sha.seq }, { cookie, e: ON })).status).toBe(409);
+      // the new parent moved too (its own AFTER INSERT bump)
+      expect((await DB.prepare(`SELECT seq FROM recipe_content_fence WHERE recipe_id = ?`).bind(b).first<{ seq: number }>())!.seq).toBeGreaterThan(Number(shb.seq));
+      expect((await post(`/account/recipes/${b}/permission`, { grant: '1', shown_hash: shb.hash, shown_seq: shb.seq }, { cookie, e: ON })).status).toBe(409);
+    });
+
+    it('a locale slug-collision REPLACE displaces rows under BOTH conflict targets and moves BOTH parents', async () => {
+      const cookie = await signIn('cook@example.com');
+      const a = await makeDraft(cookie);
+      const b = await makeDraft(cookie);
+      // a keeps a second locale so its permission page still loads after the displacement
+      await DB.prepare(`INSERT INTO recipe_locales (recipe_id, country, lang, title, slug, ingredients_json, steps_json, status) VALUES (?, 'us', 'es', 'Sopa', 'sopa', '["caldo"]', '["Cocer."]', 'draft')`).bind(a).run();
+      const sha = await shownHash(a, cookie);
+      const shb = await shownHash(b, cookie);
+      // same (country, lang, slug) as a's us:en row AND same (recipe_id, country, lang) as b's row:
+      // one REPLACE, two displaced rows under two different parents
+      await DB.prepare(`INSERT OR REPLACE INTO recipe_locales (recipe_id, country, lang, title, slug, intro, ingredients_json, steps_json, status)
+        SELECT ?, 'us', 'en', title, slug, intro, ingredients_json, steps_json, 'draft' FROM recipe_locales WHERE recipe_id = ? AND lang = 'en'`).bind(b, a).run();
+      expect((await DB.prepare(`SELECT count(*) n FROM recipe_locales WHERE recipe_id = ? AND lang = 'en'`).bind(a).first<{ n: number }>())!.n).toBe(0);
+      expect((await DB.prepare(`SELECT seq FROM recipe_content_fence WHERE recipe_id = ?`).bind(a).first<{ seq: number }>())!.seq).toBeGreaterThan(Number(sha.seq));
+      expect((await DB.prepare(`SELECT seq FROM recipe_content_fence WHERE recipe_id = ?`).bind(b).first<{ seq: number }>())!.seq).toBeGreaterThan(Number(shb.seq));
+      expect((await post(`/account/recipes/${a}/permission`, { grant: '1', shown_hash: sha.hash, shown_seq: sha.seq }, { cookie, e: ON })).status).toBe(409);
+      expect((await post(`/account/recipes/${b}/permission`, { grant: '1', shown_hash: shb.hash, shown_seq: shb.seq }, { cookie, e: ON })).status).toBe(409);
+    });
   });
 });

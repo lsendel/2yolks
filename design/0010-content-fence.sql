@@ -10,17 +10,21 @@
 -- end of the same batch, so the table stays empty outside a grant
 -- transaction.
 --
--- Coverage notes (SQLite semantics):
--- * INSERT OR REPLACE performs an implicit DELETE that fires NO triggers
---   (recursive_triggers is off), then an INSERT that fires INSERT triggers.
---   Every INSERT bump below is therefore an upsert-bump, and recipe_images
---   adds a BEFORE INSERT trigger that also bumps the CURRENT parent when a
---   REPLACE moves an existing image to a different recipe.
+-- Coverage notes (SQLite semantics), grounded in the ACTUAL schema:
+-- * INSERT OR REPLACE performs an implicit DELETE per conflicting unique
+--   index that fires NO triggers (recursive_triggers is off), then an INSERT
+--   that fires INSERT triggers. Every INSERT bump below is an upsert-bump.
+-- * Actual uniqueness conflict targets:
+--     recipes        PRIMARY KEY (id)
+--     sources        PRIMARY KEY (id)
+--     recipe_images  PRIMARY KEY (id), UNIQUE (r2_key)
+--     recipe_locales PRIMARY KEY (country, lang, slug),
+--                    UNIQUE recipe_locales_one_per_recipe (recipe_id, country, lang)  [0007]
+--   ONE REPLACE can displace MULTIPLE rows (one per conflicting index,
+--   potentially under DIFFERENT parents), so the BEFORE INSERT compensate
+--   triggers bump the fence of EVERY displaced row's parent.
 -- * UPDATE can reassign the parent (recipe_id): the AFTER UPDATE bumps bump
 --   BOTH the old and the new parent.
--- * recipe_locales cannot be parent-reassigned by REPLACE (its primary key
---   includes recipe_id, so a conflicting REPLACE is always same-recipe and
---   the AFTER INSERT bump covers it); its AFTER UPDATE still bumps both.
 -- Deliberately NO foreign key to recipes: SQLite enforces same-key REPLACE
 -- without firing DELETE triggers, and a cascaded fence row would be recreated
 -- at seq 1 - a silent reset a stale shown_seq could collide with. With no FK
@@ -45,6 +49,22 @@ BEGIN
   ON CONFLICT(recipe_id) DO UPDATE SET seq = seq + 1;
 END;
 
+-- REPLACE displacing locale rows under ANY conflict target (global
+-- (country, lang, slug) or per-recipe (recipe_id, country, lang)): bump every
+-- displaced row's parent; the implicit deletes fire no trigger.
+CREATE TRIGGER recipe_content_fence_bump_locales_replace BEFORE INSERT ON recipe_locales
+WHEN EXISTS (
+  SELECT 1 FROM recipe_locales l
+  WHERE (l.country = NEW.country AND l.lang = NEW.lang AND l.slug = NEW.slug)
+     OR (l.recipe_id = NEW.recipe_id AND l.country = NEW.country AND l.lang = NEW.lang))
+BEGIN
+  INSERT INTO recipe_content_fence (recipe_id, seq)
+  SELECT DISTINCT l.recipe_id, 1 FROM recipe_locales l
+  WHERE (l.country = NEW.country AND l.lang = NEW.lang AND l.slug = NEW.slug)
+     OR (l.recipe_id = NEW.recipe_id AND l.country = NEW.country AND l.lang = NEW.lang)
+  ON CONFLICT(recipe_id) DO UPDATE SET seq = seq + 1;
+END;
+
 CREATE TRIGGER recipe_content_fence_bump_locales_ins AFTER INSERT ON recipe_locales
 BEGIN
   INSERT INTO recipe_content_fence (recipe_id, seq) VALUES (NEW.recipe_id, 1)
@@ -66,13 +86,13 @@ BEGIN
   ON CONFLICT(recipe_id) DO UPDATE SET seq = seq + 1;
 END;
 
--- REPLACE that moves an existing image to another recipe: the old parent's
--- fence must move even though the implicit delete fires no trigger.
+-- REPLACE displacing image rows under ANY conflict target (id or r2_key):
+-- bump every displaced row's parent; the implicit deletes fire no trigger.
 CREATE TRIGGER recipe_content_fence_bump_images_replace BEFORE INSERT ON recipe_images
-WHEN EXISTS (SELECT 1 FROM recipe_images i WHERE i.id = NEW.id AND i.recipe_id <> NEW.recipe_id)
+WHEN EXISTS (SELECT 1 FROM recipe_images i WHERE i.id = NEW.id OR i.r2_key = NEW.r2_key)
 BEGIN
   INSERT INTO recipe_content_fence (recipe_id, seq)
-  SELECT i.recipe_id, 1 FROM recipe_images i WHERE i.id = NEW.id
+  SELECT DISTINCT i.recipe_id, 1 FROM recipe_images i WHERE i.id = NEW.id OR i.r2_key = NEW.r2_key
   ON CONFLICT(recipe_id) DO UPDATE SET seq = seq + 1;
 END;
 
