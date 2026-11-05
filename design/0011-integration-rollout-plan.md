@@ -207,7 +207,7 @@ MECHANICS, REV 15 after three review rounds (design only; NOT mounted as
 routes/tools and NOT applied to any live DB):
 The executable artifacts ARE the design: design/0012-corrections-epoch.sql
 (schema + guards + amended predicates) and its executable proof
-packages/api/src/corrections-epoch-probe.test.ts (21 tests, raw SQL on the
+packages/api/src/corrections-epoch-probe.test.ts (24 tests, raw SQL on the
 actual 0001-0010 + 0012 schema). Summary:
 
 - LAYER BOUNDARY, explicit: SQL owns state, tuples and atomicity; the MCP
@@ -257,8 +257,14 @@ actual 0001-0010 + 0012 schema). Summary:
   SQL enforces completion (a standalone transition on a validated op
   completes WITH its audit). The consume guard requires the post-state
   (epoch = expected+1 AND submitted NULL), so a standalone consume aborts.
-  Audit integrity for this tool: rows only from a consumed matching op, no
-  duplicate row per op, no updates, no deletes.
+  Audit integrity for this tool, closed across EVERY write mode against the
+  table's only unique (the rowid PK): rows only from a consumed matching op,
+  no duplicate row per op; no edit OF a return row and no retargeting of
+  another row INTO the tool (UPDATE guard checks OLD.tool AND NEW.tool); no
+  deletes; and no collision bypass - INSERT OR REPLACE on an existing return
+  row's id and UPDATE OR REPLACE SET id = <return row id> both abort in
+  BEFORE triggers (which fire before REPLACE conflict resolution, where the
+  suppressed delete trigger would otherwise be skipped).
 - FRESH-REVISION SCOPE, specified: SQL mandates FRESH GRANTS (epoch-bound)
   + the existing exact-head binding; revision novelty is the route flow's
   convention, not a SQL invariant. Same-content re-grant after a return is
@@ -269,7 +275,7 @@ actual 0001-0010 + 0012 schema). Summary:
   hash) and the admin's stale inspected state likewise fails the op CAS.
   Both directions require fresh inspection, never silent success.
 
-PROBE PROOF MAP (all passing, 390/390 suite, tsc clean): happy return
+PROBE PROOF MAP (all passing, 393/393 suite, tsc clean): happy return
 (transition trigger consumes the op and writes exactly one audit with the
 op's actor); old grant cannot request publish post-return; pre-return
 orphan request cannot flip; race loser zero-effects; replay zero-effects;
@@ -283,7 +289,11 @@ reset); mis-stamped event/request rejected; unchanged-content recovery
 publishes at the new epoch; marker stamps once and never moves; marker
 clear/change/forged-insert/published-insert abort; sentinel, ownerless,
 unsubmitted and currently-published returns rejected; audit-write failure
-rolls the whole batch back (epoch, submission, op, audit untouched);
+rolls the whole batch back (epoch, submission, op, audit untouched); the
+audit-immutability regression matrix (plain/OR REPLACE INSERT id collision,
+edit-of-row, cross-tool retarget, plain/OR REPLACE UPDATE id collision,
+delete, plus legitimate other-tool writes unaffected - each asserted against
+an unchanged surviving audit row);
 BOTH-SCOPES on an image-binding head with MATCHING canonical snapshot and
 manifest rows per revision, proven as two independent sub-cases (fresh
 text + old images -> images barrier; old text + fresh images -> text

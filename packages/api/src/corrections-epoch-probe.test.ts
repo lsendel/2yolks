@@ -310,6 +310,52 @@ describe('return-for-corrections epoch probe (design/0012 REV 15)', () => {
   });
 });
 
+describe('audit immutability regression matrix (source-only hypothesis: every write mode x the table\'s only unique, the rowid PK)', () => {
+  // Reviewer flagged from source inspection (diagnostic inspection blocked; NO
+  // confirmed exploit): OLD.tool-only UPDATE guard + NEW.tool-only INSERT
+  // guard leave INSERT OR REPLACE / UPDATE OR REPLACE collision modes and
+  // cross-tool retargeting open. Each case asserts rejection AND that the
+  // transition-written audit row survives unchanged.
+  let auditId: number;
+  const auditRow = async () =>
+    (await DB.prepare(`SELECT id, actor FROM mcp_audit WHERE tool = 'recipes.return_for_corrections'`).first<{ id: number; actor: string }>())!;
+  const untouched = async () => {
+    const rows = await DB.prepare(`SELECT id, actor FROM mcp_audit WHERE tool = 'recipes.return_for_corrections'`).all<{ id: number; actor: string }>();
+    expect(rows.results!.length).toBe(1);
+    expect(rows.results![0]!.id).toBe(auditId);
+    expect(rows.results![0]!.actor).toBe(ADMIN_KEY);
+  };
+  beforeEach(async () => {
+    await consentedSubmitted('r1');
+    await returnBatch(opTuple('r1'));
+    await DB.prepare(`INSERT INTO mcp_audit (actor, role, tool, entity_id, details_json) VALUES ('someone', 'editor', 'recipes.save_edit', 'r1', '{}')`).run();
+    auditId = (await auditRow()).id;
+  });
+
+  it('INSERT modes: plain collision, INSERT OR REPLACE (either tool), spoofed row', async () => {
+    await expect(DB.prepare(`INSERT INTO mcp_audit (id, actor, role, tool, entity_id, details_json) VALUES (?, 'mallory', 'admin', 'recipes.save_edit', 'r1', '{}')`).bind(auditId).run()).rejects.toThrow(/immutable|UNIQUE/);
+    await expect(DB.prepare(`INSERT OR REPLACE INTO mcp_audit (id, actor, role, tool, entity_id, details_json) VALUES (?, 'mallory', 'admin', 'recipes.save_edit', 'r1', '{}')`).bind(auditId).run()).rejects.toThrow(/immutable/);
+    await expect(DB.prepare(`INSERT OR REPLACE INTO mcp_audit (id, actor, role, tool, entity_id, details_json) VALUES (?, 'mallory', 'admin', 'recipes.return_for_corrections', 'r1', ?)`).bind(auditId, JSON.stringify({ op_id: 'op-1' })).run()).rejects.toThrow(/immutable|transition trigger/);
+    await expect(DB.prepare(`INSERT INTO mcp_audit (actor, role, tool, entity_id, details_json) VALUES ('mallory', 'admin', 'recipes.return_for_corrections', 'r1', ?)`).bind(JSON.stringify({ op_id: 'op-1' })).run()).rejects.toThrow(/transition trigger/);
+    await untouched();
+  });
+
+  it('UPDATE modes: edit OF the row, retarget another row INTO the tool, plain and OR REPLACE id collision', async () => {
+    await expect(DB.prepare(`UPDATE mcp_audit SET actor = 'mallory' WHERE id = ?`).bind(auditId).run()).rejects.toThrow(/immutable/);
+    await expect(DB.prepare(`UPDATE mcp_audit SET tool = 'recipes.return_for_corrections' WHERE tool = 'recipes.save_edit'`).run()).rejects.toThrow(/immutable/);
+    await expect(DB.prepare(`UPDATE mcp_audit SET id = ? WHERE tool = 'recipes.save_edit'`).bind(auditId).run()).rejects.toThrow(/immutable|UNIQUE/);
+    await expect(DB.prepare(`UPDATE OR REPLACE mcp_audit SET id = ? WHERE tool = 'recipes.save_edit'`).bind(auditId).run()).rejects.toThrow(/immutable/);
+    await untouched();
+  });
+
+  it('DELETE mode and the legitimate other-tool writes still work', async () => {
+    await expect(DB.prepare(`DELETE FROM mcp_audit WHERE id = ?`).bind(auditId).run()).rejects.toThrow(/immutable/);
+    await DB.prepare(`INSERT INTO mcp_audit (actor, role, tool, entity_id, details_json) VALUES ('someone', 'editor', 'recipes.save_edit', 'r1', '{}')`).run();
+    await DB.prepare(`UPDATE mcp_audit SET details_json = '{"ok":1}' WHERE tool = 'recipes.save_edit'`).run();
+    await untouched();
+  });
+});
+
 describe('migration classification (executed at apply time, legacy data predates the design SQL)', () => {
   it('classifies published vs unknown-history legacy rows, and post-migration rows keep a trustworthy NULL', async () => {
     // TRUE legacy: rows exist before ANY design SQL applies

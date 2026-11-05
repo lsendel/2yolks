@@ -204,12 +204,30 @@ WHEN NEW.tool = 'recipes.return_for_corrections'
            AND json_extract(a2.details_json, '$.op_id') = json_extract(NEW.details_json, '$.op_id')))
 BEGIN SELECT RAISE(ABORT, 'return-for-corrections audit rows come only from the transition trigger'); END;
 
+-- Both directions: no edit OF a return row (OLD.tool) and no edit turning any
+-- other row INTO one (NEW.tool).
 CREATE TRIGGER mcp_audit_return_no_update BEFORE UPDATE ON mcp_audit
 WHEN OLD.tool = 'recipes.return_for_corrections'
+  OR NEW.tool = 'recipes.return_for_corrections'
 BEGIN SELECT RAISE(ABORT, 'return-for-corrections audit is immutable'); END;
 
 CREATE TRIGGER mcp_audit_return_no_delete BEFORE DELETE ON mcp_audit
 WHEN OLD.tool = 'recipes.return_for_corrections'
+BEGIN SELECT RAISE(ABORT, 'return-for-corrections audit is immutable'); END;
+
+-- Rowid collision modes (mcp_audit's only unique is id INTEGER PRIMARY KEY):
+-- INSERT OR REPLACE with an existing return row's id would delete+replace it
+-- (the delete trigger does NOT fire under REPLACE with recursive_triggers
+-- off), and UPDATE OR REPLACE SET id = <return row id> would delete the
+-- return row while OLD.tool belongs to the moved row. BEFORE triggers fire
+-- before conflict resolution, so these guards abort every collision mode.
+CREATE TRIGGER mcp_audit_return_insert_collision_guard BEFORE INSERT ON mcp_audit
+WHEN EXISTS (SELECT 1 FROM mcp_audit a WHERE a.id = NEW.id AND a.tool = 'recipes.return_for_corrections')
+BEGIN SELECT RAISE(ABORT, 'return-for-corrections audit is immutable'); END;
+
+CREATE TRIGGER mcp_audit_return_update_collision_guard BEFORE UPDATE OF id ON mcp_audit
+WHEN NEW.id <> OLD.id
+  AND EXISTS (SELECT 1 FROM mcp_audit a WHERE a.id = NEW.id AND a.tool = 'recipes.return_for_corrections')
 BEGIN SELECT RAISE(ABORT, 'return-for-corrections audit is immutable'); END;
 
 -- Epoch integrity: no path (app bug or legacy writer) can stamp a consent
