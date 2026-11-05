@@ -172,19 +172,57 @@ the consented head revision, the owner cannot re-grant, and the admin
 publish guard aborts - the recipe is STUCK. No return-to-draft path clears
 submitted_at today. The existing stale-form 409 tests prove invalidation,
 not recovery.
-Grounded options, both needing their own review before cutover:
- A. Return-for-corrections loop: an admin-initiated, audited return that
-    clears submitted_at (fence bumps, history retained), re-enabling the
-    owner's existing edit/grant loop unchanged. Smallest surface; keeps the
-    pre-submit-only grant invariant. Open: audit event shape, and owner
-    notification wording (no new email kind without its own approval).
+Grounded options:
+ A. RECOMMENDED - Return-for-corrections loop: an admin-initiated, audited
+    return that clears submitted_at (fence bumps, history retained),
+    re-enabling the owner's existing edit/grant loop unchanged.
  B. Submitted-consent design: amend the guard to allow revision + grant
     while submitted, with the admin queue locked to publish exactly the
-    consented head revision. Larger invariant change; weakens the clean
-    pre-submit-only rule; needs independent review.
-Until Luis (via main) picks one, the operational cutover precondition is:
-grants happen before submit, and admins do not edit submitted drafts that
-still need consent.
+    consented head revision.
+
+WHY A IS THE RECOMMENDATION (authority assessment: an internal
+guard/workflow design choice within the approved ownership/review goals -
+NOT a user-owned policy decision; main decides what to surface to Luis and
+when, cohesively):
+- It keeps every qualified invariant untouched. submitted_at is a
+  designated flow/moderation field: 0007's recipes_bound_fields_guard
+  comment lists it (with attested_at, image_key) as staying writable even
+  while published, and the guard does not bind it. Clearing it violates no
+  trigger, no revision rule, no consent rule.
+- It preserves the clean pre-submit-only grant rule
+  (recipe_revisions_guard) instead of amending a qualified invariant -
+  Option B expands the consent surface to submitted recipes and adds
+  queue-lock state coupling, a materially larger review.
+- Smallest new surface: ONE audited admin action; the owner's side is the
+  already-qualified edit/grant flow with zero changes.
+- Failure modes fail closed: a failed return leaves the recipe submitted
+  (unchanged); a return never makes anything publishable by itself.
+MECHANICS SKETCH (design only - implementation awaits plan review):
+- New admin MCP tool recipes.return_for_corrections (role admin,
+  confirmed: true, note required - what needs correcting).
+- One D1 batch: UPDATE recipes SET submitted_at = NULL WHERE id = ? AND
+  submitted_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM recipe_locales l
+  WHERE l.recipe_id = recipes.id AND l.status = 'published'), plus the
+  standard auditStmt. 0 changes -> 409 (not submitted, or published -
+  published recipes belong to the disable flow, not corrections).
+- The 0010 AFTER UPDATE trigger bumps the fence automatically, so any
+  displayed permission form invalidates without extra code.
+- The tool joins RECIPE_ID_TOOLS (privacy boundary unchanged).
+- Owner loop after return: existing account edit -> permission grant
+  (fresh revision + consent) -> submit -> admin publish of the new head.
+OWNER NOTICE: the returned recipe simply reappears in the owner's drafts -
+zero new authority. An email notice is a NEW kind with new wording and
+audience; it is NOT covered by any existing grant and is proposed only as
+an optional approval-gated addition, with wording drafted separately for
+approval before any send.
+TEST PLAN (when implementation is approved): return clears submitted_at +
+fence bumps + audit row; owner re-grant then succeeds (200) and publish
+proceeds on the new head revision; return on an unsubmitted draft 409s;
+return on a recipe with a published locale refused; editor role 403;
+unconfirmed call dry-runs.
+Until the plan review accepts this recommendation, the operational cutover
+precondition stands: grants happen before submit, and admins do not edit
+submitted drafts that still need consent.
 
 ## Policy gaps blocking gates (owner: Luis, via main)
 1. Withdrawal policy wording (hide-on-withdraw vs listed-with-notice) -
@@ -196,7 +234,10 @@ still need consent.
    point in G1's cutover.
 4. Erasure retention/verification implementation - blocks G8's erasure
    design (the exception itself is approved).
-5. Post-submit re-consent workflow (G9 option A vs B) - blocks cutover.
+5. Post-submit re-consent workflow (G9): RECOMMENDATION prepared (option
+   A, return-for-corrections) as an internal design choice; pending plan
+   review, not a user decision. The optional owner-notice email is a
+   separate wording/audience approval if wanted at all.
 6. Apple sign-in, SMS, super-admin audience - open product decisions, not
    assumed.
 
