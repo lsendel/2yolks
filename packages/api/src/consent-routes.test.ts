@@ -298,4 +298,91 @@ describe('C2 permission step routes (flag-gated)', () => {
     expect((await DB.prepare(`SELECT count(*) n FROM recipe_revisions WHERE recipe_id = ?`).bind(id).first<{ n: number }>())!.n).toBe(0);
     expect((await DB.prepare(`SELECT count(*) n FROM recipe_consent_events WHERE recipe_id = ?`).bind(id).first<{ n: number }>())!.n).toBe(0);
   });
+
+  describe('content fence mutation matrix (REV 12)', () => {
+    const sealed = async (id: string) => (await DB.prepare(`SELECT count(*) n FROM recipe_revisions WHERE recipe_id = ?`).bind(id).first<{ n: number }>())!.n;
+
+    it('INSERT OR REPLACE on the source row moves the fence and the raced edit survives', async () => {
+      const cookie = await signIn('cook@example.com');
+      const id = await makeDraft(cookie);
+      const sh = await shownHash(id, cookie);
+      const realBatch = DB.batch.bind(DB);
+      const racy: D1Database = Object.assign(Object.create(Object.getPrototypeOf(DB)) as D1Database, DB, {
+        batch: (async (stmts: Parameters<D1Database['batch']>[0]) => {
+          await DB.prepare(`INSERT OR REPLACE INTO sources (id, name, url, license) SELECT s.id, 'RACED NEW SOURCE', s.url, s.license FROM sources s JOIN recipes r ON r.source_id = s.id WHERE r.id = ?`).bind(id).run();
+          return realBatch(stmts);
+        }) as D1Database['batch'],
+      });
+      const res = await post(`/account/recipes/${id}/permission`, { grant: '1', shown_hash: sh.hash, shown_seq: sh.seq }, { cookie, e: { ...ON, DB: racy } });
+      expect(res.status).toBe(409);
+      expect(await sealed(id)).toBe(0);
+      // the intervening edit is NOT overwritten by a stale sealed snapshot
+      expect((await DB.prepare(`SELECT s.name n FROM sources s JOIN recipes r ON r.source_id = s.id WHERE r.id = ?`).bind(id).first<{ n: string }>())!.n).toBe('RACED NEW SOURCE');
+    });
+
+    it('UPDATE on the source row moves the fence', async () => {
+      const cookie = await signIn('cook@example.com');
+      const id = await makeDraft(cookie);
+      const sh = await shownHash(id, cookie);
+      await DB.prepare(`UPDATE sources SET url = url WHERE id = (SELECT source_id FROM recipes WHERE id = ?)`).bind(id).run();
+      expect((await post(`/account/recipes/${id}/permission`, { grant: '1', shown_hash: sh.hash, shown_seq: sh.seq }, { cookie, e: ON })).status).toBe(409);
+      expect(await sealed(id)).toBe(0);
+    });
+
+    it('UPDATE reassignment of a locale bumps BOTH the old and the new parent', async () => {
+      const cookie = await signIn('cook@example.com');
+      const id1 = await makeDraft(cookie);
+      const id2 = await makeDraft(cookie);
+      // id1 keeps its us:en draft; a second locale is the one that moves
+      await DB.prepare(`INSERT INTO recipe_locales (recipe_id, country, lang, title, slug, ingredients_json, steps_json, status) VALUES (?, 'us', 'es', 'Sopa', 'sopa', '["caldo"]', '["Cocer."]', 'draft')`).bind(id1).run();
+      const sh1 = await shownHash(id1, cookie);
+      const sh2 = await shownHash(id2, cookie);
+      await DB.prepare(`UPDATE recipe_locales SET recipe_id = ? WHERE recipe_id = ? AND lang = 'es'`).bind(id2, id1).run();
+      expect((await post(`/account/recipes/${id1}/permission`, { grant: '1', shown_hash: sh1.hash, shown_seq: sh1.seq }, { cookie, e: ON })).status).toBe(409);
+      expect((await post(`/account/recipes/${id2}/permission`, { grant: '1', shown_hash: sh2.hash, shown_seq: sh2.seq }, { cookie, e: ON })).status).toBe(409);
+      expect(await sealed(id1)).toBe(0);
+      expect(await sealed(id2)).toBe(0);
+    });
+
+    it('UPDATE reassignment of an image bumps BOTH the old and the new parent', async () => {
+      const cookie = await signIn('cook@example.com');
+      const id1 = await makeDraft(cookie);
+      const id2 = await makeDraft(cookie);
+      await addImage(id1);
+      const sh1 = await shownHash(id1, cookie);
+      const sh2 = await shownHash(id2, cookie);
+      await DB.prepare(`UPDATE recipe_images SET recipe_id = ? WHERE id = 'img-1'`).bind(id2).run();
+      expect((await post(`/account/recipes/${id1}/permission`, { grant: '1', shown_hash: sh1.hash, shown_seq: sh1.seq }, { cookie, e: ON })).status).toBe(409);
+      expect((await post(`/account/recipes/${id2}/permission`, { grant: '1', shown_hash: sh2.hash, shown_seq: sh2.seq }, { cookie, e: ON })).status).toBe(409);
+    });
+
+    it('INSERT OR REPLACE moving an image to another recipe bumps BOTH parents', async () => {
+      const cookie = await signIn('cook@example.com');
+      const id1 = await makeDraft(cookie);
+      const id2 = await makeDraft(cookie);
+      await addImage(id1);
+      const sh1 = await shownHash(id1, cookie);
+      const sh2 = await shownHash(id2, cookie);
+      await DB.prepare(`INSERT OR REPLACE INTO recipe_images (id, recipe_id, kind, step_index, r2_key, mime, bytes, style, source_name, source_url, license, sha256)
+        VALUES ('img-1', ?, 'hero', NULL, 'r2/img-1', 'image/jpeg', 12345, 'photo', 'Ana', 'https://2yolks.com/', 'proprietary', ?)`).bind(id2, DIGEST).run();
+      expect((await post(`/account/recipes/${id1}/permission`, { grant: '1', shown_hash: sh1.hash, shown_seq: sh1.seq }, { cookie, e: ON })).status).toBe(409);
+      expect((await post(`/account/recipes/${id2}/permission`, { grant: '1', shown_hash: sh2.hash, shown_seq: sh2.seq }, { cookie, e: ON })).status).toBe(409);
+    });
+
+    it('INSERT OR REPLACE on a referenced recipe moves the fence (no cascade reset) and a fresh form still lands', async () => {
+      const cookie = await signIn('cook@example.com');
+      const id = await makeDraft(cookie);
+      const sh = await shownHash(id, cookie);
+      // same-key REPLACE: the implicit delete fires no triggers and, with no
+      // FK on the fence table, cannot cascade-reset the seq
+      await DB.prepare(`INSERT OR REPLACE INTO recipes (id, source_id, origin_country, created_at, owner_user_id) SELECT id, source_id, origin_country, created_at, owner_user_id FROM recipes WHERE id = ?`).bind(id).run();
+      const stale = await post(`/account/recipes/${id}/permission`, { grant: '1', shown_hash: sh.hash, shown_seq: sh.seq }, { cookie, e: ON });
+      expect(stale.status).toBe(409);
+      expect(await sealed(id)).toBe(0);
+      const sh2 = await shownHash(id, cookie);
+      const res = await post(`/account/recipes/${id}/permission`, { grant: '1', shown_hash: sh2.hash, shown_seq: sh2.seq }, { cookie, e: ON });
+      expect(res.status).toBe(200); // recovery with the current displayed state
+      expect(await sealed(id)).toBe(1);
+    });
+  });
 });
