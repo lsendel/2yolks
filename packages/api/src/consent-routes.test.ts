@@ -421,5 +421,76 @@ describe('C2 permission step routes (flag-gated)', () => {
       expect((await post(`/account/recipes/${a}/permission`, { grant: '1', shown_hash: sha.hash, shown_seq: sha.seq }, { cookie, e: ON })).status).toBe(409);
       expect((await post(`/account/recipes/${b}/permission`, { grant: '1', shown_hash: shb.hash, shown_seq: shb.seq }, { cookie, e: ON })).status).toBe(409);
     });
+
+    it('UPDATE OR REPLACE colliding on an alternate unique is REJECTED: the victim survives and no fence moves', async () => {
+      const cookie = await signIn('cook@example.com');
+      const a = await makeDraft(cookie);
+      const b = await makeDraft(cookie);
+      await addImage(a);
+      await DB.prepare(`INSERT INTO recipe_images (id, recipe_id, kind, r2_key, mime, bytes, style, source_name, source_url, license, sha256)
+        VALUES ('img-2', ?, 'hero', 'r2/img-2', 'image/jpeg', 12345, 'photo', 'Ana', 'https://2yolks.com/', 'proprietary', ?)`).bind(b, DIGEST).run();
+      const sha = await shownHash(a, cookie);
+      const attempt = await DB.prepare(`UPDATE OR REPLACE recipe_images SET r2_key = 'r2/img-1' WHERE id = 'img-2'`).run()
+        .then(() => ({ ok: true as const })).catch(() => ({ ok: false as const }));
+      expect(attempt.ok).toBe(false); // rejected before displacement
+      // both rows intact; nothing changed, so the displayed form stays valid (no false conflict)
+      expect((await DB.prepare(`SELECT count(*) n FROM recipe_images WHERE recipe_id = ?`).bind(a).first<{ n: number }>())!.n).toBe(1);
+      expect((await DB.prepare(`SELECT seq FROM recipe_content_fence WHERE recipe_id = ?`).bind(a).first<{ seq: number }>())!.seq).toBe(Number(sha.seq));
+      expect((await post(`/account/recipes/${a}/permission`, { grant: '1', shown_hash: sha.hash, shown_seq: sha.seq }, { cookie, e: ON })).status).toBe(200);
+    });
+
+    it('UPDATE OR REPLACE colliding on the locale slug is REJECTED: the victim survives', async () => {
+      const cookie = await signIn('cook@example.com');
+      const a = await makeDraft(cookie);
+      const b = await makeDraft(cookie);
+      const sha = await shownHash(a, cookie);
+      const slugA = (await DB.prepare(`SELECT slug FROM recipe_locales WHERE recipe_id = ?`).bind(a).first<{ slug: string }>())!.slug;
+      const attempt = await DB.prepare(`UPDATE OR REPLACE recipe_locales SET slug = ? WHERE recipe_id = ?`).bind(slugA, b).run()
+        .then(() => ({ ok: true as const })).catch(() => ({ ok: false as const }));
+      expect(attempt.ok).toBe(false);
+      expect((await DB.prepare(`SELECT count(*) n FROM recipe_locales WHERE recipe_id = ?`).bind(a).first<{ n: number }>())!.n).toBe(1);
+      expect((await DB.prepare(`SELECT count(*) n FROM recipe_locales WHERE recipe_id = ?`).bind(b).first<{ n: number }>())!.n).toBe(1);
+      expect((await DB.prepare(`SELECT seq FROM recipe_content_fence WHERE recipe_id = ?`).bind(a).first<{ seq: number }>())!.seq).toBe(Number(sha.seq));
+    });
+
+    it('one INSERT OR REPLACE displacing images under TWO parents bumps every victim', async () => {
+      const cookie = await signIn('cook@example.com');
+      const a = await makeDraft(cookie);
+      const b = await makeDraft(cookie);
+      const c = await makeDraft(cookie);
+      await addImage(a); // img-1 / r2/img-1 under a
+      await DB.prepare(`INSERT INTO recipe_images (id, recipe_id, kind, r2_key, mime, bytes, style, source_name, source_url, license, sha256)
+        VALUES ('img-b', ?, 'hero', 'r2/img-b', 'image/jpeg', 12345, 'photo', 'Ana', 'https://2yolks.com/', 'proprietary', ?)`).bind(b, DIGEST).run();
+      const sha = await shownHash(a, cookie);
+      const shb = await shownHash(b, cookie);
+      // new row under c collides with a on id AND with b on r2_key
+      await DB.prepare(`INSERT OR REPLACE INTO recipe_images (id, recipe_id, kind, r2_key, mime, bytes, style, source_name, source_url, license, sha256)
+        VALUES ('img-1', ?, 'hero', 'r2/img-b', 'image/jpeg', 12345, 'photo', 'Ana', 'https://2yolks.com/', 'proprietary', ?)`).bind(c, DIGEST).run();
+      expect((await DB.prepare(`SELECT count(*) n FROM recipe_images WHERE recipe_id IN (?, ?)`).bind(a, b).first<{ n: number }>())!.n).toBe(0);
+      expect((await DB.prepare(`SELECT count(*) n FROM recipe_images WHERE recipe_id = ?`).bind(c).first<{ n: number }>())!.n).toBe(1);
+      expect((await DB.prepare(`SELECT seq FROM recipe_content_fence WHERE recipe_id = ?`).bind(a).first<{ seq: number }>())!.seq).toBeGreaterThan(Number(sha.seq));
+      expect((await DB.prepare(`SELECT seq FROM recipe_content_fence WHERE recipe_id = ?`).bind(b).first<{ seq: number }>())!.seq).toBeGreaterThan(Number(shb.seq));
+      expect((await post(`/account/recipes/${a}/permission`, { grant: '1', shown_hash: sha.hash, shown_seq: sha.seq }, { cookie, e: ON })).status).toBe(409);
+      expect((await post(`/account/recipes/${b}/permission`, { grant: '1', shown_hash: shb.hash, shown_seq: shb.seq }, { cookie, e: ON })).status).toBe(409);
+    });
+
+    it('one INSERT OR REPLACE displacing locales under TWO parents bumps every victim', async () => {
+      const cookie = await signIn('cook@example.com');
+      const a = await makeDraft(cookie);
+      const b = await makeDraft(cookie);
+      await DB.prepare(`INSERT INTO recipe_locales (recipe_id, country, lang, title, slug, ingredients_json, steps_json, status) VALUES (?, 'us', 'es', 'Sopa', 'sopa', '["caldo"]', '["Cocer."]', 'draft')`).bind(a).run();
+      const sha = await shownHash(a, cookie);
+      const shb = await shownHash(b, cookie);
+      const slugA = (await DB.prepare(`SELECT slug FROM recipe_locales WHERE recipe_id = ? AND lang = 'en'`).bind(a).first<{ slug: string }>())!.slug;
+      // new row under b collides with a on (country, lang, slug) AND with b on (recipe_id, country, lang)
+      await DB.prepare(`INSERT OR REPLACE INTO recipe_locales (recipe_id, country, lang, title, slug, intro, ingredients_json, steps_json, status)
+        VALUES (?, 'us', 'en', 'Moved', ?, NULL, '["x"]', '["y"]', 'draft')`).bind(b, slugA).run();
+      expect((await DB.prepare(`SELECT count(*) n FROM recipe_locales WHERE recipe_id = ? AND lang = 'en'`).bind(a).first<{ n: number }>())!.n).toBe(0);
+      expect((await DB.prepare(`SELECT count(*) n FROM recipe_locales WHERE recipe_id = ?`).bind(b).first<{ n: number }>())!.n).toBe(1);
+      expect((await DB.prepare(`SELECT seq FROM recipe_content_fence WHERE recipe_id = ?`).bind(a).first<{ seq: number }>())!.seq).toBeGreaterThan(Number(sha.seq));
+      expect((await DB.prepare(`SELECT seq FROM recipe_content_fence WHERE recipe_id = ?`).bind(b).first<{ seq: number }>())!.seq).toBeGreaterThan(Number(shb.seq));
+      expect((await post(`/account/recipes/${a}/permission`, { grant: '1', shown_hash: sha.hash, shown_seq: sha.seq }, { cookie, e: ON })).status).toBe(409);
+      expect((await post(`/account/recipes/${b}/permission`, { grant: '1', shown_hash: shb.hash, shown_seq: shb.seq }, { cookie, e: ON })).status).toBe(409);
+    });
   });
 });

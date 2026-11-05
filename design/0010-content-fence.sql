@@ -25,6 +25,23 @@
 --   triggers bump the fence of EVERY displaced row's parent.
 -- * UPDATE can reassign the parent (recipe_id): the AFTER UPDATE bumps bump
 --   BOTH the old and the new parent.
+--
+-- Supported / rejected write modes per content table (fail-closed):
+--   INSERT, no conflict          -> allowed; AFTER INSERT upsert-bump.
+--   INSERT OR REPLACE            -> allowed; BEFORE INSERT compensate bumps
+--                                   EVERY displaced row's parent (implicit
+--                                   deletes fire no trigger), AFTER INSERT
+--                                   bumps the new parent.
+--   UPDATE, no conflict          -> allowed; AFTER UPDATE bumps old+new parents.
+--   UPDATE, cross-row collision  -> REJECTED by trigger before displacement.
+--                                   A plain UPDATE would fail on the constraint
+--                                   anyway; an UPDATE OR REPLACE would silently
+--                                   delete the victim row(s) under another
+--                                   parent with no trigger able to see them.
+--                                   Writers must DELETE (fenced) and INSERT
+--                                   (fenced) instead. Nothing changes, so no
+--                                   fence bump - a displayed form stays valid.
+--   DELETE                       -> allowed; AFTER DELETE bump.
 -- Deliberately NO foreign key to recipes: SQLite enforces same-key REPLACE
 -- without firing DELETE triggers, and a cascaded fence row would be recreated
 -- at seq 1 - a silent reset a stale shown_seq could collide with. With no FK
@@ -132,6 +149,38 @@ BEGIN
   INSERT INTO recipe_content_fence (recipe_id, seq)
   SELECT id, 1 FROM recipes WHERE source_id IN (NEW.id, OLD.id)
   ON CONFLICT(recipe_id) DO UPDATE SET seq = seq + 1;
+END;
+
+-- Cross-row collision rejection (the modes matrix above). Fires only when the
+-- NEW values collide with a DIFFERENT row on an actual conflict target, so a
+-- plain conflicting UPDATE fails exactly as the constraint would have failed
+-- it, and an UPDATE OR REPLACE can never displace a victim silently.
+CREATE TRIGGER recipe_content_fence_reject_recipes_upd BEFORE UPDATE ON recipes
+WHEN EXISTS (SELECT 1 FROM recipes o WHERE o.rowid <> OLD.rowid AND o.id = NEW.id)
+BEGIN
+  SELECT RAISE(ABORT, 'cross-row conflicts on UPDATE are not a supported write; DELETE and INSERT instead');
+END;
+
+CREATE TRIGGER recipe_content_fence_reject_sources_upd BEFORE UPDATE ON sources
+WHEN EXISTS (SELECT 1 FROM sources o WHERE o.rowid <> OLD.rowid AND o.id = NEW.id)
+BEGIN
+  SELECT RAISE(ABORT, 'cross-row conflicts on UPDATE are not a supported write; DELETE and INSERT instead');
+END;
+
+CREATE TRIGGER recipe_content_fence_reject_images_upd BEFORE UPDATE ON recipe_images
+WHEN EXISTS (SELECT 1 FROM recipe_images i WHERE i.rowid <> OLD.rowid AND (i.id = NEW.id OR i.r2_key = NEW.r2_key))
+BEGIN
+  SELECT RAISE(ABORT, 'cross-row conflicts on UPDATE are not a supported write; DELETE and INSERT instead');
+END;
+
+CREATE TRIGGER recipe_content_fence_reject_locales_upd BEFORE UPDATE ON recipe_locales
+WHEN EXISTS (
+  SELECT 1 FROM recipe_locales l
+  WHERE l.rowid <> OLD.rowid AND (
+    (l.country = NEW.country AND l.lang = NEW.lang AND l.slug = NEW.slug)
+    OR (l.recipe_id = NEW.recipe_id AND l.country = NEW.country AND l.lang = NEW.lang)))
+BEGIN
+  SELECT RAISE(ABORT, 'cross-row conflicts on UPDATE are not a supported write; DELETE and INSERT instead');
 END;
 
 CREATE TABLE consent_fence_probe (
