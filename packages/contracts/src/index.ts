@@ -844,3 +844,4 @@ export * from './units';
 export * from './render';
 export * from './translation';
 export * from './accountStrings';
+export * from './canonical';
