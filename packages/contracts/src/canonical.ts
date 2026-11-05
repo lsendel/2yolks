@@ -25,6 +25,9 @@ export interface SnapImage {
   image_id: string; role: 'hero' | 'step'; step_index: number | null;
   style: 'photo' | 'illustration' | 'graphic';
   source_name: string; source_url: string; license: string; sha256: string;
+  /** Declared origin (design 0009): consent binds it through the hash. */
+  provenance: 'own' | 'ai' | 'other' | null;
+  provenance_note: string | null;
 }
 export interface SnapshotInput {
   recipe: SnapRecipe;
@@ -41,7 +44,7 @@ export function canonicalSnapshotJson(input: SnapshotInput): string {
     locales[k] = { ingredients_json: JSON.stringify(l.ingredients), intro: l.intro, slug: l.slug, steps_json: JSON.stringify(l.steps), title: l.title };
   }
   const images = [...input.images].sort((a, b) => a.image_id.localeCompare(b.image_id)).map((i) => ({
-    image_id: i.image_id, license: i.license, role: i.role, sha256: i.sha256,
+    image_id: i.image_id, license: i.license, provenance: i.provenance, provenance_note: i.provenance_note, role: i.role, sha256: i.sha256,
     source_name: i.source_name, source_url: i.source_url, step_index: i.step_index, style: i.style,
   }));
   const r = input.recipe;

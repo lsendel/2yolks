@@ -107,7 +107,7 @@ describe('scope-aware publication (REV 10 trigger)', () => {
       recipe: { author_name: 'Ana', base_servings: 4, category: 'soups-stews', cook_minutes: 30, origin_country: 'us', prep_minutes: 10, rest_minutes: null, total_minutes: null },
       source: { name: 'Ana', url: 'https://2yolks.com/', license: 'user-original' },
       locales: { 'us:en': { title: 'Soup', slug: 'soup', intro: null, ingredients: ['stock'], steps: ['Cook.'] } },
-      images: [{ image_id: 'img-9', role: 'hero', step_index: null, style: 'photo', source_name: 'Ana', source_url: 'https://2yolks.com/', license: 'proprietary', sha256: 'a'.repeat(64) }],
+      images: [{ image_id: 'img-9', role: 'hero', step_index: null, style: 'photo', source_name: 'Ana', source_url: 'https://2yolks.com/', license: 'proprietary', sha256: 'a'.repeat(64), provenance: 'own', provenance_note: null }],
     });
     // live rows to snapshot + flip
     await DB.prepare(`INSERT INTO recipe_locales (recipe_id, country, lang, title, slug, ingredients_json, steps_json, status) VALUES (?, 'us', 'en', 'Soup', 'soup', '["stock"]', '["Cook."]', 'draft')`).bind(RECIPE).run();
@@ -115,8 +115,8 @@ describe('scope-aware publication (REV 10 trigger)', () => {
     // bind an image to the revision manifest
     await DB.prepare(`INSERT INTO recipe_images (id, recipe_id, kind, step_index, r2_key, mime, bytes, style, source_name, source_url, license, provenance)
       VALUES ('img-9', ?, 'hero', NULL, 'r2/img-9', 'image/jpeg', 100, 'photo', 'Ana', 'https://2yolks.com/', 'proprietary', 'own')`).bind(RECIPE).run();
-    await DB.prepare(`INSERT INTO recipe_revision_images (revision_id, image_id, role, step_index, style, source_name, source_url, license, sha256)
-      VALUES ('rev-img', 'img-9', 'hero', NULL, 'photo', 'Ana', 'https://2yolks.com/', 'proprietary', ?)`).bind('a'.repeat(64)).run();
+    await DB.prepare(`INSERT INTO recipe_revision_images (revision_id, image_id, role, step_index, style, source_name, source_url, license, sha256, provenance)
+      VALUES ('rev-img', 'img-9', 'hero', NULL, 'photo', 'Ana', 'https://2yolks.com/', 'proprietary', ?, 'own')`).bind('a'.repeat(64)).run();
     // text-scope grant only: publish must fail closed on the images scope
     expect(await recordConsent(DB, RECIPE, { id: 'ce-t1', revisionId: 'rev-img', expectedSeq: 0, event: 'grant', userId: USER, licenseVersion: 'public-license-v1', licenseLang: 'en', scope: 'text' })).toEqual({ ok: true });
     const blocked = await publishRevision(DB, RECIPE, 'rev-img', 'admin-1', 'public-license-v1', 'en', 'pub-img');
@@ -141,5 +141,31 @@ describe('scope-aware publication (REV 10 trigger)', () => {
     expect(await saveRevision(DB, RECIPE, USER, 'rev-2', 1, snap)).toEqual({ ok: true });
     const blocked = await publishRevision(DB, RECIPE, 'rev-2', 'admin-1', 'public-license-v1', 'en', 'pub-old');
     expect(blocked.ok).toBe(false);
+  });
+
+  it('revoking text removes serving and a later images grant cannot resurrect it (scoped flip + view)', async () => {
+    const snap = await canonicalSnapshot({
+      recipe: { author_name: 'Ana', base_servings: 4, category: 'soups-stews', cook_minutes: 30, origin_country: 'us', prep_minutes: 10, rest_minutes: null, total_minutes: null },
+      source: { name: 'Ana', url: 'https://2yolks.com/', license: 'user-original' },
+      locales: { 'us:en': { title: 'Soup', slug: 'soup', intro: null, ingredients: ['stock'], steps: ['Cook.'] } },
+      images: [{ image_id: 'img-9', role: 'hero', step_index: null, style: 'photo', source_name: 'Ana', source_url: 'https://2yolks.com/', license: 'proprietary', sha256: 'a'.repeat(64), provenance: 'own', provenance_note: null }],
+    });
+    await DB.prepare(`INSERT INTO recipe_locales (recipe_id, country, lang, title, slug, ingredients_json, steps_json, status) VALUES (?, 'us', 'en', 'Soup', 'soup', '["stock"]', '["Cook."]', 'draft')`).bind(RECIPE).run();
+    expect(await saveRevision(DB, RECIPE, USER, 'rev-img', 0, snap)).toEqual({ ok: true });
+    await DB.prepare(`INSERT INTO recipe_images (id, recipe_id, kind, step_index, r2_key, mime, bytes, style, source_name, source_url, license, provenance, sha256)
+      VALUES ('img-9', ?, 'hero', NULL, 'r2/img-9', 'image/jpeg', 100, 'photo', 'Ana', 'https://2yolks.com/', 'proprietary', 'own', ?)`).bind(RECIPE, 'a'.repeat(64)).run();
+    await DB.prepare(`INSERT INTO recipe_revision_images (revision_id, image_id, role, step_index, style, source_name, source_url, license, sha256, provenance)
+      VALUES ('rev-img', 'img-9', 'hero', NULL, 'photo', 'Ana', 'https://2yolks.com/', 'proprietary', ?, 'own')`).bind('a'.repeat(64)).run();
+    expect(await recordConsent(DB, RECIPE, { id: 'ce-t1', revisionId: 'rev-img', expectedSeq: 0, event: 'grant', userId: USER, licenseVersion: 'public-license-v1', licenseLang: 'en', scope: 'text' })).toEqual({ ok: true });
+    expect(await recordConsent(DB, RECIPE, { id: 'ce-i1', revisionId: 'rev-img', expectedSeq: 1, event: 'grant', userId: USER, licenseVersion: 'public-license-v1', licenseLang: 'en', scope: 'images' })).toEqual({ ok: true });
+    expect(await publishRevision(DB, RECIPE, 'rev-img', 'admin-1', 'public-license-v1', 'en', 'pub-1')).toEqual({ ok: true });
+    expect((await DB.prepare(`SELECT count(*) n FROM recipe_locales_effective WHERE recipe_id = ?`).bind(RECIPE).first<{ n: number }>())!.n).toBe(1);
+    // revoke TEXT, then append an IMAGES grant: serving must stay 0 and a direct flip must abort
+    expect(await recordConsent(DB, RECIPE, { id: 'ce-rv', revisionId: 'rev-img', expectedSeq: 2, event: 'revoke', userId: USER, licenseVersion: 'public-license-v1', licenseLang: 'en', scope: 'text' })).toEqual({ ok: true });
+    expect(await recordConsent(DB, RECIPE, { id: 'ce-i2', revisionId: 'rev-img', expectedSeq: 3, event: 'grant', userId: USER, licenseVersion: 'public-license-v1', licenseLang: 'en', scope: 'images' })).toEqual({ ok: true });
+    expect((await DB.prepare(`SELECT count(*) n FROM recipe_locales_effective WHERE recipe_id = ?`).bind(RECIPE).first<{ n: number }>())!.n).toBe(0);
+    await DB.prepare(`UPDATE recipe_locales SET status = 'draft' WHERE recipe_id = ?`).bind(RECIPE).run();
+    const flip = await DB.prepare(`UPDATE recipe_locales SET status = 'published' WHERE recipe_id = ?`).bind(RECIPE).run().then(() => ({ ok: true as const })).catch((e: unknown) => ({ ok: false as const, reason: String(e) }));
+    expect(flip.ok).toBe(false);
   });
 });

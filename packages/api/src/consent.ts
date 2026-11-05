@@ -32,9 +32,12 @@ export async function schemaProbe(DB: D1Database): Promise<boolean> {
   // REV 10: consent events carry an explicit text|images scope.
   const cols = await DB.prepare(`SELECT count(*) n FROM pragma_table_info('recipe_consent_events') WHERE name = 'scope'`).first<{ n: number }>();
   if (cols!.n !== 1) return false;
-  // REV 11: images carry per-image provenance.
-  const prov = await DB.prepare(`SELECT count(*) n FROM pragma_table_info('recipe_images') WHERE name = 'provenance'`).first<{ n: number }>();
-  return prov!.n === 1;
+  // REV 11: live images carry per-image provenance and sealed digests; the
+  // revision manifest carries provenance too.
+  const prov = await DB.prepare(`SELECT count(*) n FROM pragma_table_info('recipe_images') WHERE name IN ('provenance', 'provenance_note', 'sha256')`).first<{ n: number }>();
+  if (prov!.n !== 3) return false;
+  const mprov = await DB.prepare(`SELECT count(*) n FROM pragma_table_info('recipe_revision_images') WHERE name = 'provenance'`).first<{ n: number }>();
+  return mprov!.n === 1;
 }
 
 
@@ -62,8 +65,11 @@ export async function latestConsent(DB: D1Database, recipeId: string, scope: 'te
 
 export type WriteResult = { ok: true } | { ok: false; reason: string };
 
-/** Build the canonical snapshot for a recipe from live rows. */
-export async function buildSnapshotFromLive(DB: D1Database, recipeId: string): Promise<{ json: string; hash: string } | null> {
+/** Build the canonical snapshot for a recipe from live rows. Only images with
+ * a sealed digest (sha256) are publishable content and enter the snapshot;
+ * `provOverrides` applies provenance declared in the same request, so the
+ * hash matches what the atomic grant batch persists. */
+export async function buildSnapshotFromLive(DB: D1Database, recipeId: string, provOverrides?: Map<string, { prov: 'own' | 'ai' | 'other'; note: string }>): Promise<{ json: string; hash: string } | null> {
   const r = await DB.prepare(`SELECT origin_country, category, prep_minutes, cook_minutes, rest_minutes, total_minutes, base_servings, author_name FROM recipes WHERE id = ?`).bind(recipeId).first<Record<string, unknown>>();
   if (!r) return null;
   const src = await DB.prepare(`SELECT s.name, s.url, s.license FROM sources s JOIN recipes o ON o.source_id = s.id WHERE o.id = ?`).bind(recipeId).first<{ name: string; url: string; license: string }>();
@@ -76,16 +82,21 @@ export async function buildSnapshotFromLive(DB: D1Database, recipeId: string): P
       ingredients: JSON.parse(String(l['ingredients_json'])) as string[], steps: JSON.parse(String(l['steps_json'])) as string[],
     };
   }
-  const imageRows = await DB.prepare(`SELECT id, kind, step_index, style, source_name, source_url, license FROM recipe_images WHERE recipe_id = ? ORDER BY id`).bind(recipeId).all<Record<string, unknown>>();
-  const images: SnapshotInput['images'] = (imageRows.results ?? []).map((i) => ({
-    image_id: String(i['id']), role: i['kind'] === 'hero' ? 'hero' as const : 'step' as const,
-    step_index: (i['step_index'] as number | null) ?? null,
-    style: String(i['style']) as 'photo' | 'illustration' | 'graphic',
-    source_name: String(i['source_name']), source_url: String(i['source_url']), license: String(i['license']),
-    // sha256 of the exact R2 bytes is filled by the image pipeline at bind
-    // time; a placeholder is never published (digest CHECK + manifest guard).
-    sha256: String((i as Record<string, unknown>)['sha256'] ?? ''),
-  }));
+  const imageRows = await DB.prepare(`SELECT id, kind, step_index, style, source_name, source_url, license, sha256, provenance, provenance_note FROM recipe_images WHERE recipe_id = ? AND sha256 IS NOT NULL ORDER BY id`).bind(recipeId).all<Record<string, unknown>>();
+  const images: SnapshotInput['images'] = (imageRows.results ?? []).map((i) => {
+    const id = String(i['id']);
+    const over = provOverrides?.get(id);
+    const prov = (over?.prov ?? (i['provenance'] as 'own' | 'ai' | 'other' | null)) || null;
+    return {
+      image_id: id, role: i['kind'] === 'hero' ? 'hero' as const : 'step' as const,
+      step_index: (i['step_index'] as number | null) ?? null,
+      style: String(i['style']) as 'photo' | 'illustration' | 'graphic',
+      source_name: String(i['source_name']), source_url: String(i['source_url']), license: String(i['license']),
+      sha256: String(i['sha256']),
+      provenance: prov,
+      provenance_note: over ? over.note || null : ((i['provenance_note'] as string | null) ?? null),
+    };
+  });
   return canonicalSnapshot({
     recipe: {
       author_name: (r['author_name'] as string | null) ?? null, base_servings: (r['base_servings'] as number | null) ?? null,
@@ -182,6 +193,73 @@ export async function publishRevision(DB: D1Database, recipeId: string, revision
 export async function disableRecipe(DB: D1Database, recipeId: string): Promise<WriteResult> {
   try {
     await DB.prepare(`UPDATE recipe_locales SET status = 'draft' WHERE recipe_id = ? AND status = 'published'`).bind(recipeId).run();
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, reason: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+export type ManifestImage = { imageId: string; role: 'hero' | 'step'; step_index: number | null; style: string; source_name: string; source_url: string; license: string; sha256: string; provenance: 'own' | 'ai' | 'other' | null; provenance_note: string | null };
+
+/**
+ * Grant permission for the exact displayed snapshot: ONE atomic D1 batch
+ * (validation belongs to the caller and happens before any write):
+ * provenance persistence, revision insert, live-row derivation, locale
+ * upserts, sealed image manifest, consent events. A trigger abort anywhere
+ * rolls the whole grant back - no committed provenance without consent, no
+ * consent without its revision and manifest.
+ */
+export async function grantPermission(DB: D1Database, input: {
+  recipeId: string; userId: string; revisionId: string; expectedRevSeq: number;
+  snap: { json: string; hash: string };
+  provenance: Array<{ imageId: string; prov: 'own' | 'ai' | 'other'; note: string | null }>;
+  consents: Array<{ id: string; scope: 'text' | 'images'; licenseVersion: string; licenseLang: string }>;
+  consentBaseSeq: number;
+}): Promise<WriteResult> {
+  const parsed = JSON.parse(input.snap.json) as { locales: Record<string, unknown>; images: Array<Record<string, unknown>> };
+  const keys = Object.keys(parsed.locales);
+  const stmts: D1PreparedStatement[] = [];
+  for (const p of input.provenance) {
+    stmts.push(DB.prepare(`UPDATE recipe_images SET provenance = ?, provenance_note = ? WHERE id = ? AND recipe_id = ?`).bind(p.prov, p.note, p.imageId, input.recipeId));
+  }
+  stmts.push(DB.prepare(`INSERT INTO recipe_revisions (id, recipe_id, seq, content_hash, snapshot_json, created_by) VALUES (?, ?, ?, ?, ?, ?)`).bind(input.revisionId, input.recipeId, input.expectedRevSeq + 1, input.snap.hash, input.snap.json, input.userId));
+  stmts.push(DB.prepare(`UPDATE recipes SET
+    origin_country = r.origin_country, category = r.category, prep_minutes = r.prep_minutes, cook_minutes = r.cook_minutes,
+    rest_minutes = r.rest_minutes, total_minutes = r.total_minutes, base_servings = r.base_servings, author_name = r.author_name
+    FROM (SELECT json_extract(snapshot_json,'$.recipe.origin_country') AS origin_country, json_extract(snapshot_json,'$.recipe.category') AS category,
+      json_extract(snapshot_json,'$.recipe.prep_minutes') AS prep_minutes, json_extract(snapshot_json,'$.recipe.cook_minutes') AS cook_minutes,
+      json_extract(snapshot_json,'$.recipe.rest_minutes') AS rest_minutes, json_extract(snapshot_json,'$.recipe.total_minutes') AS total_minutes,
+      json_extract(snapshot_json,'$.recipe.base_servings') AS base_servings, json_extract(snapshot_json,'$.recipe.author_name') AS author_name
+      FROM recipe_revisions WHERE id = ?) r
+    WHERE recipes.id = ?`).bind(input.revisionId, input.recipeId));
+  stmts.push(DB.prepare(`UPDATE sources SET name = s.name, url = s.url, license = s.license
+    FROM (SELECT json_extract(snapshot_json,'$.source.name') AS name, json_extract(snapshot_json,'$.source.url') AS url, json_extract(snapshot_json,'$.source.license') AS license FROM recipe_revisions WHERE id = ?) s
+    WHERE sources.id = (SELECT source_id FROM recipes WHERE id = ?)`).bind(input.revisionId, input.recipeId));
+  for (const k of keys) {
+    stmts.push(DB.prepare(`INSERT INTO recipe_locales (recipe_id, country, lang, title, slug, intro, ingredients_json, steps_json, status)
+      SELECT r.recipe_id, substr(k.key, 1, instr(k.key, ':') - 1), substr(k.key, instr(k.key, ':') + 1),
+        json_extract(k.value,'$.title'), json_extract(k.value,'$.slug'), json_extract(k.value,'$.intro'),
+        json_extract(k.value,'$.ingredients_json'), json_extract(k.value,'$.steps_json'), 'draft'
+      FROM recipe_revisions r, json_each(json_extract(r.snapshot_json, '$.locales')) k
+      WHERE r.id = ? AND k.key = ?
+      ON CONFLICT(recipe_id, country, lang) DO UPDATE SET
+        title = excluded.title, slug = excluded.slug, intro = excluded.intro,
+        ingredients_json = excluded.ingredients_json, steps_json = excluded.steps_json`).bind(input.revisionId, k));
+  }
+  // The sealed manifest binds exactly the snapshot images (digests and
+  // provenance included) - and must land BEFORE any consent event names the
+  // revision (recipe_revision_images_guard).
+  for (const m of parsed.images) {
+    stmts.push(DB.prepare(`INSERT INTO recipe_revision_images (revision_id, image_id, role, step_index, style, source_name, source_url, license, sha256, provenance, provenance_note)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .bind(input.revisionId, String(m['image_id']), String(m['role']), m['step_index'] === null || m['step_index'] === undefined ? null : Number(m['step_index']), String(m['style']), String(m['source_name']), String(m['source_url']), String(m['license']), String(m['sha256']), (m['provenance'] as string | null) ?? null, (m['provenance_note'] as string | null) ?? null));
+  }
+  input.consents.forEach((cs, i) => {
+    stmts.push(DB.prepare(`INSERT INTO recipe_consent_events (id, recipe_id, revision_id, consent_seq, event, user_id, audience, license_version, license_lang, scope) VALUES (?, ?, ?, ?, 'grant', ?, 'public', ?, ?, ?)`)
+      .bind(cs.id, input.recipeId, input.revisionId, input.consentBaseSeq + i + 1, input.userId, cs.licenseVersion, cs.licenseLang, cs.scope));
+  });
+  try {
+    await DB.batch(stmts);
     return { ok: true };
   } catch (e) {
     return { ok: false, reason: e instanceof Error ? e.message : String(e) };

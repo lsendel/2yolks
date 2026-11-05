@@ -19,7 +19,7 @@ export interface AccountStrings {
   c2GrantImagesLabel: string; c2ImagesLine: string; c2MailSubject: string; c2MailBody: string;
   c2StateTextLabel: string; c2StateImagesLabel: string;
   c2ProvLabel: string; c2ProvChoose: string; c2ProvOwn: string; c2ProvAi: string; c2ProvOther: string; c2ProvNoteLabel: string; c2ErrProvenance: string; c2ImageN: string;
-  c2StateStale: string;
+  c2StateStale: string; c2ErrConflict: string; c2ErrDigest: string;
   // withdrawal UI stays unmounted until the owner's policy wording lands; keys kept for it
   c2WithdrawButton: string;
   c2OkGranted: string; c2OkWithdrawn: string; c2ErrTick: string; c2ErrUnavailable: string; c2ErrNoGrant: string; c2BackToEdit: string;
@@ -80,6 +80,8 @@ const en: AccountStrings = {
   c2ProvNoteLabel: 'Whose permission do you have? (required for images from another source)',
   c2ErrProvenance: 'Say where every image comes from first. For images from another source, say whose permission you have.', c2ImageN: 'Image {n}',
   c2StateStale: 'The draft changed since then, so this permission covers that saved version only, not the current draft.',
+  c2ErrConflict: 'This draft changed since you opened this page. Look at the current version and give permission again.',
+  c2ErrDigest: 'Some images are still being prepared. Try again in a moment.',
 
   c2MailBody: 'You saved permission for your recipe "{title}".\n\nVersion (content hash): {hash}\nLicense: {license} ({lang})\nCovers: {scope}\n\nThis permission covers exactly this version. If you edit the recipe, 2yolks will ask again.\nIf this was not you, sign in to your 2yolks account.',
   c2GrantLabel: 'I created this recipe or have permission to share it, and I allow 2yolks to publish this exact version publicly.',
@@ -186,6 +188,8 @@ const es: AccountStrings = {
   c2ProvNoteLabel: '¿De quién tienes permiso? (obligatorio para imágenes de otra fuente)',
   c2ErrProvenance: 'Indica primero de dónde viene cada imagen. Para imágenes de otra fuente, indica de quién tienes permiso.', c2ImageN: 'Imagen {n}',
   c2StateStale: 'El borrador cambió desde entonces; este permiso cubre solo esa versión guardada, no el borrador actual.',
+  c2ErrConflict: 'Este borrador cambió desde que abriste esta página. Revisa la versión actual y vuelve a dar el permiso.',
+  c2ErrDigest: 'Algunas imágenes aún se están preparando. Inténtalo de nuevo en un momento.',
 
   c2MailBody: 'Guardaste permiso para tu receta "{title}".\n\nVersión (hash de contenido): {hash}\nLicencia: {license} ({lang})\nCubre: {scope}\n\nEste permiso cubre exactamente esta versión. Si editas la receta, 2yolks te preguntará de nuevo.\nSi no fuiste tú, entra a tu cuenta de 2yolks.',
   c2GrantLabel: 'Creé esta receta o tengo permiso para compartirla, y permito que 2yolks publique esta versión exacta de forma pública.',
@@ -292,6 +296,8 @@ const fr: AccountStrings = {
   c2ProvNoteLabel: 'De qui avez-vous l’autorisation ? (obligatoire pour les images d’une autre source)',
   c2ErrProvenance: 'Indiquez d’abord la provenance de chaque image. Pour les images d’une autre source, indiquez de qui vous avez l’autorisation.', c2ImageN: 'Image {n}',
   c2StateStale: 'Le brouillon a changé depuis ; cette autorisation couvre uniquement cette version enregistrée, pas le brouillon actuel.',
+  c2ErrConflict: 'Ce brouillon a changé depuis l’ouverture de cette page. Vérifiez la version actuelle et redonnez votre autorisation.',
+  c2ErrDigest: 'Certaines images sont encore en préparation. Réessayez dans un moment.',
 
   c2MailBody: 'Vous avez enregistré une autorisation pour votre recette « {title} ».\n\nVersion (hash de contenu) : {hash}\nLicence : {license} ({lang})\nPortée : {scope}\n\nCette autorisation couvre exactement cette version. Si vous modifiez la recette, 2yolks vous demandera à nouveau.\nSi ce n’était pas vous, connectez-vous à votre compte 2yolks.',
   c2GrantLabel: 'J’ai créé cette recette ou j’ai le droit de la partager, et j’autorise 2yolks à publier cette version exacte publiquement.',

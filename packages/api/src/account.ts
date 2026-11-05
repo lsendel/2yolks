@@ -9,7 +9,7 @@ import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import { eq, and, ne, desc } from 'drizzle-orm';
 import { LOCALES, getCountry, localizedCountryName, slugify, validateRecipeSubmission, RECIPE_CATEGORY_SLUGS, categoryLabel, isRecipeCategorySlug, CATEGORIES, accountStrings, fill, isAccountLang, validatorMessage, parseWarningMessage, ssrfMessage, type AccountStrings } from '@2yolks/contracts';
 import { renderAccountPage, escapeHtml as esc, CAPTURE_CLIENT_SCRIPT, CAPTURE_CHECK_STRINGS } from '@2yolks/web/server';
-import { consentFlowEnabled, schemaProbe, buildSnapshotFromLive, saveRevision, recordConsent, latestRevisionSeq, latestConsentSeq, latestConsent, PUBLIC_LICENSE_VERSION } from './consent';
+import { consentFlowEnabled, schemaProbe, buildSnapshotFromLive, grantPermission, latestRevisionSeq, latestConsentSeq, latestConsent, PUBLIC_LICENSE_VERSION } from './consent';
 import { createDb, recipes, recipeLocales, sources, users } from './db';
 import { sendMail, type MailEnv } from './email';
 import { parseRecipeText, parseJsonLdRecipe, type ParsedRecipe } from './parse';
@@ -85,12 +85,13 @@ accountApp.use('*', async (c, next) => {
   await next();
 });
 
-/** Atomically reserve one outbound email against the daily budget (single conditional INSERT). */
-export async function reserveMail(db: D1Database, kind: 'code' | 'notice', cap: number): Promise<boolean> {
+export const MAIL_COMBINED_PER_DAY = 40; // hard site total across every kind, enforced for every writer
+/** Atomically reserve one outbound email against its per-kind cap AND the combined daily budget (single conditional INSERT). */
+export async function reserveMail(db: D1Database, kind: 'code' | 'notice' | 'receipt', cap: number): Promise<boolean> {
   const now = Date.now();
   const r = await db.prepare(
-    'INSERT INTO mail_log (id, kind, created_at) SELECT ?, ?, ? WHERE (SELECT count(*) FROM mail_log WHERE kind = ? AND created_at > ?) < ?',
-  ).bind(newId() + newId(), kind, now, kind, now - 86_400_000, cap).run();
+    'INSERT INTO mail_log (id, kind, created_at) SELECT ?, ?, ? WHERE (SELECT count(*) FROM mail_log WHERE kind = ? AND created_at > ?) < ? AND (SELECT count(*) FROM mail_log WHERE created_at > ?) < ?',
+  ).bind(newId() + newId(), kind, now, kind, now - 86_400_000, cap, now - 86_400_000, MAIL_COMBINED_PER_DAY).run();
   return r.meta.changes === 1;
 }
 
@@ -528,15 +529,7 @@ accountApp.post('/recipes/:id/submit', async (c) => {
 // pending the owner, so no live route (even flag-gated) records a revoke yet.
 const c2Off = (c: Ctx) => { const t = accountStrings(langOf(c)); return page(c, t.titleNotFound, banner('err', t.errDraftNotFound), 404); };
 
-const RECEIPTS_PER_DAY = 8; // receipts per rolling 24h, own kind; combined site budget stays 40/day
-/** Receipt reservation: per-kind cap AND the combined daily budget, one conditional INSERT. */
-async function reserveReceiptMail(db: D1Database): Promise<boolean> {
-  const now = Date.now();
-  const r = await db.prepare(
-    'INSERT INTO mail_log (id, kind, created_at) SELECT ?, ?, ? WHERE (SELECT count(*) FROM mail_log WHERE kind = ? AND created_at > ?) < ? AND (SELECT count(*) FROM mail_log WHERE created_at > ?) < ?',
-  ).bind(newId() + newId(), 'receipt', now, 'receipt', now - 86_400_000, RECEIPTS_PER_DAY, now - 86_400_000, CODES_PER_DAY + NOTICES_PER_DAY).run();
-  return r.meta.changes === 1;
-}
+const RECEIPTS_PER_DAY = 8; // receipts per rolling 24h, own kind; reserveMail also enforces the combined 40/day site budget
 
 accountApp.get('/recipes/:id/permission', async (c) => {
   if (!consentFlowEnabled(c.env)) return c2Off(c);
@@ -585,6 +578,7 @@ accountApp.get('/recipes/:id/permission', async (c) => {
       </fieldset>`;
     }).join('\n') : '';
     form = `<form method="post" action="/account/recipes/${row.r.id}/permission${q}">
+    <input type="hidden" name="shown_hash" value="${currentHash}">
     ${boxes}
     ${pickers}
     <p class="hint">${fill(t.c2LicenseLine, { version: PUBLIC_LICENSE_VERSION, lang })}</p>
@@ -607,42 +601,47 @@ accountApp.post('/recipes/:id/permission', async (c) => {
   const wantText = f['grant'] === '1';
   const wantImages = f['grant_images'] === '1';
   if (!wantText && !wantImages) return page(c, t.c2PageTitle, banner('err', t.c2ErrTick), 400);
-  const images = (await c.env.DB.prepare(`SELECT id, provenance, provenance_note FROM recipe_images WHERE recipe_id = ? ORDER BY id`).bind(row.r.id).all<Record<string, unknown>>()).results ?? [];
+
+  // --- Validation only. Nothing is written before every check passes.
+  const images = (await c.env.DB.prepare(`SELECT id, sha256, provenance, provenance_note FROM recipe_images WHERE recipe_id = ? ORDER BY id`).bind(row.r.id).all<Record<string, unknown>>()).results ?? [];
   const hasImages = images.length > 0;
-  // Persist provenance declarations from the form, then enforce: an
-  // images-scope grant requires provenance for EVERY image, and 'other'
-  // requires whose permission the cook has.
-  const declared = new Map<string, { prov: string; note: string }>();
+  const declared = new Map<string, { prov: 'own' | 'ai' | 'other'; note: string }>();
   for (const img of images) {
     const id = String(img['id']);
     const raw = str(f[`prov_${id}`], 10);
-    const prov = raw === 'own' || raw === 'ai' || raw === 'other' ? raw : String(img['provenance'] ?? '');
+    const prov = (raw === 'own' || raw === 'ai' || raw === 'other' ? raw : String(img['provenance'] ?? '')) as 'own' | 'ai' | 'other' | '';
     const note = str(f[`provnote_${id}`], 300) || String(img['provenance_note'] ?? '');
-    declared.set(id, { prov, note });
-    if (raw) await c.env.DB.prepare(`UPDATE recipe_images SET provenance = ?, provenance_note = ? WHERE id = ? AND recipe_id = ?`).bind(prov, note || null, id, row.r.id).run();
-  }
-  if (wantImages) {
-    for (const { prov, note } of declared.values()) {
+    if (prov) declared.set(id, { prov, note });
+    if (wantImages) {
+      if (!img['sha256']) return page(c, t.c2PageTitle, banner('err', t.c2ErrDigest), 400);
       if (!prov || (prov === 'other' && !note)) return page(c, t.c2PageTitle, banner('err', t.c2ErrProvenance), 400);
     }
   }
-  const snap = await buildSnapshotFromLive(c.env.DB, row.r.id);
-  if (!snap) return page(c, t.titleNotFound, banner('err', t.errDraftNotFound), 404);
-  const revId = `rev-${newId()}`;
-  const wr = await saveRevision(c.env.DB, row.r.id, user.id, revId, await latestRevisionSeq(c.env.DB, row.r.id), snap);
+
+  // --- Optimistic binding: the grant covers the content the form DISPLAYED.
+  // Another writer (or another tab) changing the draft since the GET conflicts.
+  const current = await buildSnapshotFromLive(c.env.DB, row.r.id);
+  if (!current) return page(c, t.titleNotFound, banner('err', t.errDraftNotFound), 404);
+  if (str(f['shown_hash'], 64) !== current.hash) return page(c, t.c2PageTitle, banner('err', t.c2ErrConflict), 409);
+
+  // --- One atomic batch: provenance persistence + revision + manifest + consent.
+  const snap = (await buildSnapshotFromLive(c.env.DB, row.r.id, declared))!;
+  const wr = await grantPermission(c.env.DB, {
+    recipeId: row.r.id, userId: user.id, revisionId: `rev-${newId()}`, expectedRevSeq: await latestRevisionSeq(c.env.DB, row.r.id), snap,
+    provenance: [...declared.entries()].map(([imageId, d]) => ({ imageId, prov: d.prov, note: d.note || null })),
+    consents: [...(wantText ? ['text' as const] : []), ...(wantImages && hasImages ? ['images' as const] : [])]
+      .map((scope) => ({ id: `ce-${newId()}`, scope, licenseVersion: PUBLIC_LICENSE_VERSION, licenseLang: lang })),
+    consentBaseSeq: await latestConsentSeq(c.env.DB, row.r.id),
+  });
   if (!wr.ok) return page(c, t.c2PageTitle, banner('err', t.errGeneric), 409);
-  const scopes: Array<'text' | 'images'> = [...(wantText ? ['text' as const] : []), ...(wantImages && hasImages ? ['images' as const] : [])];
-  for (const scope of scopes) {
-    const cr = await recordConsent(c.env.DB, row.r.id, { id: `ce-${newId()}`, revisionId: revId, expectedSeq: await latestConsentSeq(c.env.DB, row.r.id), event: 'grant', userId: user.id, licenseVersion: PUBLIC_LICENSE_VERSION, licenseLang: lang, scope });
-    if (!cr.ok) return page(c, t.c2PageTitle, banner('err', t.errGeneric), 409);
-  }
+
   // Contributor receipt: the cook's own verified (session) address only, own
-  // daily cap inside the combined site budget, never sent when the cap is out.
-  if (await reserveReceiptMail(c.env.DB)) {
+  // daily cap inside the combined site budget, never sent when a cap is out.
+  if (await reserveMail(c.env.DB, 'receipt', RECEIPTS_PER_DAY)) {
     await sendMail(c.env, {
       to: user.email,
       subject: fill(t.c2MailSubject, { title: row.l.title }).slice(0, 180),
-      text: fill(t.c2MailBody, { title: row.l.title, hash: snap.hash.slice(0, 12), license: PUBLIC_LICENSE_VERSION, lang, scope: scopes.join(' + ') }),
+      text: fill(t.c2MailBody, { title: row.l.title, hash: snap.hash.slice(0, 12), license: PUBLIC_LICENSE_VERSION, lang, scope: [...(wantText ? ['text'] : []), ...(wantImages && hasImages ? ['images'] : [])].join(' + ') }),
     }).catch(() => false);
   }
   return page(c, t.c2PageTitle, `<h1>${t.c2Title}</h1>${banner('ok', t.c2OkGranted)}<p><a href="/account/recipes/${row.r.id}/permission?lang=${lang}">${t.c2PageTitle}</a></p>`);
