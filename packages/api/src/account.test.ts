@@ -73,15 +73,19 @@ describe('capture form (category-first + live checks)', () => {
     const rows = await DB.prepare('SELECT category FROM recipes ORDER BY created_at').all<{ category: string | null }>();
     expect(rows.results[1]!.category).toBeNull();
   });
-  it('localizes category options and check strings when the recipe language is Spanish', async () => {
+  it('form chrome follows the account UI language, not the recipe language', async () => {
     const cookie = await signIn();
     await post('/account/recipes/save', recipeForm({ locale: 'us:es', category: 'soups-stews' }), { cookie });
     const { id } = (await DB.prepare('SELECT id FROM recipes').first<{ id: string }>())!;
+    // EN account UI + Spanish recipe: chrome stays English, recipe locale untouched
     const html = await (await get(`/account/recipes/${id}/edit`, cookie)).text();
-    expect(html).toContain('<option value="soups-stews" selected>Sopas y guisos</option>');
-    expect(html).toContain('¿Qué tipo de plato es?');
-    expect(html).toContain('Ponle un nombre a la receta');
-    expect(html).toContain('Una o dos frases antes de la receta');
+    expect(html).toContain('<option value="soups-stews" selected>Soups &amp; stews</option>');
+    expect(html).toContain('<span data-category-prompt>What kind of dish is it?</span>');
+    expect(html).toMatch(/<option value="us:es"[^>]*selected/);
+    // ES account UI + the same Spanish recipe: chrome switches with ?lang=
+    const es = await (await get(`/account/recipes/${id}/edit?lang=es`, cookie)).text();
+    expect(es).toContain('<option value="soups-stews" selected>Sopas y guisos</option>');
+    expect(es).toContain('<span data-category-prompt>¿Qué tipo de plato es?</span>');
   });
   it('data islands carry every re-localizable string (blank option + preamble included)', async () => {
     const cookie = await signIn();
@@ -560,5 +564,144 @@ describe('submissions endpoint stays closed', () => {
   it('old unauthenticated API is still 503', async () => {
     const res = await app.request(`${ORIGIN}/api/v1/submissions`, { method: 'POST', body: '{}' }, env());
     expect(res.status).toBe(503);
+  });
+});
+
+describe('account i18n (en/es/fr)', () => {
+  const code6 = (text: string) => /\b(\d{6})\b/.exec(text)![1]!;
+
+  it('renders the sign-in page in Spanish and French, defaulting unknown values to English', async () => {
+    const es = await (await get('/account?lang=es')).text();
+    expect(es).toContain('lang="es"');
+    expect(es).toContain('Tu cuenta de 2yolks');
+    expect(es).toContain('Envíame un código');
+    expect(es).toContain('action="/account/code?lang=es"');
+    expect(es).toContain('/account?lang=en');
+    expect(es).toContain('/account?lang=fr');
+    const fr = await (await get('/account?lang=fr')).text();
+    expect(fr).toContain('lang="fr"');
+    expect(fr).toContain('Votre compte 2yolks');
+    expect(fr).toContain('M’envoyer un code');
+    const bad = await (await get('/account?lang=de')).text();
+    expect(bad).toContain('Your 2yolks account');
+    // site chrome (footer) follows the page language too
+    expect(es).toContain('>Acerca de<');
+    expect(es).toContain('>Cómo probamos<');
+    expect(es).toContain('>Privacidad<');
+    expect(es).not.toContain('About / Acerca de');
+    expect(fr).toContain('>À propos<');
+    expect(fr).toContain('>Comment nous testons<');
+    expect(fr).toContain('>Confidentialité<');
+    expect(fr).not.toContain('About / Acerca de');
+    expect(bad).toContain('>Privacy<');
+  });
+
+  it('the capture script hooks the localized save form via a stable data attribute (selector/action contract)', async () => {
+    const { CAPTURE_CLIENT_SCRIPT } = await import('@2yolks/web/server');
+    // the script must not key off the (language-dependent) action URL
+    expect(CAPTURE_CLIENT_SCRIPT).not.toContain('form[action=');
+    expect(CAPTURE_CLIENT_SCRIPT).toContain("form[data-capture-form]");
+    const cookie = await signIn();
+    for (const lang of ['en', 'es', 'fr']) {
+      const html = await (await get(`/account/recipes/new?lang=${lang}`, cookie)).text();
+      // generated form carries the stable hook AND the localized action
+      expect(html).toContain('data-capture-form');
+      expect(html).toContain(`action="/account/recipes/save${lang === 'en' ? '' : `?lang=${lang}`}"`);
+    }
+  });
+
+  it('form chrome and live checks follow the account UI language while the recipe locale stays independent', async () => {
+    const cookie = await signIn();
+    const es = await (await get('/account/recipes/new?lang=es', cookie)).text();
+    expect(es).toContain('¿Qué tipo de plato es?');
+    expect(es).toContain('Aún no lo sé');
+    expect(es).toContain('Una o dos frases antes de la receta');
+    // recipe data locale untouched by the UI language: still defaults to us:en
+    expect(es).toContain('<select name="locale">');
+    expect(es).toMatch(/<option value="us:en"[^>]*selected/);
+    const fr = await (await get('/account/recipes/new?lang=fr', cookie)).text();
+    expect(fr).toContain('<span data-category-prompt>Quel type de plat est-ce ?</span>');
+    expect(fr).toContain('<option value="" selected>Pas encore sûr</option>');
+    expect(fr).not.toContain('<span data-category-prompt>What kind of dish is it?</span>');
+  });
+
+  it('timing/serving validation errors are localized (ES/FR)', async () => {
+    const cookie = await signIn();
+    for (const [lang, needle] of [['es', 'Revisa los tiempos'], ['fr', 'Vérifiez les temps']] as const) {
+      const res = await post(`/account/recipes/save?lang=${lang}`, recipeForm({ prep: 'abc' }), { cookie });
+      const html = await res.text();
+      expect(res.status).toBe(400);
+      expect(html).toContain(needle);
+      const res2 = await post(`/account/recipes/save?lang=${lang}`, recipeForm({ servings: 'many' }), { cookie });
+      expect(await res2.text()).toContain(needle);
+    }
+  });
+
+  it('paste parse warnings are localized (ES/FR)', async () => {
+    const cookie = await signIn();
+    const es = await (await post('/account/recipes/paste?lang=es', { text: '' }, { cookie })).text();
+    expect(es).toContain('No se encontró el título');
+    expect(es).toContain('No se encontraron ingredientes');
+    expect(es).toContain('No se encontraron pasos');
+    const fr = await (await post('/account/recipes/paste?lang=fr', { text: '' }, { cookie })).text();
+    expect(fr).toContain('Aucun titre trouvé');
+    expect(fr).toContain('Aucun ingrédient trouvé');
+    expect(fr).toContain('Aucune étape trouvée');
+  });
+
+  it('runs the whole sign-in flow in Spanish, including the localized code email', async () => {
+    const res = await post('/account/code?lang=es', { email: 'cook@example.com' });
+    const html = await res.text();
+    expect(html).toContain('Revisa tu correo');
+    expect(html).toContain('action="/account/verify?lang=es"');
+    expect(sent[0]!.subject).toMatch(/^Tu código de 2yolks: \d{6}$/);
+    expect(sent[0]!.text).toContain('Tu código de inicio de sesión de 2yolks es');
+    const code = code6(sent[0]!.subject);
+    const v = await post('/account/verify?lang=es', { email: 'cook@example.com', code });
+    expect(v.status).toBe(303);
+    expect(v.headers.get('location')).toBe('/account?lang=es');
+    const cookie = v.headers.get('set-cookie')!.split(';')[0]!;
+    const home = await (await get('/account?lang=es', cookie)).text();
+    expect(home).toContain('Tus recetas');
+    expect(home).toContain('Cerrar sesión');
+    expect(home).toContain('Añadir una receta');
+  });
+
+  it('rejects a wrong code with a localized error', async () => {
+    await post('/account/code?lang=fr', { email: 'cook@example.com' });
+    const v = await post('/account/verify?lang=fr', { email: 'cook@example.com', code: '000000' });
+    expect(await v.text()).toContain('Ce code n’est pas le bon.');
+  });
+
+  it('renders the draft form in French and keeps the language on save errors', async () => {
+    const cookie = await signIn();
+    const form = await (await get('/account/recipes/new?lang=fr', cookie)).text();
+    expect(form).toContain('Nom de la recette');
+    expect(form).toContain('Enregistrer le brouillon privé');
+    expect(form).toContain('J’ai écrit cette recette ou j’ai le droit de la partager');
+    expect(form).toContain('action="/account/recipes/save?lang=fr"');
+    // capture chrome follows the account UI language (fr here):
+    expect(form).toContain('<span data-category-prompt>Quel type de plat est-ce ?</span>');
+    expect(form).not.toContain('<span data-category-prompt>What kind of dish is it?</span>');
+    const bad = await post('/account/recipes/save?lang=fr', recipeForm({ display_name: '' }), { cookie });
+    expect(bad.status).toBe(400);
+    expect(await bad.text()).toContain('Ajoutez le nom affiché comme auteur.');
+  });
+
+  it('runs save, submit and removal in Spanish with localized status and redirects', async () => {
+    const cookie = await signIn();
+    const res = await post('/account/recipes/save?lang=es', recipeForm(), { cookie });
+    expect(res.status).toBe(303);
+    expect(res.headers.get('location')).toMatch(/\/account\/recipes\/[a-z0-9]+\/edit\?saved=1&lang=es/);
+    const home = await (await get('/account?lang=es', cookie)).text();
+    expect(home).toContain('Borrador privado');
+    const { id } = (await DB.prepare('SELECT id FROM recipes').first<{ id: string }>())!;
+    const sub = await post(`/account/recipes/${id}/submit?lang=es`, {}, { cookie });
+    expect(await sub.text()).toContain('Gracias, ya la tenemos');
+    const home2 = await (await get('/account?lang=es', cookie)).text();
+    expect(home2).toContain('Enviada a revisión');
+    const del = await post(`/account/recipes/${id}/delete?lang=es`, {}, { cookie });
+    expect(del.status).toBe(404);
+    expect(await del.text()).toContain('ya fue enviado a revisión');
   });
 });

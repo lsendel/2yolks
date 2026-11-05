@@ -7,7 +7,7 @@ import type { Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import { eq, and, ne, desc } from 'drizzle-orm';
-import { LOCALES, getCountry, localizedCountryName, slugify, validateRecipeSubmission, RECIPE_CATEGORY_SLUGS, categoryLabel, isRecipeCategorySlug, CATEGORIES } from '@2yolks/contracts';
+import { LOCALES, getCountry, localizedCountryName, slugify, validateRecipeSubmission, RECIPE_CATEGORY_SLUGS, categoryLabel, isRecipeCategorySlug, CATEGORIES, accountStrings, fill, isAccountLang, validatorMessage, parseWarningMessage, ssrfMessage, type AccountStrings } from '@2yolks/contracts';
 import { renderAccountPage, escapeHtml as esc, CAPTURE_CLIENT_SCRIPT, CAPTURE_CHECK_STRINGS } from '@2yolks/web/server';
 import { createDb, recipes, recipeLocales, sources, users } from './db';
 import { sendMail, type MailEnv } from './email';
@@ -40,6 +40,12 @@ export const MAX_ROWS_PER_USER = 500; // lifetime rows incl. removed ones, so re
 export const accountApp = new Hono<{ Bindings: AccountBindings; Variables: { user: { id: string; email: string; displayName: string | null } } }>();
 type Ctx = Context<{ Bindings: AccountBindings; Variables: { user: { id: string; email: string; displayName: string | null } } }>;
 
+// The whole account UI is localized en/es/fr. The language travels as ?lang=
+// on every link, form action and redirect (English default keeps bare URLs).
+const langOf = (c: Ctx): string => { const l = c.req.query('lang'); return isAccountLang(l) ? l : 'en'; };
+const qs = (lang: string): string => (lang === 'en' ? '' : `?lang=${lang}`);
+const qsAmp = (lang: string): string => (lang === 'en' ? '' : `&lang=${lang}`);
+
 export async function sha256Hex(s: string): Promise<string> {
   const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
   return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, '0')).join('');
@@ -60,7 +66,8 @@ export const normEmail = (v: unknown): string | null => {
 export const str = (v: unknown, max = 5000): string => (typeof v === 'string' ? v.replace(/\r/g, '').slice(0, max) : '');
 
 function page(c: Ctx, title: string, body: string, status: 200 | 400 | 403 | 404 | 409 | 429 | 503 = 200) {
-  return c.html(renderAccountPage(title, body), status, { 'cache-control': 'no-store', 'x-robots-tag': 'noindex' });
+  const lang = langOf(c);
+  return c.html(renderAccountPage(title, body, lang, new URL(c.req.url).pathname), status, { 'cache-control': 'no-store', 'x-robots-tag': 'noindex' });
 }
 const banner = (kind: 'err' | 'ok', msg: string) => `<div class="${kind}" role="${kind === 'err' ? 'alert' : 'status'}">${msg}</div>`;
 
@@ -70,7 +77,7 @@ accountApp.use('*', async (c, next) => {
     const origin = c.req.header('origin');
     const allowed = new Set([new URL(c.req.url).origin]);
     if (c.env.CANONICAL_ORIGIN) allowed.add(c.env.CANONICAL_ORIGIN);
-    if (!origin || !allowed.has(origin)) return page(c, 'Blocked', banner('err', 'This request did not come from 2yolks.com, so it was blocked.'), 403);
+    if (!origin || !allowed.has(origin)) { const t = accountStrings(langOf(c)); return page(c, t.titleBlocked, banner('err', t.errBlocked), 403); }
   }
   await next();
 });
@@ -98,7 +105,11 @@ export async function cleanupExpired(db: D1Database, now: number): Promise<void>
 // Cap request bodies before anything is parsed or buffered (streaming-safe).
 accountApp.use('*', bodyLimit({
   maxSize: 256 * 1024,
-  onError: (c) => c.html(renderAccountPage('Too large', '<div class="err" role="alert">That request is too large.</div>'), 413),
+  onError: (c) => {
+    const lang = langOf(c as Ctx);
+    const t = accountStrings(lang);
+    return c.html(renderAccountPage(t.titleTooLarge, `<div class="err" role="alert">${t.errTooLarge}</div>`, lang, new URL(c.req.url).pathname), 413);
+  },
 }));
 
 export async function limited(rl: RateLimiter | undefined, c: Ctx, scope: string): Promise<boolean> {
@@ -125,39 +136,43 @@ accountApp.use('*', async (c, next) => {
 
 // --- Views -------------------------------------------------------------------
 
-const signInForm = (msg = '') => `<h1>Your 2yolks account</h1>
-<p class="lead">Sign in with an email code to keep private drafts and send a recipe in for review. No password to remember.</p>${msg}
-<form method="post" action="/account/code"><label>Email<input type="email" name="email" required autocomplete="email" maxlength="254"></label><button type="submit">Email me a code</button></form>
-<p class="hint">Drafts stay private to you. Nothing is published until it has been reviewed.</p>`;
+const signInForm = (t: AccountStrings, lang: string, msg = '') => `<h1>${t.signInTitle}</h1>
+<p class="lead">${t.signInLead}</p>${msg}
+<form method="post" action="/account/code${qs(lang)}"><label>${t.signInEmailLabel}<input type="email" name="email" required autocomplete="email" maxlength="254"></label><button type="submit">${t.signInButton}</button></form>
+<p class="hint">${t.signInHint}</p>`;
 
-const codeForm = (email: string, msg = '') => `<h1>Check your email</h1>
-<p class="lead">We sent a 6-digit code to ${esc(email)}. It works for 10 minutes. If you asked for more than one, use the code from the most recent request; older codes stop working.</p>${msg}
-<form method="post" action="/account/verify"><input type="hidden" name="email" value="${esc(email)}"><label>6-digit code<input type="text" name="code" inputmode="numeric" pattern="[0-9]{6}" autocomplete="one-time-code" maxlength="6" required></label><button type="submit">Sign in</button></form>`;
+const codeForm = (t: AccountStrings, lang: string, email: string, msg = '') => `<h1>${t.codeTitle}</h1>
+<p class="lead">${fill(t.codeLead, { email: esc(email) })}</p>${msg}
+<form method="post" action="/account/verify${qs(lang)}"><input type="hidden" name="email" value="${esc(email)}"><label>${t.codeLabel}<input type="text" name="code" inputmode="numeric" pattern="[0-9]{6}" autocomplete="one-time-code" maxlength="6" required></label><button type="submit">${t.codeButton}</button></form>`;
 
 accountApp.get('/', async (c) => {
+  const lang = langOf(c);
+  const t = accountStrings(lang);
   const user = c.get('user');
-  if (!user) return page(c, 'Sign in', signInForm());
+  if (!user) return page(c, t.signInPageTitle, signInForm(t, lang));
   const db = createDb(c.env.DB);
   const rows = await db.select({ id: recipes.id, submittedAt: recipes.submittedAt, title: recipeLocales.title, status: recipeLocales.status })
     .from(recipes).innerJoin(recipeLocales, eq(recipeLocales.recipeId, recipes.id))
     .where(and(eq(recipes.ownerUserId, user.id), ne(recipeLocales.status, 'rejected'))).orderBy(desc(recipes.createdAt));
   const items = rows.map((r) => {
-    const label = r.status === 'published' ? 'Published' : r.submittedAt ? 'Submitted for review' : 'Private draft';
-    const edit = r.submittedAt || r.status === 'published' ? '' : `<a href="/account/recipes/${esc(r.id)}/edit">Edit</a>`;
+    const label = r.status === 'published' ? t.statusPublished : r.submittedAt ? t.statusSubmitted : t.statusDraft;
+    const edit = r.submittedAt || r.status === 'published' ? '' : `<a href="/account/recipes/${esc(r.id)}/edit${qs(lang)}">${t.editLink}</a>`;
     return `<li><span><strong>${esc(r.title)}</strong><br><span class="badge">${label}</span></span><span>${edit}</span></li>`;
   }).join('');
-  return page(c, 'Your recipes', `<h1>Your recipes</h1><p class="lead">Signed in as ${esc(user.email)}.</p>
-<p><a class="btn" href="/account/recipes/new">Add a recipe</a></p>
-<div class="panel"><h2>Your drafts</h2>${items ? `<ul class="mine">${items}</ul>` : '<p class="hint">Nothing yet. Start from a form, pasted text or a link.</p>'}</div>
-<form method="post" action="/account/logout"><button class="quiet" type="submit">Sign out</button></form>`);
+  return page(c, t.homePageTitle, `<h1>${t.homeTitle}</h1><p class="lead">${fill(t.homeLead, { email: esc(user.email) })}</p>
+<p><a class="btn" href="/account/recipes/new${qs(lang)}">${t.addRecipe}</a></p>
+<div class="panel"><h2>${t.yourDrafts}</h2>${items ? `<ul class="mine">${items}</ul>` : `<p class="hint">${t.emptyDrafts}</p>`}</div>
+<form method="post" action="/account/logout${qs(lang)}"><button class="quiet" type="submit">${t.signOut}</button></form>`);
 });
 
 accountApp.post('/code', async (c) => {
-  if (await limited(c.env.RL_AUTH, c, 'code')) return page(c, 'Slow down', signInForm(banner('err', 'Too many tries. Please wait a minute.')), 429);
+  const lang = langOf(c);
+  const t = accountStrings(lang);
+  if (await limited(c.env.RL_AUTH, c, 'code')) return page(c, t.titleSlowDown, signInForm(t, lang, banner('err', t.errTooManyTries)), 429);
   const form = await c.req.parseBody();
   const email = normEmail(form['email']);
-  if (!email) return page(c, 'Sign in', signInForm(banner('err', 'Enter a valid email address.')), 400);
-  if (!c.env.RESEND_API_KEY) return page(c, 'Sign in', signInForm(banner('err', 'Sign-in email is not switched on yet.')), 503);
+  if (!email) return page(c, t.signInPageTitle, signInForm(t, lang, banner('err', t.errInvalidEmail)), 400);
+  if (!c.env.RESEND_API_KEY) return page(c, t.signInPageTitle, signInForm(t, lang, banner('err', t.errSigninOff)), 503);
   const now = Date.now();
   await cleanupExpired(c.env.DB, now);
   const code = randomCode();
@@ -166,66 +181,68 @@ accountApp.post('/code', async (c) => {
   const ins = await c.env.DB.prepare(
     'INSERT INTO auth_codes (id,email,code_hash,expires_at,attempts,used,created_at) SELECT ?,?,?,?,0,0,? WHERE (SELECT count(*) FROM auth_codes WHERE email = ? AND created_at > ?) < ?',
   ).bind(id, email, await sha256Hex(`${email}:${code}`), now + CODE_TTL_MS, now, email, now - CODE_TTL_MS, CODES_PER_EMAIL_10MIN).run();
-  if (ins.meta.changes !== 1) return page(c, 'Slow down', signInForm(banner('err', 'Too many codes requested for this email. Try again in a few minutes.')), 429);
+  if (ins.meta.changes !== 1) return page(c, t.titleSlowDown, signInForm(t, lang, banner('err', t.errTooManyCodes)), 429);
   // Then the site-wide daily mail budget (atomic conditional INSERT). No budget: the code is never sent, so kill it.
   if (!(await reserveMail(c.env.DB, 'code', CODES_PER_DAY))) {
     await c.env.DB.prepare('UPDATE auth_codes SET used = 1 WHERE id = ?').bind(id).run();
-    return page(c, 'Busy', signInForm(banner('err', 'Sign-in is busy right now. Please try again tomorrow.')), 503);
+    return page(c, t.titleBusy, signInForm(t, lang, banner('err', t.errBusy)), 503);
   }
   // Only the newest code stays valid. Order by insertion (rowid), so a concurrently issued newer code is never invalidated by an older request.
   await c.env.DB.prepare('UPDATE auth_codes SET used = 1 WHERE email = ? AND used = 0 AND rowid < (SELECT rowid FROM auth_codes WHERE id = ?)').bind(email, id).run();
-  const sent = await sendMail(c.env, { to: email, subject: `Your 2yolks code: ${code}`, text: `Your 2yolks sign-in code is ${code}.\n\nIt expires in 10 minutes. If you did not ask for it, ignore this email.\n` });
+  const sent = await sendMail(c.env, { to: email, subject: fill(t.mailSubject, { code }), text: fill(t.mailBody, { code }) });
   if (!sent) {
     // No refund: delivery state is ambiguous, so the budget slot and per-email slot stay used. Invalidate the code.
     await c.env.DB.prepare('UPDATE auth_codes SET used = 1 WHERE id = ?').bind(id).run();
-    return page(c, 'Sign in', signInForm(banner('err', 'We could not send the email. Please try again later.')), 503);
+    return page(c, t.signInPageTitle, signInForm(t, lang, banner('err', t.errSendFailed)), 503);
   }
-  return page(c, 'Check your email', codeForm(email));
+  return page(c, t.codePageTitle, codeForm(t, lang, email));
 });
 
 accountApp.post('/verify', async (c) => {
-  if (await limited(c.env.RL_AUTH, c, 'verify')) return page(c, 'Slow down', signInForm(banner('err', 'Too many tries. Please wait a minute.')), 429);
+  const lang = langOf(c);
+  const t = accountStrings(lang);
+  if (await limited(c.env.RL_AUTH, c, 'verify')) return page(c, t.titleSlowDown, signInForm(t, lang, banner('err', t.errTooManyTries)), 429);
   const form = await c.req.parseBody();
   const email = normEmail(form['email']);
   const code = str(form['code'], 12).trim();
-  if (!email || !/^\d{6}$/.test(code)) return page(c, 'Check your email', codeForm(email ?? '', banner('err', 'Enter the 6-digit code.')), 400);
+  if (!email || !/^\d{6}$/.test(code)) return page(c, t.codePageTitle, codeForm(t, lang, email ?? '', banner('err', t.errEnterCode)), 400);
   const now = Date.now();
   const row = await c.env.DB.prepare('SELECT id, code_hash AS hash FROM auth_codes WHERE email = ? AND used = 0 AND expires_at > ? AND attempts < ? ORDER BY rowid DESC LIMIT 1')
     .bind(email, now, MAX_ATTEMPTS).first<{ id: string; hash: string }>();
-  if (!row) return page(c, 'Sign in', signInForm(banner('err', 'That code expired or was used up. Request a new one.')), 400);
+  if (!row) return page(c, t.signInPageTitle, signInForm(t, lang, banner('err', t.errCodeExpired)), 400);
   // Claim one attempt atomically; concurrent guesses cannot exceed the cap.
   const claim = await c.env.DB.prepare('UPDATE auth_codes SET attempts = attempts + 1 WHERE id = ? AND used = 0 AND attempts < ? AND expires_at > ?').bind(row.id, MAX_ATTEMPTS, now).run();
-  if (claim.meta.changes !== 1) return page(c, 'Sign in', signInForm(banner('err', 'That code expired or was used up. Request a new one.')), 400);
+  if (claim.meta.changes !== 1) return page(c, t.signInPageTitle, signInForm(t, lang, banner('err', t.errCodeExpired)), 400);
   const given = await sha256Hex(`${email}:${code}`);
   let diff = given.length ^ row.hash.length;
   for (let i = 0; i < given.length; i++) diff |= given.charCodeAt(i) ^ (row.hash.charCodeAt(i) || 0);
-  if (diff !== 0) return page(c, 'Check your email', codeForm(email, banner('err', 'That code is not right.')), 400);
+  if (diff !== 0) return page(c, t.codePageTitle, codeForm(t, lang, email, banner('err', t.errCodeWrong)), 400);
   // Single-use: exactly one concurrent correct submission can flip used 0 -> 1.
   const use = await c.env.DB.prepare('UPDATE auth_codes SET used = 1 WHERE id = ? AND used = 0').bind(row.id).run();
-  if (use.meta.changes !== 1) return page(c, 'Sign in', signInForm(banner('err', 'That code was already used. Request a new one.')), 400);
+  if (use.meta.changes !== 1) return page(c, t.signInPageTitle, signInForm(t, lang, banner('err', t.errCodeUsed)), 400);
   let user = await c.env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email).first<{ id: string }>();
   if (!user) {
     await c.env.DB.prepare('INSERT OR IGNORE INTO users (id,email,display_name,created_at) VALUES (?,?,NULL,?)').bind(newId(), email, new Date().toISOString()).run();
     user = await c.env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email).first<{ id: string }>();
-    if (!user) return page(c, 'Sign in', signInForm(banner('err', 'Something went wrong. Please try again.')), 503);
+    if (!user) return page(c, t.signInPageTitle, signInForm(t, lang, banner('err', t.errGeneric)), 503);
   }
   const token = randomToken();
   await c.env.DB.prepare('INSERT INTO sessions (id,user_id,expires_at,created_at) VALUES (?,?,?,?)')
     .bind(await sha256Hex(token), user.id, now + SESSION_DAYS * 86_400_000, now).run();
   setCookie(c, SESSION_COOKIE, token, { httpOnly: true, secure: true, sameSite: 'Lax', path: '/', maxAge: SESSION_DAYS * 86_400 });
-  return c.redirect('/account', 303);
+  return c.redirect(`/account${qs(lang)}`, 303);
 });
 
 accountApp.post('/logout', async (c) => {
   const tok = getCookie(c, SESSION_COOKIE);
   if (tok && /^[0-9a-f]{64}$/.test(tok)) await c.env.DB.prepare('DELETE FROM sessions WHERE id = ?').bind(await sha256Hex(tok)).run();
   deleteCookie(c, SESSION_COOKIE, { path: '/', secure: true });
-  return c.redirect('/account', 303);
+  return c.redirect(`/account${qs(langOf(c))}`, 303);
 });
 
 // Everything below needs a signed-in user.
 accountApp.use('/recipes/*', async (c, next) => {
-  if (!c.get('user')) return c.redirect('/account', 303);
+  if (!c.get('user')) return c.redirect(`/account${qs(langOf(c))}`, 303);
   await next();
 });
 
@@ -253,17 +270,14 @@ function localeOptions(selected: string): string {
   })).join('');
 }
 
-// Capture-form chrome follows the recipe's language (the form's locale
-// select): category labels, prompt and live checks re-localize when the cook
-// switches language. The rest of the account UI is English-only today; the
-// approved all-internationalized outcome covers it as a separate
-// implementation increment after C1.
+// Capture-form chrome (category labels, prompt, preamble, live checks)
+// follows the ACCOUNT UI language; the recipe locale select is recipe DATA
+// and never re-localizes the chrome.
 const FORM_STRINGS: Record<string, { prompt: string; unsure: string; preamble: string; preambleHint: string }> = {
   en: { prompt: 'What kind of dish is it?', unsure: 'Not sure yet', preamble: 'A sentence or two before the recipe', preambleHint: '(optional - the story or context a cook reads first)' },
   es: { prompt: '¿Qué tipo de plato es?', unsure: 'Aún no lo sé', preamble: 'Una o dos frases antes de la receta', preambleHint: '(opcional - la historia o el contexto que se lee primero)' },
   fr: { prompt: 'Quel type de plat est-ce ?', unsure: 'Pas encore sûr', preamble: 'Une phrase ou deux avant la recette', preambleHint: "(facultatif - l'histoire ou le contexte à lire en premier)" },
 };
-const formLang = (s: FormState): string => (FORM_STRINGS[s.locale.split(':')[1] ?? ''] ? s.locale.split(':')[1]! : 'en');
 
 function categoryOptions(selected: string, lang: string): string {
   const t = FORM_STRINGS[lang]!;
@@ -285,29 +299,29 @@ function captureDataIslands(): string {
   return `<script type="application/json" id="capture-check-strings">${json(JSON.parse(CAPTURE_CHECK_STRINGS))}</script><script type="application/json" id="capture-cat-labels">${json(catLabels)}</script>`;
 }
 
-function renderForm(s: FormState, errors: string[] = [], note = '', importOn = false): string {
-  const errBox = errors.length ? banner('err', `<strong>Fix these first:</strong><ul>${errors.map((e) => `<li>${esc(e)}</li>`).join('')}</ul>`) : '';
-  const entry = s.id ? '' : `<div class="panel"><h2>Start faster</h2>
-<form method="post" action="/account/recipes/paste"><label>Paste a recipe<small>Plain text with a title line, then "Ingredients" and "Instructions". You review everything before saving.</small><textarea name="text" maxlength="60000"></textarea></label><button class="quiet" type="submit">Fill the form from this text</button></form>
-${importOn ? `<form method="post" action="/account/recipes/import"><label>Or import from a link<small>Only your own recipe, or one you have permission to share. We read the page's recipe data and nothing else.</small><input type="url" name="url" maxlength="2000" placeholder="https://"></label><button class="quiet" type="submit">Fill the form from this link</button></form>` : `<p class="hint"><strong>Import from a link</strong> is not available yet. Paste the recipe text above instead.</p>`}</div>`;
-  const lang = formLang(s);
+function renderForm(s: FormState, t: AccountStrings, acctLang: string, errors: string[] = [], note = '', importOn = false): string {
+  const errBox = errors.length ? banner('err', `<strong>${t.fixThese}</strong><ul>${errors.map((e) => `<li>${esc(e)}</li>`).join('')}</ul>`) : '';
+  const entry = s.id ? '' : `<div class="panel"><h2>${t.startFaster}</h2>
+<form method="post" action="/account/recipes/paste${qs(acctLang)}"><label>${t.pasteLabel}<small>${t.pasteHint}</small><textarea name="text" maxlength="60000"></textarea></label><button class="quiet" type="submit">${t.pasteButton}</button></form>
+${importOn ? `<form method="post" action="/account/recipes/import${qs(acctLang)}"><label>${t.importLabel}<small>${t.importHint}</small><input type="url" name="url" maxlength="2000" placeholder="https://"></label><button class="quiet" type="submit">${t.importButton}</button></form>` : `<p class="hint"><strong>${t.importOffName}</strong> ${t.importOffText}</p>`}</div>`;
+  const lang = acctLang;
   const ft = FORM_STRINGS[lang]!;
-  return `<h1>${s.id ? 'Edit your draft' : 'Add a recipe'}</h1><p class="lead">Drafts are private to you until you send one in and we review it.</p>${note}${errBox}${entry}
-<form method="post" action="/account/recipes/save">${s.id ? `<input type="hidden" name="id" value="${esc(s.id)}">` : ''}
+  return `<h1>${s.id ? t.formTitleEdit : t.formTitleNew}</h1><p class="lead">${t.formLead}</p>${note}${errBox}${entry}
+<form method="post" action="/account/recipes/save${qs(acctLang)}" data-capture-form>${s.id ? `<input type="hidden" name="id" value="${esc(s.id)}">` : ''}
 <label><span data-category-prompt>${esc(ft.prompt)}</span><select name="category">${categoryOptions(s.category, lang)}</select></label>
-<label>Recipe name<input type="text" name="title" value="${esc(s.title)}" maxlength="200" required></label>
-<label>Language<select name="locale">${localeOptions(s.locale)}</select></label>
+<label>${t.labelTitle}<input type="text" name="title" value="${esc(s.title)}" maxlength="200" required></label>
+<label>${t.labelLanguage}<select name="locale">${localeOptions(s.locale)}</select></label>
 <label><span data-preamble-label>${esc(ft.preamble)}</span> <small data-preamble-hint>${esc(ft.preambleHint)}</small><textarea name="intro" maxlength="2000" style="min-height:4rem">${esc(s.intro)}</textarea></label>
-<label>Ingredients<small>One per line, for example "2 cups flour".</small><textarea name="ingredients" required>${esc(s.ingredients)}</textarea></label>
-<label>Steps<small>One step per line.</small><textarea name="steps" required>${esc(s.steps)}</textarea></label>
-<div class="row"><label>Prep minutes<input type="number" name="prep" min="0" max="20000" value="${esc(s.prep)}"></label><label>Cook minutes<input type="number" name="cook" min="0" max="20000" value="${esc(s.cook)}"></label></div>
-<label>Servings <small>(optional)</small><input type="number" name="servings" min="1" max="1000" step="any" value="${esc(s.servings)}"></label>
-<label>Name to show as author<input type="text" name="display_name" value="${esc(s.displayName)}" maxlength="80" required></label>
-<label>Where is this recipe from?<select name="source_kind"><option value="original"${s.sourceKind === 'original' ? ' selected' : ''}>I wrote it (my own recipe)</option><option value="adapted"${s.sourceKind === 'adapted' ? ' selected' : ''}>Adapted from, or shared with permission</option></select></label>
-<label>Link to the original <small>(required if adapted or shared with permission)</small><input type="url" name="source_url" value="${esc(s.sourceUrl)}" maxlength="2000" placeholder="https://"></label>
-<label class="check"><input type="checkbox" name="attest" value="1"${s.attest ? ' checked' : ''}><span>I wrote this recipe or have the right to share it. I let 2yolks publish it with credit to the name above, and I understand 2yolks reviews every recipe before it goes live and may decline or edit it.</span></label>
+<label>${t.labelIngredients}<small>${t.ingredientsHint}</small><textarea name="ingredients" required>${esc(s.ingredients)}</textarea></label>
+<label>${t.labelSteps}<small>${t.stepsHint}</small><textarea name="steps" required>${esc(s.steps)}</textarea></label>
+<div class="row"><label>${t.labelPrep}<input type="number" name="prep" min="0" max="20000" value="${esc(s.prep)}"></label><label>${t.labelCook}<input type="number" name="cook" min="0" max="20000" value="${esc(s.cook)}"></label></div>
+<label>${t.labelServings} <small>${t.optional}</small><input type="number" name="servings" min="1" max="1000" step="any" value="${esc(s.servings)}"></label>
+<label>${t.labelAuthor}<input type="text" name="display_name" value="${esc(s.displayName)}" maxlength="80" required></label>
+<label>${t.labelSource}<select name="source_kind"><option value="original"${s.sourceKind === 'original' ? ' selected' : ''}>${t.sourceOriginal}</option><option value="adapted"${s.sourceKind === 'adapted' ? ' selected' : ''}>${t.sourceAdapted}</option></select></label>
+<label>${t.labelSourceLink} <small>${t.sourceLinkHint}</small><input type="url" name="source_url" value="${esc(s.sourceUrl)}" maxlength="2000" placeholder="https://"></label>
+<label class="check"><input type="checkbox" name="attest" value="1"${s.attest ? ' checked' : ''}><span>${t.attestText}</span></label>
 <ul class="live-checks" data-live-checks><li data-check="title"></li><li data-check="ingredients"></li><li data-check="qty"></li><li data-check="cups"></li><li data-check="steps"></li><li data-check="servings"></li><li data-check="source"></li></ul>
-<button type="submit">Save private draft</button></form>${captureDataIslands()}<script>${CAPTURE_CLIENT_SCRIPT}</script>`;
+<button type="submit">${t.saveDraft}</button></form>${captureDataIslands()}<script>${CAPTURE_CLIENT_SCRIPT}</script>`;
 }
 
 export function parseForm(form: Record<string, unknown>, user: { displayName: string | null }): FormState {
@@ -356,39 +370,46 @@ export async function loadOwned(c: Ctx, id: string) {
   return rows[0] ?? null;
 }
 
-const rf = (c: Ctx, s: FormState, errors: string[] = [], note = '') => renderForm(s, errors, note, c.env.IMPORT_ENABLED === 'true');
+const rf = (c: Ctx, s: FormState, errors: string[] = [], note = '') => {
+  const lang = langOf(c);
+  return renderForm(s, accountStrings(lang), lang, errors, note, c.env.IMPORT_ENABLED === 'true');
+};
 
-accountApp.get('/recipes/new', (c) => page(c, 'Add a recipe', rf(c, blank(c.get('user')))));
+accountApp.get('/recipes/new', (c) => { const t = accountStrings(langOf(c)); return page(c, t.formTitleNew, rf(c, blank(c.get('user')))); });
 
 accountApp.post('/recipes/paste', async (c) => {
   const form = await c.req.parseBody();
   const p = parseRecipeText(str(form['text'], 60000));
-  const warn = p.warnings.length ? banner('err', p.warnings.map(esc).join('<br>')) : banner('ok', 'Filled from your text. Check every line, then save.');
-  return page(c, 'Add a recipe', rf(c, fromParsed(blank(c.get('user')), p), [], warn));
+  const t = accountStrings(langOf(c));
+  const warn = p.warnings.length ? banner('err', p.warnings.map((w) => esc(parseWarningMessage(t, w))).join('<br>')) : banner('ok', t.pasteFilled);
+  return page(c, t.formTitleNew, rf(c, fromParsed(blank(c.get('user')), p), [], warn));
 });
 
 accountApp.post('/recipes/import', async (c) => {
   const user = c.get('user');
-  if (c.env.IMPORT_ENABLED !== 'true') return page(c, 'Add a recipe', rf(c, blank(user), ['Link import is not switched on yet. Paste the recipe text instead.']), 404);
-  if (await limited(c.env.RL_SUBMIT, c, 'import')) return page(c, 'Slow down', rf(c, blank(user), ['Too many imports. Please wait a minute.']), 429);
+  const t = accountStrings(langOf(c));
+  if (c.env.IMPORT_ENABLED !== 'true') return page(c, t.formTitleNew, rf(c, blank(user), [t.errImportOff]), 404);
+  if (await limited(c.env.RL_SUBMIT, c, 'import')) return page(c, t.titleSlowDown, rf(c, blank(user), [t.errTooManyImports]), 429);
   const form = await c.req.parseBody();
   const url = str(form['url'], 2000).trim();
   try {
     const { url: finalUrl, text } = await safeFetchText(url);
     const p = parseJsonLdRecipe(text);
-    if (!p) return page(c, 'Add a recipe', rf(c, blank(user), ['That page has no recipe data we can read. Paste the text instead.']), 400);
+    if (!p) return page(c, t.formTitleNew, rf(c, blank(user), [t.errNoRecipeData]), 400);
     const s = { ...fromParsed(blank(user), p), sourceKind: 'adapted' as const, sourceUrl: finalUrl };
-    return page(c, 'Add a recipe', rf(c, s, [], banner('ok', `Filled from ${esc(new URL(finalUrl).hostname)}. It is saved as "adapted" with a link back. Only keep it if you have the right to share it.`)));
+    return page(c, t.formTitleNew, rf(c, s, [], banner('ok', fill(t.importFilled, { host: esc(new URL(finalUrl).hostname) }))));
   } catch (e) {
-    const msg = e instanceof SsrfError ? e.message : 'We could not read that link.';
-    return page(c, 'Add a recipe', rf(c, blank(user), [msg]), 400);
+    const msg = e instanceof SsrfError ? ssrfMessage(t, e.message) : t.errReadLink;
+    return page(c, t.formTitleNew, rf(c, blank(user), [msg]), 400);
   }
 });
 
 accountApp.get('/recipes/:id/edit', async (c) => {
+  const lang = langOf(c);
+  const t = accountStrings(lang);
   const row = await loadOwned(c, c.req.param('id'));
-  if (!row) return page(c, 'Not found', banner('err', 'Draft not found.'), 404);
-  if (row.r.submittedAt || row.l.status === 'published') return page(c, 'Submitted', banner('ok', 'This recipe was already sent in for review, so it can no longer be edited here.'), 409);
+  if (!row) return page(c, t.titleNotFound, banner('err', t.errDraftNotFound), 404);
+  if (row.r.submittedAt || row.l.status === 'published') return page(c, t.titleSubmitted, banner('ok', t.okAlreadySentEdit), 409);
   const user = c.get('user');
   const ing = (JSON.parse(row.l.ingredientsJson) as unknown[]).map((x) => (typeof x === 'string' ? x : String((x as { name?: string }).name ?? ''))).join('\n');
   const s: FormState = {
@@ -398,26 +419,28 @@ accountApp.get('/recipes/:id/edit', async (c) => {
     displayName: row.r.authorName ?? user.displayName ?? '', sourceKind: row.s.license === 'user-adapted' ? 'adapted' : 'original', sourceUrl: row.s.license === 'user-adapted' ? row.s.url : '',
     attest: !!row.r.attestedAt,
   };
-  const saved = c.req.query('saved') ? banner('ok', 'Saved as a private draft.') : '';
-  const submit = `<form method="post" action="/account/recipes/${esc(row.r.id)}/submit"><div class="panel"><h2>Send in for review</h2><p class="hint">We check the recipe and its rights before anything is published. Publishing is never automatic.${row.r.attestedAt ? '' : ' Tick the permission box above and save first.'}</p><button type="submit"${row.r.attestedAt ? '' : ' disabled'}>Send in for review</button></div></form>
-<form method="post" action="/account/recipes/${esc(row.r.id)}/delete"><button class="quiet" type="submit">Remove this draft</button></form>`;
-  return page(c, 'Edit draft', rf(c, s, [], saved) + submit);
+  const saved = c.req.query('saved') ? banner('ok', t.okSaved) : '';
+  const submit = `<form method="post" action="/account/recipes/${esc(row.r.id)}/submit${qs(lang)}"><div class="panel"><h2>${t.submitPanelTitle}</h2><p class="hint">${t.submitPanelHint}${row.r.attestedAt ? '' : t.submitPanelAttestHint}</p><button type="submit"${row.r.attestedAt ? '' : ' disabled'}>${t.submitButton}</button></div></form>
+<form method="post" action="/account/recipes/${esc(row.r.id)}/delete${qs(lang)}"><button class="quiet" type="submit">${t.removeDraft}</button></form>`;
+  return page(c, t.formTitleEdit, rf(c, s, [], saved) + submit);
 });
 
 accountApp.post('/recipes/save', async (c) => {
   const user = c.get('user');
-  if (await limited(c.env.RL_SUBMIT, c, 'save')) return page(c, 'Slow down', rf(c, blank(user), ['Too many saves. Please wait a minute.']), 429);
+  const lang = langOf(c);
+  const t = accountStrings(lang);
+  if (await limited(c.env.RL_SUBMIT, c, 'save')) return page(c, t.titleSlowDown, rf(c, blank(user), [t.errTooManyTries]), 429);
   const form = await c.req.parseBody();
   const s = parseForm(form, user);
   const errors: string[] = [];
-  if (!s.displayName) errors.push('Add the name to show as author.');
-  if (s.sourceKind === 'adapted' && !/^https:\/\//.test(s.sourceUrl)) errors.push('Adapted recipes need an https:// link to the original.');
-  const [country, lang] = s.locale.split(':');
-  if (!country || !lang || !(LOCALES[country] ?? []).includes(lang) || !getCountry(country)) errors.push('Pick a language from the list.');
+  if (!s.displayName) errors.push(t.errAuthorRequired);
+  if (s.sourceKind === 'adapted' && !/^https:\/\//.test(s.sourceUrl)) errors.push(t.errAdaptedHttps);
+  const [country, recipeLang] = s.locale.split(':');
+  if (!country || !recipeLang || !(LOCALES[country] ?? []).includes(recipeLang) || !getCountry(country)) errors.push(t.errPickLanguage);
   const origin = c.env.CANONICAL_ORIGIN ?? new URL(c.req.url).origin;
   const result = errors.length ? null : validateRecipeSubmission(buildSubmission(s, origin));
-  if (result && !result.ok) for (const f of result.errors) errors.push(`${f.path ? f.path.replace(/^locales\[0\]\./, '') + ': ' : ''}${f.message}`);
-  if (errors.length || !result || !result.ok) return page(c, 'Add a recipe', rf(c, s, errors), 400);
+  if (result && !result.ok) for (const f of result.errors) errors.push(validatorMessage(t, f.path, f.message));
+  if (errors.length || !result || !result.ok) return page(c, t.formTitleNew, rf(c, s, errors), 400);
 
   const sub = result.value;
   const loc = sub.locales[0]!;
@@ -425,8 +448,8 @@ accountApp.post('/recipes/save', async (c) => {
   let id = s.id;
   if (id) {
     const owned = await loadOwned(c, id);
-    if (!owned) return page(c, 'Not found', banner('err', 'Draft not found.'), 404);
-    if (owned.r.submittedAt || owned.l.status === 'published') return page(c, 'Submitted', banner('err', 'This recipe was already sent in for review.'), 409);
+    if (!owned) return page(c, t.titleNotFound, banner('err', t.errDraftNotFound), 404);
+    if (owned.r.submittedAt || owned.l.status === 'published') return page(c, t.titleSubmitted, banner('err', t.errAlreadySent), 409);
   } else {
     id = newId();
   }
@@ -448,7 +471,7 @@ accountApp.post('/recipes/save', async (c) => {
       D.prepare(`UPDATE recipes SET origin_country = ?, prep_minutes = ?, cook_minutes = ?, base_servings = ?, attested_at = ?, author_name = ?, category = ? WHERE id = ? AND owner_user_id = ? AND submitted_at IS NULL`).bind(sub.originCountry ?? null, prep, cook, serv, s.attest ? now : null, s.displayName, s.category || null, id, user.id),
       D.prepare('UPDATE users SET display_name = ? WHERE id = ?').bind(s.displayName, user.id),
     ]);
-    if (res[1]!.meta.changes !== 1) return page(c, 'Submitted', banner('err', 'This recipe was already sent in for review, so your changes were not saved.'), 409);
+    if (res[1]!.meta.changes !== 1) return page(c, t.titleSubmitted, banner('err', t.errAlreadySentNoSave), 409);
   } else {
     const sourceId = `src-${id}`;
     // The draft-count cap is checked inside the inserts themselves (same transaction), so
@@ -463,24 +486,26 @@ accountApp.post('/recipes/save', async (c) => {
     if (res[1]!.meta.changes !== 1) {
       const life = await D.prepare('SELECT count(*) AS n FROM recipes WHERE owner_user_id = ?').bind(user.id).first<{ n: number }>();
       const msg = (life?.n ?? 0) >= MAX_ROWS_PER_USER
-        ? 'This account has reached its limit of saved recipes, including removed ones. Removing more will not free space here.'
-        : `You can keep up to ${MAX_DRAFTS_PER_USER} drafts. Remove one first.`;
-      return page(c, 'Add a recipe', renderForm(s, [msg]), 400);
+        ? t.errRowLimit
+        : fill(t.errDraftLimit, { max: MAX_DRAFTS_PER_USER });
+      return page(c, t.formTitleNew, rf(c, s, [msg]), 400);
     }
   }
-  return c.redirect(`/account/recipes/${id}/edit?saved=1`, 303);
+  return c.redirect(`/account/recipes/${id}/edit?saved=1${qsAmp(lang)}`, 303);
 });
 
 accountApp.post('/recipes/:id/submit', async (c) => {
   const user = c.get('user');
-  if (await limited(c.env.RL_SUBMIT, c, 'submit')) return page(c, 'Slow down', banner('err', 'Too many tries. Please wait a minute.'), 429);
+  const lang = langOf(c);
+  const t = accountStrings(lang);
+  if (await limited(c.env.RL_SUBMIT, c, 'submit')) return page(c, t.titleSlowDown, banner('err', t.errTooManyTries), 429);
   const row = await loadOwned(c, c.req.param('id'));
-  if (!row) return page(c, 'Not found', banner('err', 'Draft not found.'), 404);
-  if (row.r.submittedAt || row.l.status === 'published') return page(c, 'Submitted', banner('ok', 'Already sent in for review.'), 409);
-  if (!row.r.attestedAt) return page(c, 'Permission needed', banner('err', 'Tick the permission box on the draft and save before sending it in.'), 409);
+  if (!row) return page(c, t.titleNotFound, banner('err', t.errDraftNotFound), 404);
+  if (row.r.submittedAt || row.l.status === 'published') return page(c, t.titleSubmitted, banner('ok', t.okAlreadySent), 409);
+  if (!row.r.attestedAt) return page(c, t.titlePermissionNeeded, banner('err', t.errPermissionNeeded), 409);
   const now = new Date().toISOString();
   const flip = await c.env.DB.prepare('UPDATE recipes SET submitted_at = ? WHERE id = ? AND owner_user_id = ? AND submitted_at IS NULL AND attested_at IS NOT NULL').bind(now, row.r.id, user.id).run();
-  if (flip.meta.changes !== 1) return page(c, 'Submitted', banner('ok', 'Already sent in for review.'), 409);
+  if (flip.meta.changes !== 1) return page(c, t.titleSubmitted, banner('ok', t.okAlreadySent), 409);
   // The admin queue (MCP recipes.list submitted:true) is the source of truth; the email is an extra,
   // counted against the same daily mail budget as login codes.
   if (c.env.REVIEW_NOTIFY_TO && (await reserveMail(c.env.DB, 'notice', NOTICES_PER_DAY))) {
@@ -490,7 +515,7 @@ accountApp.post('/recipes/:id/submit', async (c) => {
       text: `A recipe was sent in for review.\n\nTitle: ${row.l.title}\nRecipe id: ${row.r.id}\nAuthor shown as: ${row.r.authorName ?? user.displayName ?? ''}\nSubmitter: ${user.email}\nSource: ${row.s.name} (${row.s.url}), license label ${row.s.license}\nAuthor confirmed rights at: ${row.r.attestedAt}\n\nIt stays a private draft until you clear the source and publish it with the admin tools. Queue: MCP recipes.list with submitted:true.\n`,
     }).catch(() => false);
   }
-  return page(c, 'Sent in', `<h1>Thanks, it is with us</h1><p class="lead">We will review "${esc(row.l.title)}" and its rights before anything goes live. Nothing is published automatically.</p><p><a class="btn" href="/account">Back to your recipes</a></p>`);
+  return page(c, t.sentInPageTitle, `<h1>${t.sentInTitle}</h1><p class="lead">${fill(t.sentInLead, { title: esc(row.l.title) })}</p><p><a class="btn" href="/account${qs(lang)}">${t.backToRecipes}</a></p>`);
 });
 
 // "Remove" never deletes data: the locale is marked rejected (hidden from the owner's list), rows stay for review/audit.
@@ -500,6 +525,6 @@ accountApp.post('/recipes/:id/delete', async (c) => {
   const r = await c.env.DB.prepare(
     "UPDATE recipe_locales SET status = 'rejected' WHERE recipe_id = ? AND status = 'draft' AND EXISTS (SELECT 1 FROM recipes r WHERE r.id = ? AND r.owner_user_id = ? AND r.submitted_at IS NULL)",
   ).bind(id, id, user.id).run();
-  if (r.meta.changes !== 1) return page(c, 'Not found', banner('err', 'Draft not found, or it was already sent in for review.'), 404);
-  return c.redirect('/account', 303);
+  if (r.meta.changes !== 1) return page(c, accountStrings(langOf(c)).titleNotFound, banner('err', accountStrings(langOf(c)).errDraftNotFoundOrSent), 404);
+  return c.redirect(`/account${qs(langOf(c))}`, 303);
 });
