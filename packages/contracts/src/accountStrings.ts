@@ -17,6 +17,7 @@ export interface AccountStrings {
   c2PageTitle: string; c2Title: string; c2Lead: string; c2LicenseLine: string; c2GrantLabel: string;
   c2GrantButton: string; c2StateGranted: string; c2StateGrantedImages: string; c2StateWithdrawn: string; c2StateNone: string;
   c2GrantImagesLabel: string; c2ImagesLine: string; c2MailSubject: string; c2MailBody: string;
+  c2StateTextLabel: string; c2StateImagesLabel: string;
   // withdrawal UI stays unmounted until the owner's policy wording lands; keys kept for it
   c2WithdrawButton: string;
   c2OkGranted: string; c2OkWithdrawn: string; c2ErrTick: string; c2ErrUnavailable: string; c2ErrNoGrant: string; c2BackToEdit: string;
@@ -72,6 +73,7 @@ const en: AccountStrings = {
   c2ImagesLine: 'Images are permitted separately: the same public license applies only to the photos and images in this version, and only ones you have the right to share.',
   c2StateGrantedImages: 'Image permission is on for license {version}, saved {date}.',
   c2MailSubject: 'Your 2yolks permission for "{title}"',
+  c2StateTextLabel: 'Text', c2StateImagesLabel: 'Images',
   c2MailBody: 'You saved permission for your recipe "{title}".\n\nVersion (content hash): {hash}\nLicense: {license} ({lang})\nCovers: {scope}\n\nThis permission covers exactly this version. If you edit the recipe, 2yolks will ask again.\nIf this was not you, sign in to your 2yolks account.',
   c2GrantLabel: 'I created this recipe or have permission to share it, and I allow 2yolks to publish this exact version publicly.',
   c2GrantButton: 'Save permission for this version', c2WithdrawButton: 'Withdraw permission',
@@ -172,6 +174,7 @@ const es: AccountStrings = {
   c2ImagesLine: 'Las imágenes se permiten por separado: la misma licencia pública se aplica solo a las fotos e imágenes de esta versión, y solo a las que tienes derecho a compartir.',
   c2StateGrantedImages: 'El permiso de imágenes está activo para la licencia {version}, guardado el {date}.',
   c2MailSubject: 'Tu permiso de 2yolks para "{title}"',
+  c2StateTextLabel: 'Texto', c2StateImagesLabel: 'Imágenes',
   c2MailBody: 'Guardaste permiso para tu receta "{title}".\n\nVersión (hash de contenido): {hash}\nLicencia: {license} ({lang})\nCubre: {scope}\n\nEste permiso cubre exactamente esta versión. Si editas la receta, 2yolks te preguntará de nuevo.\nSi no fuiste tú, entra a tu cuenta de 2yolks.',
   c2GrantLabel: 'Creé esta receta o tengo permiso para compartirla, y permito que 2yolks publique esta versión exacta de forma pública.',
   c2GrantButton: 'Guardar permiso para esta versión', c2WithdrawButton: 'Retirar permiso',
@@ -272,6 +275,7 @@ const fr: AccountStrings = {
   c2ImagesLine: 'Les images sont autorisées séparément : la même licence publique ne s’applique qu’aux photos et images de cette version, et uniquement à celles que vous avez le droit de partager.',
   c2StateGrantedImages: 'L’autorisation des images est active pour la licence {version}, enregistrée le {date}.',
   c2MailSubject: 'Votre autorisation 2yolks pour « {title} »',
+  c2StateTextLabel: 'Texte', c2StateImagesLabel: 'Images',
   c2MailBody: 'Vous avez enregistré une autorisation pour votre recette « {title} ».\n\nVersion (hash de contenu) : {hash}\nLicence : {license} ({lang})\nPortée : {scope}\n\nCette autorisation couvre exactement cette version. Si vous modifiez la recette, 2yolks vous demandera à nouveau.\nSi ce n’était pas vous, connectez-vous à votre compte 2yolks.',
   c2GrantLabel: 'J’ai créé cette recette ou j’ai le droit de la partager, et j’autorise 2yolks à publier cette version exacte publiquement.',
   c2GrantButton: 'Enregistrer l’autorisation pour cette version', c2WithdrawButton: 'Retirer l’autorisation',

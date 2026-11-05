@@ -550,8 +550,10 @@ accountApp.get('/recipes/:id/permission', async (c) => {
   const textState = await latestConsent(c.env.DB, row.r.id, 'text');
   const imgState = hasImages ? await latestConsent(c.env.DB, row.r.id, 'images') : null;
   const q = `?lang=${lang}`;
-  const stateLine = (st: typeof textState, granted: string) =>
-    !st ? `<p>${t.c2StateNone}</p>` : st.event === 'grant' ? `<p>${fill(granted, { version: esc(st.licenseVersion), date: esc(st.createdAt) })}</p>` : `<p>${t.c2StateWithdrawn}</p>`;
+  const stateLine = (st: typeof textState, granted: string, label?: string) => {
+    const body = !st ? t.c2StateNone : st.event === 'grant' ? fill(granted, { version: esc(st.licenseVersion), date: esc(st.createdAt) }) : t.c2StateWithdrawn;
+    return `<p>${label ? `<strong>${label}:</strong> ` : ''}${body}</p>`;
+  };
   const textGranted = textState?.event === 'grant';
   const imagesGranted = imgState?.event === 'grant';
   let form = '';
@@ -567,7 +569,7 @@ accountApp.get('/recipes/:id/permission', async (c) => {
     <button class="btn" type="submit">${t.c2GrantButton}</button>
   </form>`;
   }
-  return page(c, t.c2PageTitle, `<h1>${t.c2Title}</h1><p class="lead">${t.c2Lead}</p>${stateLine(textState, t.c2StateGranted)}${hasImages ? stateLine(imgState, t.c2StateGrantedImages) : ''}${form}<p><a href="/account/recipes/${row.r.id}/edit${q}">${t.c2BackToEdit}</a></p>`);
+  return page(c, t.c2PageTitle, `<h1>${t.c2Title}</h1><p class="lead">${t.c2Lead}</p>${stateLine(textState, t.c2StateGranted, hasImages ? t.c2StateTextLabel : undefined)}${hasImages ? stateLine(imgState, t.c2StateGrantedImages, t.c2StateImagesLabel) : ''}${form}<p><a href="/account/recipes/${row.r.id}/edit${q}">${t.c2BackToEdit}</a></p>`);
 });
 
 accountApp.post('/recipes/:id/permission', async (c) => {
