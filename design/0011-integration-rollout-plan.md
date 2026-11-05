@@ -198,36 +198,99 @@ when, cohesively):
   already-qualified edit/grant flow with zero changes.
 - Failure modes fail closed: a failed return leaves the recipe submitted
   (unchanged); a return never makes anything publishable by itself.
-MECHANICS SKETCH (design only - implementation awaits plan review):
-- New admin MCP tool recipes.return_for_corrections (role admin,
-  confirmed: true, note required - what needs correcting).
-- One D1 batch: UPDATE recipes SET submitted_at = NULL WHERE id = ? AND
-  submitted_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM recipe_locales l
-  WHERE l.recipe_id = recipes.id AND l.status = 'published'), plus the
-  standard auditStmt. 0 changes -> 409 (not submitted, or published -
-  published recipes belong to the disable flow, not corrections).
-- The 0010 AFTER UPDATE trigger bumps the fence automatically, so any
-  displayed permission form invalidates without extra code.
-- The tool joins RECIPE_ID_TOOLS (privacy boundary unchanged).
-- Owner loop after return: existing account edit -> permission grant
-  (fresh revision + consent) -> submit -> admin publish of the new head.
+MECHANICS, corrected after review (design only - implementation awaits plan
+review; would land as design/0012-corrections-epoch.sql):
+The naive "clear submitted_at" sketch was NOT sound: it only fence-bumps,
+leaving hash, head revision and the consent tuple unchanged - an UNCHANGED
+return + resubmit could publish on the OLD grant, and pre-return orphan
+publish requests stayed live. The return must be a transactional ENFORCED
+re-consent barrier at all three enforcement points (request, flip, view).
+
+1. SCHEMA AMENDMENT (additive columns + added conjuncts ONLY; every
+   qualified predicate is preserved and the amended predicates re-qualify
+   under the test plan below):
+   - recipes ADD COLUMN corrections_epoch INTEGER NOT NULL DEFAULT 0
+   - recipe_consent_events ADD COLUMN epoch INTEGER NOT NULL DEFAULT 0,
+     written at grant time from the recipe's current corrections_epoch
+     inside grantPermission's existing atomic batch (same transaction, so
+     a grant-vs-return race serializes coherently)
+   - publish_requests ADD COLUMN epoch INTEGER NOT NULL DEFAULT 0, written
+     at request time likewise
+   - Added conjunct at ALL THREE points: every current-consent existence
+     check in publish_assert_scope (request time),
+     recipe_locales_publish_guard (flip time) and recipe_locales_effective
+     (serving view) gains
+       AND e.epoch = (SELECT corrections_epoch FROM recipes WHERE id = e.recipe_id)
+     and the flip guard's request join gains
+       AND p.epoch = (SELECT corrections_epoch FROM recipes WHERE id = p.recipe_id)
+
+2. THE BARRIER: the return bumps corrections_epoch, so EVERY pre-return
+   grant and EVERY unconsumed pre-return publish request fails at request
+   time, flip time and in the serving view - including the unchanged
+   return+resubmit case, with no hash or head change required. Re-publish
+   needs a fresh revision AND fresh grants at the new epoch. The permission
+   page's consent-currency display applies the same epoch filter, so after
+   a return the form demands re-grant even when the content hash is
+   unchanged (a same-content re-grant seals a NEW head revision at the new
+   epoch; append-only history accepts it).
+
+3. RETURN TOOL: recipes.return_for_corrections - role admin (ROLE_RANK is
+   the RBAC source), confirmed: true, note required (what needs
+   correcting), member of RECIPE_ID_TOOLS so the existing
+   private-user-draft privacy boundary applies (a submitted owned recipe
+   is visible to admin; never to editor keys). ONE D1 batch, audit row
+   FIRST then the UPDATE, BOTH guarded by the IDENTICAL precondition
+   predicate evaluated inside the same transaction:
+     recipes.id = ?
+     AND owner_user_id IS NOT NULL            -- current owner required; ownerless catalog EXCLUDED
+     AND submitted_at IS NOT NULL             -- actually submitted
+     AND NOT EXISTS (SELECT 1 FROM publish_requests pr
+                     WHERE pr.recipe_id = recipes.id AND pr.consumed_at IS NOT NULL)
+        -- durable NEVER-published history, not current status: a
+        -- published-then-disabled recipe has status draft today but a
+        -- consumed request forever; it belongs to the disable flow
+   - stmt 1: INSERT INTO mcp_audit (actor, role, tool, entity_id,
+     details_json) SELECT ?, ?, 'recipes.return_for_corrections', id,
+     json_object('note', ?, 'new_epoch', corrections_epoch + 1)
+     FROM recipes WHERE <predicate>
+   - stmt 2: UPDATE recipes SET submitted_at = NULL,
+     corrections_epoch = corrections_epoch + 1 WHERE <predicate>
+   Same transaction => both statements see the same state => both fire or
+   neither; any failure rolls back both, so a 0-row race can NEVER commit
+   a misleading audit row. The tool asserts the UPDATE's changes = 1, else
+   409 (not submitted / ownerless / has publish history). The 0010 AFTER
+   UPDATE trigger bumps the fence, invalidating displayed forms.
+
+4. RACES: concurrent returns serialize - the second sees submitted_at IS
+   NULL -> 409, zero audit rows. A grant racing a return: grant-first means
+   the return still fires and the grant's epoch is invalidated;
+   return-first means the grant records the NEW epoch - the intended
+   re-grant. Both orders coherent.
+
+5. IMMUTABLE HISTORY: revision, consent, request and audit rows stay
+   append-only and untouched; the epoch invalidates old grants and orphan
+   requests STRUCTURALLY, without rewriting history. The return sends no
+   notice and adds no public behavior.
+
 OWNER NOTICE: the returned recipe simply reappears in the owner's drafts -
 zero new authority. An email notice is a NEW kind with new wording and
 audience; it is NOT covered by any existing grant and is proposed only as
 an optional approval-gated addition, with wording drafted separately for
 approval before any send.
-TEST PLAN (when implementation is approved): return clears submitted_at +
-fence bumps + audit row; owner re-grant then succeeds (200) and publish
-proceeds on the new head revision; return on an unsubmitted draft 409s;
-return on a recipe with a published locale refused; editor role 403;
-unconfirmed call dry-runs.
-History and consent semantics of the return: revision, consent and audit
-rows are append-only and untouched (immutable history); any OLD consent is
-invalidated for later revisions by the exact-head binding - publishing
-always requires a fresh grant for the current head revision, so a returned
-recipe can never be published on its pre-return consent. The return sends
-no notice and adds no public behavior.
-CUTVER GATE, hard: the tested recovery loop (this option-A design, once
+
+TEST PLAN (hard gate - all required when implementation is approved):
+stale head (publish of a pre-return head revision fails after the epoch
+bump); ownership/return races; 0-row return -> 409 AND zero audit rows;
+both scopes (text-only and text+images grants invalidated); unchanged
+return (return + resubmit with NO edit -> request and flip fail until a
+fresh grant at the new epoch); old orphan request (unconsumed pre-return
+request -> flip aborts); published-then-disabled reject (consumed request
+history -> 409 even with current status draft); ownerless excluded; epoch
+recorded on consent/request rows equals the recipe's epoch at write time;
+fresh recovery (return -> edit -> re-grant at new epoch -> submit ->
+publish succeeds); re-qualification of the three amended predicates.
+
+CUTOVER GATE, hard: the tested recovery loop (this option-A design, once
 reviewed and implemented with its test plan) is a HARD precondition for
 cutover. "Grants happen before submit / admins avoid editing submitted
 drafts" is an operational mitigation only - NOT a sufficient workaround.
