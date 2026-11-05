@@ -28,7 +28,10 @@ export function consentFlowEnabled(env: { CONSENT_FLOW_ENABLED?: string }): bool
 /** True only when the 0007 tables exist. The flow never runs without them. */
 export async function schemaProbe(DB: D1Database): Promise<boolean> {
   const row = await DB.prepare(`SELECT count(*) n FROM sqlite_master WHERE type = 'table' AND name IN ('recipe_revisions', 'recipe_consent_events', 'recipe_revision_images', 'publish_requests')`).first<{ n: number }>();
-  return row!.n === 4;
+  if (row!.n !== 4) return false;
+  // REV 10: consent events carry an explicit text|images scope.
+  const cols = await DB.prepare(`SELECT count(*) n FROM pragma_table_info('recipe_consent_events') WHERE name = 'scope'`).first<{ n: number }>();
+  return cols!.n === 1;
 }
 
 
@@ -47,11 +50,11 @@ export async function latestConsentSeq(DB: D1Database, recipeId: string): Promis
   return row!.s;
 }
 
-export type ConsentEvent = { event: 'grant' | 'revoke'; revisionId: string; licenseVersion: string; licenseLang: string; createdAt: string };
-/** The latest consent event decides the current permission state. */
-export async function latestConsent(DB: D1Database, recipeId: string): Promise<ConsentEvent | null> {
-  const row = await DB.prepare(`SELECT event, revision_id, license_version, license_lang, created_at FROM recipe_consent_events WHERE recipe_id = ? ORDER BY consent_seq DESC LIMIT 1`).bind(recipeId).first<{ event: 'grant' | 'revoke'; revision_id: string; license_version: string; license_lang: string; created_at: string }>();
-  return row ? { event: row.event, revisionId: row.revision_id, licenseVersion: row.license_version, licenseLang: row.license_lang, createdAt: row.created_at } : null;
+export type ConsentEvent = { event: 'grant' | 'revoke'; revisionId: string; licenseVersion: string; licenseLang: string; scope: 'text' | 'images'; createdAt: string };
+/** The latest consent event per scope decides the current permission state. */
+export async function latestConsent(DB: D1Database, recipeId: string, scope: 'text' | 'images' = 'text'): Promise<ConsentEvent | null> {
+  const row = await DB.prepare(`SELECT event, revision_id, license_version, license_lang, scope, created_at FROM recipe_consent_events WHERE recipe_id = ? AND scope = ? ORDER BY consent_seq DESC LIMIT 1`).bind(recipeId, scope).first<{ event: 'grant' | 'revoke'; revision_id: string; license_version: string; license_lang: string; scope: 'text' | 'images'; created_at: string }>();
+  return row ? { event: row.event, revisionId: row.revision_id, licenseVersion: row.license_version, licenseLang: row.license_lang, scope: row.scope, createdAt: row.created_at } : null;
 }
 
 export type WriteResult = { ok: true } | { ok: false; reason: string };
@@ -134,11 +137,11 @@ export async function saveRevision(DB: D1Database, recipeId: string, userId: str
 }
 
 /** Grant or revoke consent for an exact revision + license tuple. */
-export async function recordConsent(DB: D1Database, recipeId: string, input: { id: string; revisionId: string; expectedSeq: number; event: 'grant' | 'revoke'; userId: string; licenseVersion: string; licenseLang: string }): Promise<WriteResult> {
+export async function recordConsent(DB: D1Database, recipeId: string, input: { id: string; revisionId: string; expectedSeq: number; event: 'grant' | 'revoke'; userId: string; licenseVersion: string; licenseLang: string; scope?: 'text' | 'images' }): Promise<WriteResult> {
   try {
     await DB.batch([
-      DB.prepare(`INSERT INTO recipe_consent_events (id, recipe_id, revision_id, consent_seq, event, user_id, audience, license_version, license_lang) VALUES (?, ?, ?, ?, ?, ?, 'public', ?, ?)`)
-        .bind(input.id, recipeId, input.revisionId, input.expectedSeq + 1, input.event, input.userId, input.licenseVersion, input.licenseLang),
+      DB.prepare(`INSERT INTO recipe_consent_events (id, recipe_id, revision_id, consent_seq, event, user_id, audience, license_version, license_lang, scope) VALUES (?, ?, ?, ?, ?, ?, 'public', ?, ?, ?)`)
+        .bind(input.id, recipeId, input.revisionId, input.expectedSeq + 1, input.event, input.userId, input.licenseVersion, input.licenseLang, input.scope ?? 'text'),
     ]);
     return { ok: true };
   } catch (e) {

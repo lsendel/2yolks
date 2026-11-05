@@ -522,9 +522,21 @@ accountApp.post('/recipes/:id/submit', async (c) => {
 });
 
 // --- C2 permission step (PREPARATION, disabled unless CONSENT_FLOW_ENABLED === 'true').
-// Grant/withdraw binds an exact immutable revision + license tuple. Nothing here publishes:
-// publication stays admin-authorized and re-runs the design predicate (module I gates).
+// Text and image permissions are separately unchecked and separately versioned
+// (one consent event per scope, bound to the exact revision). Nothing here
+// publishes. Withdrawal stays UNMOUNTED: its public-policy wording is still
+// pending the owner, so no live route (even flag-gated) records a revoke yet.
 const c2Off = (c: Ctx) => { const t = accountStrings(langOf(c)); return page(c, t.titleNotFound, banner('err', t.errDraftNotFound), 404); };
+
+const RECEIPTS_PER_DAY = 8; // receipts per rolling 24h, own kind; combined site budget stays 40/day
+/** Receipt reservation: per-kind cap AND the combined daily budget, one conditional INSERT. */
+async function reserveReceiptMail(db: D1Database): Promise<boolean> {
+  const now = Date.now();
+  const r = await db.prepare(
+    'INSERT INTO mail_log (id, kind, created_at) SELECT ?, ?, ? WHERE (SELECT count(*) FROM mail_log WHERE kind = ? AND created_at > ?) < ? AND (SELECT count(*) FROM mail_log WHERE created_at > ?) < ?',
+  ).bind(newId() + newId(), 'receipt', now, 'receipt', now - 86_400_000, RECEIPTS_PER_DAY, now - 86_400_000, CODES_PER_DAY + NOTICES_PER_DAY).run();
+  return r.meta.changes === 1;
+}
 
 accountApp.get('/recipes/:id/permission', async (c) => {
   if (!consentFlowEnabled(c.env)) return c2Off(c);
@@ -533,21 +545,29 @@ accountApp.get('/recipes/:id/permission', async (c) => {
   const row = await loadOwned(c, c.req.param('id'));
   if (!row) return page(c, t.titleNotFound, banner('err', t.errDraftNotFound), 404);
   if (!(await schemaProbe(c.env.DB))) return page(c, t.c2PageTitle, banner('err', t.c2ErrUnavailable), 503);
-  const state = await latestConsent(c.env.DB, row.r.id);
+  const imgCount = await c.env.DB.prepare(`SELECT count(*) AS n FROM recipe_images WHERE recipe_id = ?`).bind(row.r.id).first<{ n: number }>();
+  const hasImages = (imgCount?.n ?? 0) > 0;
+  const textState = await latestConsent(c.env.DB, row.r.id, 'text');
+  const imgState = hasImages ? await latestConsent(c.env.DB, row.r.id, 'images') : null;
   const q = `?lang=${lang}`;
-  const stateHtml = !state ? `<p>${t.c2StateNone}</p>`
-    : state.event === 'grant' ? `<p>${fill(t.c2StateGranted, { version: esc(state.licenseVersion), date: esc(state.createdAt) })}</p>`
-    : `<p>${t.c2StateWithdrawn}</p>`;
-  const license = `<p class="hint">${fill(t.c2LicenseLine, { version: PUBLIC_LICENSE_VERSION, lang })}</p>`;
-  const grantForm = state?.event === 'grant' ? '' : `<form method="post" action="/account/recipes/${row.r.id}/permission${q}">
-    <label class="check"><input type="checkbox" name="grant" value="1"> ${t.c2GrantLabel}</label>
-    ${license}
+  const stateLine = (st: typeof textState, granted: string) =>
+    !st ? `<p>${t.c2StateNone}</p>` : st.event === 'grant' ? `<p>${fill(granted, { version: esc(st.licenseVersion), date: esc(st.createdAt) })}</p>` : `<p>${t.c2StateWithdrawn}</p>`;
+  const textGranted = textState?.event === 'grant';
+  const imagesGranted = imgState?.event === 'grant';
+  let form = '';
+  if (!textGranted || (hasImages && !imagesGranted)) {
+    const boxes = [
+      textGranted ? '' : `<label class="check"><input type="checkbox" name="grant" value="1"> ${t.c2GrantLabel}</label>`,
+      hasImages && !imagesGranted ? `<label class="check"><input type="checkbox" name="grant_images" value="1"> ${t.c2GrantImagesLabel}</label>` : '',
+    ].filter(Boolean).join('\n');
+    form = `<form method="post" action="/account/recipes/${row.r.id}/permission${q}">
+    ${boxes}
+    <p class="hint">${fill(t.c2LicenseLine, { version: PUBLIC_LICENSE_VERSION, lang })}</p>
+    ${hasImages ? `<p class="hint">${t.c2ImagesLine}</p>` : ''}
     <button class="btn" type="submit">${t.c2GrantButton}</button>
   </form>`;
-  const withdrawForm = state?.event === 'grant' ? `<form method="post" action="/account/recipes/${row.r.id}/permission/withdraw${q}">
-    <button class="btn" type="submit">${t.c2WithdrawButton}</button>
-  </form>` : '';
-  return page(c, t.c2PageTitle, `<h1>${t.c2Title}</h1><p class="lead">${t.c2Lead}</p>${stateHtml}${grantForm}${withdrawForm}<p><a href="/account/recipes/${row.r.id}/edit${q}">${t.c2BackToEdit}</a></p>`);
+  }
+  return page(c, t.c2PageTitle, `<h1>${t.c2Title}</h1><p class="lead">${t.c2Lead}</p>${stateLine(textState, t.c2StateGranted)}${hasImages ? stateLine(imgState, t.c2StateGrantedImages) : ''}${form}<p><a href="/account/recipes/${row.r.id}/edit${q}">${t.c2BackToEdit}</a></p>`);
 });
 
 accountApp.post('/recipes/:id/permission', async (c) => {
@@ -559,33 +579,31 @@ accountApp.post('/recipes/:id/permission', async (c) => {
   if (!row) return page(c, t.titleNotFound, banner('err', t.errDraftNotFound), 404);
   if (!(await schemaProbe(c.env.DB))) return page(c, t.c2PageTitle, banner('err', t.c2ErrUnavailable), 503);
   const f = await c.req.parseBody();
-  if (f['grant'] !== '1') return page(c, t.c2PageTitle, banner('err', t.c2ErrTick), 400);
+  const wantText = f['grant'] === '1';
+  const wantImages = f['grant_images'] === '1';
+  if (!wantText && !wantImages) return page(c, t.c2PageTitle, banner('err', t.c2ErrTick), 400);
+  const imgCount = await c.env.DB.prepare(`SELECT count(*) AS n FROM recipe_images WHERE recipe_id = ?`).bind(row.r.id).first<{ n: number }>();
+  const hasImages = (imgCount?.n ?? 0) > 0;
   const snap = await buildSnapshotFromLive(c.env.DB, row.r.id);
   if (!snap) return page(c, t.titleNotFound, banner('err', t.errDraftNotFound), 404);
   const revId = `rev-${newId()}`;
   const wr = await saveRevision(c.env.DB, row.r.id, user.id, revId, await latestRevisionSeq(c.env.DB, row.r.id), snap);
   if (!wr.ok) return page(c, t.c2PageTitle, banner('err', t.errGeneric), 409);
-  const cr = await recordConsent(c.env.DB, row.r.id, { id: `ce-${newId()}`, revisionId: revId, expectedSeq: await latestConsentSeq(c.env.DB, row.r.id), event: 'grant', userId: user.id, licenseVersion: PUBLIC_LICENSE_VERSION, licenseLang: lang });
-  if (!cr.ok) return page(c, t.c2PageTitle, banner('err', t.errGeneric), 409);
+  const scopes: Array<'text' | 'images'> = [...(wantText ? ['text' as const] : []), ...(wantImages && hasImages ? ['images' as const] : [])];
+  for (const scope of scopes) {
+    const cr = await recordConsent(c.env.DB, row.r.id, { id: `ce-${newId()}`, revisionId: revId, expectedSeq: await latestConsentSeq(c.env.DB, row.r.id), event: 'grant', userId: user.id, licenseVersion: PUBLIC_LICENSE_VERSION, licenseLang: lang, scope });
+    if (!cr.ok) return page(c, t.c2PageTitle, banner('err', t.errGeneric), 409);
+  }
+  // Contributor receipt: the cook's own verified (session) address only, own
+  // daily cap inside the combined site budget, never sent when the cap is out.
+  if (await reserveReceiptMail(c.env.DB)) {
+    await sendMail(c.env, {
+      to: user.email,
+      subject: fill(t.c2MailSubject, { title: row.l.title }).slice(0, 180),
+      text: fill(t.c2MailBody, { title: row.l.title, hash: snap.hash.slice(0, 12), license: PUBLIC_LICENSE_VERSION, lang, scope: scopes.join(' + ') }),
+    }).catch(() => false);
+  }
   return page(c, t.c2PageTitle, `<h1>${t.c2Title}</h1>${banner('ok', t.c2OkGranted)}<p><a href="/account/recipes/${row.r.id}/permission?lang=${lang}">${t.c2PageTitle}</a></p>`);
-});
-
-// Withdrawal records a revoke event bound to the granted revision. Whether an
-// already-published recipe is hidden immediately on withdraw is policy wording
-// still pending the owner's decision, so this route changes no public state.
-accountApp.post('/recipes/:id/permission/withdraw', async (c) => {
-  if (!consentFlowEnabled(c.env)) return c2Off(c);
-  const lang = langOf(c);
-  const t = accountStrings(lang);
-  const user = c.get('user');
-  const row = await loadOwned(c, c.req.param('id'));
-  if (!row) return page(c, t.titleNotFound, banner('err', t.errDraftNotFound), 404);
-  if (!(await schemaProbe(c.env.DB))) return page(c, t.c2PageTitle, banner('err', t.c2ErrUnavailable), 503);
-  const state = await latestConsent(c.env.DB, row.r.id);
-  if (!state || state.event !== 'grant') return page(c, t.c2PageTitle, banner('err', t.c2ErrNoGrant), 409);
-  const cr = await recordConsent(c.env.DB, row.r.id, { id: `ce-${newId()}`, revisionId: state.revisionId, expectedSeq: await latestConsentSeq(c.env.DB, row.r.id), event: 'revoke', userId: user.id, licenseVersion: state.licenseVersion, licenseLang: state.licenseLang });
-  if (!cr.ok) return page(c, t.c2PageTitle, banner('err', t.errGeneric), 409);
-  return page(c, t.c2PageTitle, `<h1>${t.c2Title}</h1>${banner('ok', t.c2OkWithdrawn)}<p><a href="/account/recipes/${row.r.id}/permission?lang=${lang}">${t.c2PageTitle}</a></p>`);
 });
 
 // "Remove" never deletes data: the locale is marked rejected (hidden from the owner's list), rows stay for review/audit.

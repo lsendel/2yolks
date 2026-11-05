@@ -19,6 +19,7 @@ function fresh() {
     sqlite.exec(readFileSync(new URL(`../migrations/${file}`, import.meta.url), 'utf8'));
   }
   sqlite.exec(readFileSync(new URL('../../../design/0007-consent-revisions.sql', import.meta.url), 'utf8'));
+  sqlite.exec(readFileSync(new URL('../../../design/0008-consent-scope.sql', import.meta.url), 'utf8'));
   sqlite.exec(`INSERT INTO users (id, email, created_at) VALUES ('${USER}', 'ana@example.com', '2026-01-01'), ('admin-1', 'admin@example.com', '2026-01-01')`);
   sqlite.exec(`INSERT INTO sources (id, name, url, license) VALUES ('src-1', 'Ana', 'https://2yolks.com/', 'user-original')`);
   sqlite.exec(`INSERT INTO recipes (id, source_id, origin_country, created_at, owner_user_id) VALUES ('${RECIPE}', 'src-1', 'us', '2026-01-01', '${USER}')`);
