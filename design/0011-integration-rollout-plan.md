@@ -97,14 +97,15 @@ re-check fresh at cutover. This count is NEVER a migration input). Undigested im
 from consent SNAPSHOTS (present behavior), which says nothing about serving.
 
 ### G4. Two DISTINCT image gates - publish precondition AND serving
-G4a PUBLISH PRECONDITION (required rights-cleared image, explicit): before
-any publish of a recipe that serves images, (i) the SEALED revision manifest
-must bind AT LEAST ONE rights-cleared eligible image (digested, provenance
-declared) covered by a CURRENT images-scope grant for that exact revision,
-and (ii) NO live image the serving gate would serve may be left unbound from
-the manifest (no unbound live image leak). "All live images eligible" is
-vacuously true when the manifest binds zero images - that is not a
-required-image gate. Today an empty text-only manifest can publish while the
+G4a PUBLISH PRECONDITION (required rights-cleared image, UNIVERSAL): before
+ANY public recipe publish, (i) the SEALED revision manifest must bind AT
+LEAST ONE rights-cleared eligible image (digested, provenance declared,
+rights-cleared) covered by a CURRENT images-scope grant for that exact
+revision, and (ii) separately, NO live image the serving gate would serve
+may be left unbound from the manifest (no unbound live image leak). This is
+universal - it does not ask whether the recipe "serves images" first.
+"All live images eligible" is vacuously true when the manifest binds zero
+images - that is not a required-image gate. Today an empty text-only manifest can publish while the
 old two-gate endpoint keeps serving that recipe's images: the endpoint gate
 does not prevent publishing an image-bearing recipe on text consent alone.
 G4b MANIFEST-BOUND SERVING: a third, flag-gated check on
@@ -220,9 +221,16 @@ fence bumps + audit row; owner re-grant then succeeds (200) and publish
 proceeds on the new head revision; return on an unsubmitted draft 409s;
 return on a recipe with a published locale refused; editor role 403;
 unconfirmed call dry-runs.
-Until the plan review accepts this recommendation, the operational cutover
-precondition stands: grants happen before submit, and admins do not edit
-submitted drafts that still need consent.
+History and consent semantics of the return: revision, consent and audit
+rows are append-only and untouched (immutable history); any OLD consent is
+invalidated for later revisions by the exact-head binding - publishing
+always requires a fresh grant for the current head revision, so a returned
+recipe can never be published on its pre-return consent. The return sends
+no notice and adds no public behavior.
+CUTVER GATE, hard: the tested recovery loop (this option-A design, once
+reviewed and implemented with its test plan) is a HARD precondition for
+cutover. "Grants happen before submit / admins avoid editing submitted
+drafts" is an operational mitigation only - NOT a sufficient workaround.
 
 ## Policy gaps blocking gates (owner: Luis, via main)
 1. Withdrawal policy wording (hide-on-withdraw vs listed-with-notice) -
