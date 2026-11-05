@@ -9,6 +9,7 @@ import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import { eq, and, ne, desc } from 'drizzle-orm';
 import { LOCALES, getCountry, localizedCountryName, slugify, validateRecipeSubmission, RECIPE_CATEGORY_SLUGS, categoryLabel, isRecipeCategorySlug, CATEGORIES, accountStrings, fill, isAccountLang, validatorMessage, parseWarningMessage, ssrfMessage, type AccountStrings } from '@2yolks/contracts';
 import { renderAccountPage, escapeHtml as esc, CAPTURE_CLIENT_SCRIPT, CAPTURE_CHECK_STRINGS } from '@2yolks/web/server';
+import { consentFlowEnabled, schemaProbe, buildSnapshotFromLive, saveRevision, recordConsent, latestRevisionSeq, latestConsentSeq, latestConsent, PUBLIC_LICENSE_VERSION } from './consent';
 import { createDb, recipes, recipeLocales, sources, users } from './db';
 import { sendMail, type MailEnv } from './email';
 import { parseRecipeText, parseJsonLdRecipe, type ParsedRecipe } from './parse';
@@ -22,6 +23,8 @@ export type AccountBindings = MailEnv & {
   REVIEW_NOTIFY_TO?: string;
   /** 'true' turns on link import. Default OFF (DNS-rebinding residual, see ssrf.ts). */
   IMPORT_ENABLED?: string;
+  /** 'true' turns on the C2 permission step (preparation). Default OFF. */
+  CONSENT_FLOW_ENABLED?: string;
   /** Optional Workers rate-limit bindings (approximate, per location). Absent = skipped. */
   RL_AUTH?: RateLimiter;
   RL_SUBMIT?: RateLimiter;
@@ -516,6 +519,73 @@ accountApp.post('/recipes/:id/submit', async (c) => {
     }).catch(() => false);
   }
   return page(c, t.sentInPageTitle, `<h1>${t.sentInTitle}</h1><p class="lead">${fill(t.sentInLead, { title: esc(row.l.title) })}</p><p><a class="btn" href="/account${qs(lang)}">${t.backToRecipes}</a></p>`);
+});
+
+// --- C2 permission step (PREPARATION, disabled unless CONSENT_FLOW_ENABLED === 'true').
+// Grant/withdraw binds an exact immutable revision + license tuple. Nothing here publishes:
+// publication stays admin-authorized and re-runs the design predicate (module I gates).
+const c2Off = (c: Ctx) => { const t = accountStrings(langOf(c)); return page(c, t.titleNotFound, banner('err', t.errDraftNotFound), 404); };
+
+accountApp.get('/recipes/:id/permission', async (c) => {
+  if (!consentFlowEnabled(c.env)) return c2Off(c);
+  const lang = langOf(c);
+  const t = accountStrings(lang);
+  const row = await loadOwned(c, c.req.param('id'));
+  if (!row) return page(c, t.titleNotFound, banner('err', t.errDraftNotFound), 404);
+  if (!(await schemaProbe(c.env.DB))) return page(c, t.c2PageTitle, banner('err', t.c2ErrUnavailable), 503);
+  const state = await latestConsent(c.env.DB, row.r.id);
+  const q = `?lang=${lang}`;
+  const stateHtml = !state ? `<p>${t.c2StateNone}</p>`
+    : state.event === 'grant' ? `<p>${fill(t.c2StateGranted, { version: esc(state.licenseVersion), date: esc(state.createdAt) })}</p>`
+    : `<p>${t.c2StateWithdrawn}</p>`;
+  const license = `<p class="hint">${fill(t.c2LicenseLine, { version: PUBLIC_LICENSE_VERSION, lang })}</p>`;
+  const grantForm = state?.event === 'grant' ? '' : `<form method="post" action="/account/recipes/${row.r.id}/permission${q}">
+    <label class="check"><input type="checkbox" name="grant" value="1"> ${t.c2GrantLabel}</label>
+    ${license}
+    <button class="btn" type="submit">${t.c2GrantButton}</button>
+  </form>`;
+  const withdrawForm = state?.event === 'grant' ? `<form method="post" action="/account/recipes/${row.r.id}/permission/withdraw${q}">
+    <button class="btn" type="submit">${t.c2WithdrawButton}</button>
+  </form>` : '';
+  return page(c, t.c2PageTitle, `<h1>${t.c2Title}</h1><p class="lead">${t.c2Lead}</p>${stateHtml}${grantForm}${withdrawForm}<p><a href="/account/recipes/${row.r.id}/edit${q}">${t.c2BackToEdit}</a></p>`);
+});
+
+accountApp.post('/recipes/:id/permission', async (c) => {
+  if (!consentFlowEnabled(c.env)) return c2Off(c);
+  const lang = langOf(c);
+  const t = accountStrings(lang);
+  const user = c.get('user');
+  const row = await loadOwned(c, c.req.param('id'));
+  if (!row) return page(c, t.titleNotFound, banner('err', t.errDraftNotFound), 404);
+  if (!(await schemaProbe(c.env.DB))) return page(c, t.c2PageTitle, banner('err', t.c2ErrUnavailable), 503);
+  const f = await c.req.parseBody();
+  if (f['grant'] !== '1') return page(c, t.c2PageTitle, banner('err', t.c2ErrTick), 400);
+  const snap = await buildSnapshotFromLive(c.env.DB, row.r.id);
+  if (!snap) return page(c, t.titleNotFound, banner('err', t.errDraftNotFound), 404);
+  const revId = `rev-${newId()}`;
+  const wr = await saveRevision(c.env.DB, row.r.id, user.id, revId, await latestRevisionSeq(c.env.DB, row.r.id), snap);
+  if (!wr.ok) return page(c, t.c2PageTitle, banner('err', t.errGeneric), 409);
+  const cr = await recordConsent(c.env.DB, row.r.id, { id: `ce-${newId()}`, revisionId: revId, expectedSeq: await latestConsentSeq(c.env.DB, row.r.id), event: 'grant', userId: user.id, licenseVersion: PUBLIC_LICENSE_VERSION, licenseLang: lang });
+  if (!cr.ok) return page(c, t.c2PageTitle, banner('err', t.errGeneric), 409);
+  return page(c, t.c2PageTitle, `<h1>${t.c2Title}</h1>${banner('ok', t.c2OkGranted)}<p><a href="/account/recipes/${row.r.id}/permission?lang=${lang}">${t.c2PageTitle}</a></p>`);
+});
+
+// Withdrawal records a revoke event bound to the granted revision. Whether an
+// already-published recipe is hidden immediately on withdraw is policy wording
+// still pending the owner's decision, so this route changes no public state.
+accountApp.post('/recipes/:id/permission/withdraw', async (c) => {
+  if (!consentFlowEnabled(c.env)) return c2Off(c);
+  const lang = langOf(c);
+  const t = accountStrings(lang);
+  const user = c.get('user');
+  const row = await loadOwned(c, c.req.param('id'));
+  if (!row) return page(c, t.titleNotFound, banner('err', t.errDraftNotFound), 404);
+  if (!(await schemaProbe(c.env.DB))) return page(c, t.c2PageTitle, banner('err', t.c2ErrUnavailable), 503);
+  const state = await latestConsent(c.env.DB, row.r.id);
+  if (!state || state.event !== 'grant') return page(c, t.c2PageTitle, banner('err', t.c2ErrNoGrant), 409);
+  const cr = await recordConsent(c.env.DB, row.r.id, { id: `ce-${newId()}`, revisionId: state.revisionId, expectedSeq: await latestConsentSeq(c.env.DB, row.r.id), event: 'revoke', userId: user.id, licenseVersion: state.licenseVersion, licenseLang: state.licenseLang });
+  if (!cr.ok) return page(c, t.c2PageTitle, banner('err', t.errGeneric), 409);
+  return page(c, t.c2PageTitle, `<h1>${t.c2Title}</h1>${banner('ok', t.c2OkWithdrawn)}<p><a href="/account/recipes/${row.r.id}/permission?lang=${lang}">${t.c2PageTitle}</a></p>`);
 });
 
 // "Remove" never deletes data: the locale is marked rejected (hidden from the owner's list), rows stay for review/audit.

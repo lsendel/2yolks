@@ -31,6 +31,29 @@ export async function schemaProbe(DB: D1Database): Promise<boolean> {
   return row!.n === 4;
 }
 
+
+/** License version pinned to every grant. Bump only with reviewed wording. */
+export const PUBLIC_LICENSE_VERSION = 'public-v1';
+
+/** Current revision counter for a recipe (0 when none). Next insert uses +1. */
+export async function latestRevisionSeq(DB: D1Database, recipeId: string): Promise<number> {
+  const row = await DB.prepare(`SELECT COALESCE(max(seq), 0) AS s FROM recipe_revisions WHERE recipe_id = ?`).bind(recipeId).first<{ s: number }>();
+  return row!.s;
+}
+
+/** Current consent counter for a recipe (0 when none). Next insert uses +1. */
+export async function latestConsentSeq(DB: D1Database, recipeId: string): Promise<number> {
+  const row = await DB.prepare(`SELECT COALESCE(max(consent_seq), 0) AS s FROM recipe_consent_events WHERE recipe_id = ?`).bind(recipeId).first<{ s: number }>();
+  return row!.s;
+}
+
+export type ConsentEvent = { event: 'grant' | 'revoke'; revisionId: string; licenseVersion: string; licenseLang: string; createdAt: string };
+/** The latest consent event decides the current permission state. */
+export async function latestConsent(DB: D1Database, recipeId: string): Promise<ConsentEvent | null> {
+  const row = await DB.prepare(`SELECT event, revision_id, license_version, license_lang, created_at FROM recipe_consent_events WHERE recipe_id = ? ORDER BY consent_seq DESC LIMIT 1`).bind(recipeId).first<{ event: 'grant' | 'revoke'; revision_id: string; license_version: string; license_lang: string; created_at: string }>();
+  return row ? { event: row.event, revisionId: row.revision_id, licenseVersion: row.license_version, licenseLang: row.license_lang, createdAt: row.created_at } : null;
+}
+
 export type WriteResult = { ok: true } | { ok: false; reason: string };
 
 /** Build the canonical snapshot for a recipe from live rows. */

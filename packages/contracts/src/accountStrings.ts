@@ -13,6 +13,10 @@ export interface AccountStrings {
   titleNotFound: string; errDraftNotFound: string; errDraftNotFoundOrSent: string;
   titleSubmitted: string; okAlreadySentEdit: string; errAlreadySent: string; errAlreadySentNoSave: string; okAlreadySent: string;
   titlePermissionNeeded: string; errPermissionNeeded: string;
+  // C2 permission step (flag-gated preparation flow)
+  c2PageTitle: string; c2Title: string; c2Lead: string; c2LicenseLine: string; c2GrantLabel: string;
+  c2GrantButton: string; c2WithdrawButton: string; c2StateGranted: string; c2StateWithdrawn: string; c2StateNone: string;
+  c2OkGranted: string; c2OkWithdrawn: string; c2ErrTick: string; c2ErrUnavailable: string; c2ErrNoGrant: string; c2BackToEdit: string;
   errGeneric: string;
   // sign-in
   signInPageTitle: string; signInTitle: string; signInLead: string; signInEmailLabel: string; signInButton: string; signInHint: string;
@@ -58,6 +62,15 @@ const en: AccountStrings = {
   errAlreadySentNoSave: 'This recipe was already sent in for review, so your changes were not saved.',
   okAlreadySent: 'Already sent in for review.',
   titlePermissionNeeded: 'Permission needed', errPermissionNeeded: 'Tick the permission box on the draft and save before sending it in.',
+  c2PageTitle: 'Permission', c2Title: 'Permission to publish',
+  c2Lead: 'This saves your recipe exactly as it is now as a numbered version, and records your permission for that exact version. Editing the recipe later needs new permission.',
+  c2LicenseLine: 'Public license {version} ({lang}): you allow 2yolks to show this version, its text and its photos, to everyone. You can withdraw permission at any time on this page.',
+  c2GrantLabel: 'I created this recipe or have permission to share it, and I allow 2yolks to publish this exact version publicly.',
+  c2GrantButton: 'Save permission for this version', c2WithdrawButton: 'Withdraw permission',
+  c2StateGranted: 'Permission is on for license {version}, saved {date}.', c2StateWithdrawn: 'Permission is withdrawn. Nothing new can be published from this recipe.', c2StateNone: 'No permission recorded yet.',
+  c2OkGranted: 'Permission saved for this exact version.', c2OkWithdrawn: 'Permission withdrawn.',
+  c2ErrTick: 'Tick the permission box first.', c2ErrUnavailable: 'The permission step is not available right now.', c2ErrNoGrant: 'There is no active permission to withdraw.',
+  c2BackToEdit: 'Back to the draft',
   errGeneric: 'Something went wrong. Please try again.',
   signInPageTitle: 'Sign in', signInTitle: 'Your 2yolks account',
   signInLead: 'Sign in with an email code to keep private drafts and send a recipe in for review. No password to remember.',
@@ -144,6 +157,15 @@ const es: AccountStrings = {
   errAlreadySentNoSave: 'Esta receta ya se envió a revisión, así que tus cambios no se guardaron.',
   okAlreadySent: 'Ya enviada a revisión.',
   titlePermissionNeeded: 'Falta el permiso', errPermissionNeeded: 'Marca la casilla de permiso en el borrador y guarda antes de enviarla.',
+  c2PageTitle: 'Permiso', c2Title: 'Permiso para publicar',
+  c2Lead: 'Esto guarda tu receta exactamente como está ahora como una versión numerada, y registra tu permiso para esa versión exacta. Si editas la receta después, hará falta un permiso nuevo.',
+  c2LicenseLine: 'Licencia pública {version} ({lang}): permites que 2yolks muestre esta versión, con su texto y sus fotos, a todo el mundo. Puedes retirar el permiso en cualquier momento desde esta página.',
+  c2GrantLabel: 'Creé esta receta o tengo permiso para compartirla, y permito que 2yolks publique esta versión exacta de forma pública.',
+  c2GrantButton: 'Guardar permiso para esta versión', c2WithdrawButton: 'Retirar permiso',
+  c2StateGranted: 'El permiso está activo para la licencia {version}, guardado el {date}.', c2StateWithdrawn: 'Permiso retirado. No se puede publicar nada nuevo de esta receta.', c2StateNone: 'Todavía no hay permiso registrado.',
+  c2OkGranted: 'Permiso guardado para esta versión exacta.', c2OkWithdrawn: 'Permiso retirado.',
+  c2ErrTick: 'Marca primero la casilla de permiso.', c2ErrUnavailable: 'El paso de permiso no está disponible ahora mismo.', c2ErrNoGrant: 'No hay un permiso activo que retirar.',
+  c2BackToEdit: 'Volver al borrador',
   errGeneric: 'Algo salió mal. Inténtalo de nuevo, por favor.',
   signInPageTitle: 'Iniciar sesión', signInTitle: 'Tu cuenta de 2yolks',
   signInLead: 'Inicia sesión con un código por correo para guardar borradores privados y enviar una receta a revisión. Sin contraseña que recordar.',
@@ -230,6 +252,15 @@ const fr: AccountStrings = {
   errAlreadySentNoSave: 'Cette recette a déjà été envoyée en relecture, vos changements n’ont pas été enregistrés.',
   okAlreadySent: 'Déjà envoyée en relecture.',
   titlePermissionNeeded: 'Autorisation requise', errPermissionNeeded: 'Cochez la case d’autorisation sur le brouillon et enregistrez avant de l’envoyer.',
+  c2PageTitle: 'Autorisation', c2Title: 'Autorisation de publication',
+  c2Lead: 'Ceci enregistre votre recette exactement comme elle est maintenant sous forme de version numérotée, et consigne votre autorisation pour cette version exacte. Toute modification ultérieure demande une nouvelle autorisation.',
+  c2LicenseLine: 'Licence publique {version} ({lang}) : vous autorisez 2yolks à montrer cette version, avec son texte et ses photos, à tout le monde. Vous pouvez retirer votre autorisation à tout moment sur cette page.',
+  c2GrantLabel: 'J’ai créé cette recette ou j’ai le droit de la partager, et j’autorise 2yolks à publier cette version exacte publiquement.',
+  c2GrantButton: 'Enregistrer l’autorisation pour cette version', c2WithdrawButton: 'Retirer l’autorisation',
+  c2StateGranted: 'L’autorisation est active pour la licence {version}, enregistrée le {date}.', c2StateWithdrawn: 'Autorisation retirée. Rien de nouveau ne peut être publié pour cette recette.', c2StateNone: 'Aucune autorisation enregistrée pour le moment.',
+  c2OkGranted: 'Autorisation enregistrée pour cette version exacte.', c2OkWithdrawn: 'Autorisation retirée.',
+  c2ErrTick: 'Cochez d’abord la case d’autorisation.', c2ErrUnavailable: 'L’étape d’autorisation n’est pas disponible pour le moment.', c2ErrNoGrant: 'Il n’y a pas d’autorisation active à retirer.',
+  c2BackToEdit: 'Retour au brouillon',
   errGeneric: 'Une erreur est survenue. Veuillez réessayer.',
   signInPageTitle: 'Connexion', signInTitle: 'Votre compte 2yolks',
   signInLead: 'Connectez-vous avec un code reçu par e-mail pour garder des brouillons privés et envoyer une recette en relecture. Aucun mot de passe à retenir.',
