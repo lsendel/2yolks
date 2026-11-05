@@ -203,44 +203,62 @@ when, cohesively):
   already-qualified edit/grant flow with zero changes.
 - Failure modes fail closed: a failed return leaves the recipe submitted
   (unchanged); a return never makes anything publishable by itself.
-MECHANICS, final correction after two review rounds (design only; NOT
-mounted as routes/tools and NOT applied to any live DB):
+MECHANICS, REV 15 after three review rounds (design only; NOT mounted as
+routes/tools and NOT applied to any live DB):
 The executable artifacts ARE the design: design/0012-corrections-epoch.sql
 (schema + guards + amended predicates) and its executable proof
-packages/api/src/corrections-epoch-probe.test.ts (15 tests, raw SQL on the
+packages/api/src/corrections-epoch-probe.test.ts (21 tests, raw SQL on the
 actual 0001-0010 + 0012 schema). Summary:
 
+- LAYER BOUNDARY, explicit: SQL owns state, tuples and atomicity; the MCP
+  tool boundary owns authentication + RBAC (ROLE_RANK) and binds the actor
+  key identity the way auditStmt does today - never caller-supplied.
+  return_operations.actor is therefore opaque TEXT (NO users FK): an FK to
+  users would conflate the authenticated admin key with a site account.
 - DURABLE NEVER-PUBLISHED MARKER: recipes.first_published_at, stamped by a
   table trigger at EVERY actual draft->published flip (every write path),
-  never inferred from consumed requests (legacy/orphan flips can lack
-  them). Marker is trusted history: NULL->stamp only; clear/change/forged
-  INSERT/REPLACE reset all abort; the 0007 published-INSERT guard is
-  retained. Migration classifies BEFORE the tool mounts: currently
-  published = stamped; every other legacy recipe = sentinel (unknown
-  history fails closed - the return requires verified NULL).
+  never inferred from consumed requests. Marker is trusted history:
+  NULL->stamp only; clear/change/forged INSERT/REPLACE reset all abort;
+  the 0007 published-INSERT guard is retained. Classification is EXECUTED
+  SQL inside 0012 at apply time (not a prerequisite comment), ordered
+  after the ALTERs and before the guards: every recipe with a currently
+  published locale gets a real stamp; every other legacy recipe gets the
+  sentinel '1900-01-01T00:00:00Z' (unknown history fails closed). Proven
+  on true legacy data (rows created before ANY design SQL): currently
+  published -> real stamp; never published AND published-then-disabled
+  orphan flips -> sentinel; post-migration rows keep a trustworthy NULL.
 - CORRECTIONS EPOCH: recipes.corrections_epoch; consent events and publish
   requests carry an epoch written from the recipe's current epoch inside
   the existing atomic batches; integrity triggers reject ANY mis-stamped
-  event/request from ANY writer. The qualified currency predicates
+  event/request from ANY writer, and no INSERT can introduce a nonzero
+  epoch (epoch-init guard). The qualified currency predicates
   (publish_assert, publish_assert_scope, recipe_locales_publish_guard,
   recipe_locales_effective) are preserved verbatim with ONLY epoch
   conjuncts added - e.epoch AND p.epoch = current, at request, flip and
   view, for BOTH scopes. These amendments RE-QUALIFY under the probe
-  before any apply (the epoch adds guarded state; this is a reviewed
-  amendment, not "invariants untouched"). The shown_epoch addition to the
-  permission form + grant expected tuple is likewise a behavior change
-  that re-qualifies with the route work, not a cosmetic note.
-- RETURN OPERATION (unique durable identity, append-only, consume-once):
-  return_operations carries the full expected tuple (owner, head revision,
-  head seq NULL-safe, epoch, submission, actor, note). Its INSERT trigger
-  asserts the tuple against CURRENT state and RAISEs inside the batch on
-  ANY mismatch - a losing race, stale expectation or replay has ZERO
-  effects (no op row, no transition, no audit). The SQL entry guard on
-  recipes lets the epoch advance ONLY through the exact return shape bound
-  to a validated unconsumed op - shape alone is not authority. Batch:
-  insert op -> guarded transition -> consume op -> audit keyed on THIS
-  op's consumption; any failure rolls everything back (proven: audit
-  failure leaves epoch, submission, op and audit untouched).
+  before any apply. The shown_epoch addition to the permission form +
+  grant expected tuple is likewise a behavior change that re-qualifies
+  with the route work.
+- RETURN OPERATION (unique durable identity, append-only, consume-once,
+  one pending op per recipe): return_operations carries the full expected
+  tuple (owner, head revision, head seq NULL-safe, epoch, submission,
+  actor, note). Its INSERT trigger asserts the tuple against CURRENT state
+  and RAISEs inside the batch on ANY mismatch - a losing race, stale
+  expectation or replay has ZERO effects. Note hygiene is enforced
+  (trim-nonblank, <=500 chars, actor nonblank).
+- TRANSITION-OWNED CONSUME + AUDIT (the reviewer's core objection, fixed):
+  the epoch-advance is a single AFTER UPDATE OF corrections_epoch trigger
+  that, bound to the one validated unconsumed op, (a) flips submitted_at
+  only as part of the same guarded UPDATE, (b) consumes the op, and
+  (c) writes the mcp_audit row with the actor copied from the op - all in
+  one statement's trigger chain, so consume and audit EXIST BECAUSE the
+  transition happened, not because a service batched them. The service
+  batch shrinks to exactly two statements [insert op, transition UPDATE];
+  SQL enforces completion (a standalone transition on a validated op
+  completes WITH its audit). The consume guard requires the post-state
+  (epoch = expected+1 AND submitted NULL), so a standalone consume aborts.
+  Audit integrity for this tool: rows only from a consumed matching op, no
+  duplicate row per op, no updates, no deletes.
 - FRESH-REVISION SCOPE, specified: SQL mandates FRESH GRANTS (epoch-bound)
   + the existing exact-head binding; revision novelty is the route flow's
   convention, not a SQL invariant. Same-content re-grant after a return is
@@ -251,16 +269,29 @@ actual 0001-0010 + 0012 schema). Summary:
   hash) and the admin's stale inspected state likewise fails the op CAS.
   Both directions require fresh inspection, never silent success.
 
-PROBE PROOF MAP (all passing, 384/384 suite, tsc clean): happy return;
-old grant cannot request publish post-return; pre-return orphan request
-cannot flip; race loser zero-effects; replay zero-effects; per-dimension
-CAS mismatches; epoch tamper (direct write, decrease, op-less transition,
-REPLACE reset); mis-stamped event/request rejected; unchanged-content
-recovery publishes at the new epoch; marker stamps once and never moves;
-marker clear/change/forged-insert/published-insert abort; sentinel,
-ownerless, unsubmitted and currently-published returns rejected; audit
-failure full rollback; both-scopes barrier on an image-binding head; the
-serving view carries both epoch conjuncts.
+PROBE PROOF MAP (all passing, 390/390 suite, tsc clean): happy return
+(transition trigger consumes the op and writes exactly one audit with the
+op's actor); old grant cannot request publish post-return; pre-return
+orphan request cannot flip; race loser zero-effects; replay zero-effects;
+per-dimension CAS mismatches; note hygiene; a pending op can NEVER be
+consumed or audited without its transition (standalone consume aborts,
+spoofed audit aborts, second pending op refused); audit rows immutable
+and non-duplicable; a standalone transition on a validated op completes
+WITH its audit (SQL-enforced completion); INSERT with nonzero epoch
+aborts; epoch tamper (direct write, decrease, op-less transition, REPLACE
+reset); mis-stamped event/request rejected; unchanged-content recovery
+publishes at the new epoch; marker stamps once and never moves; marker
+clear/change/forged-insert/published-insert abort; sentinel, ownerless,
+unsubmitted and currently-published returns rejected; audit-write failure
+rolls the whole batch back (epoch, submission, op, audit untouched);
+BOTH-SCOPES on an image-binding head with MATCHING canonical snapshot and
+manifest rows per revision, proven as two independent sub-cases (fresh
+text + old images -> images barrier; old text + fresh images -> text
+barrier); the serving view carries both epoch conjuncts - structural
+proof, with the behavioral epoch mismatch documented as unreachable under
+the guards (the epoch can only advance via a return, and a return
+requires verified-never-published, so a published row's epoch never
+moves); the amended view excludes unconsented legacy published rows.
 
 OWNER NOTICE: the returned recipe simply reappears in the owner's drafts -
 zero new authority. An email notice is a NEW kind with new wording and

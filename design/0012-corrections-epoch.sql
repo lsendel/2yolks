@@ -1,4 +1,4 @@
--- REV 14 DESIGN - return-for-corrections with an enforced re-consent barrier
+-- REV 15 DESIGN - return-for-corrections with an enforced re-consent barrier
 -- (design/0011 G9; option A). DESIGN ONLY: never applied to a live database
 -- in this branch; its semantics are proven by
 -- packages/api/src/corrections-epoch-probe.test.ts on node:sqlite.
@@ -12,12 +12,21 @@
 -- resubmit could publish on the OLD grant, and unconsumed pre-return
 -- publish requests stayed live.
 --
--- Design: a corrections epoch. Every publish/consent currency predicate
--- (request, flip, serving view - both scopes) additionally requires the
--- consent event's epoch AND the request's epoch to equal the recipe's
--- current corrections_epoch. The ONLY way to advance the epoch is one
--- audited, tuple-validated return operation. Revision/consent/request/
--- audit history stays append-only; invalidation is structural.
+-- Design: a corrections epoch + a unique, durable, consume-once return
+-- operation. Every publish/consent currency predicate (request, flip,
+-- serving view - both scopes) additionally requires the consent event's
+-- epoch AND the request's epoch to equal the recipe's current
+-- corrections_epoch. The ONLY way to advance the epoch is one validated
+-- return operation, and transition + op consumption + audit row are ONE
+-- SQL-enforced atomic unit (trigger-owned), not a service-batch claim.
+--
+-- LAYER BOUNDARY, explicit: SQL enforces state, tuples, epochs, marker and
+-- atomicity. The AUTHENTICATED actor and admin ROLE are the MCP tool
+-- boundary's job (existing callTool ROLE_RANK check, 403 for editor/
+-- viewer); the tool binds op.actor from the authenticated key identity,
+-- exactly like auditStmt - it is NEVER caller-supplied free text. An FK to
+-- users would NOT be authenticated-admin authority, so actor is opaque
+-- TEXT at the SQL layer.
 
 ALTER TABLE recipes ADD COLUMN corrections_epoch INTEGER NOT NULL DEFAULT 0;
 -- NULL means VERIFIED never published (the recipe's whole life postdates
@@ -27,13 +36,16 @@ ALTER TABLE recipes ADD COLUMN first_published_at TEXT;
 ALTER TABLE recipe_consent_events ADD COLUMN epoch INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE publish_requests ADD COLUMN epoch INTEGER NOT NULL DEFAULT 0;
 
--- Migration classification, BEFORE the return tool ever mounts (unknown
--- history is excluded fail-closed):
---   UPDATE recipes SET first_published_at = datetime('now')
---   WHERE EXISTS (SELECT 1 FROM recipe_locales l WHERE l.recipe_id = recipes.id AND l.status = 'published');
---   UPDATE recipes SET first_published_at = '1900-01-01T00:00:00Z' WHERE first_published_at IS NULL;
--- Only recipes created after recipe_first_publish_stamp exists keep a
--- trustworthy NULL.
+-- MIGRATION CLASSIFICATION, executed at apply time over pre-existing rows
+-- (BEFORE the guards below exist and BEFORE the return tool ever mounts;
+-- in a database whose data all postdates this migration these statements
+-- match zero rows). Unknown history fails closed with the sentinel; only
+-- recipes created after recipe_first_publish_stamp exists keep a
+-- trustworthy NULL. These UPDATEs also fire the 0010 fence bump, which is
+-- harmless pre-flag (monotonic seq; no forms displayed yet).
+UPDATE recipes SET first_published_at = datetime('now')
+WHERE EXISTS (SELECT 1 FROM recipe_locales l WHERE l.recipe_id = recipes.id AND l.status = 'published');
+UPDATE recipes SET first_published_at = '1900-01-01T00:00:00Z' WHERE first_published_at IS NULL;
 
 -- The durable marker: stamped at EVERY actual draft->published transition
 -- on every write path, because it is a table trigger.
@@ -53,6 +65,12 @@ CREATE TRIGGER recipes_first_published_insert_guard BEFORE INSERT ON recipes
 WHEN NEW.first_published_at IS NOT NULL
 BEGIN SELECT RAISE(ABORT, 'first_published_at comes only from the publish stamp or the migration classification'); END;
 
+-- Every recipe starts at epoch 0, caller-independent: no INSERT (direct,
+-- OR REPLACE, legacy writer) can introduce a nonzero epoch.
+CREATE TRIGGER recipes_epoch_init_guard BEFORE INSERT ON recipes
+WHEN NEW.corrections_epoch <> 0
+BEGIN SELECT RAISE(ABORT, 'corrections_epoch starts at 0 for every recipe'); END;
+
 -- INSERT OR REPLACE can never silently reset guarded flow state (epoch,
 -- marker, submission). The existing published-content guards (0007) are
 -- retained; this covers the flow fields they do not.
@@ -64,11 +82,11 @@ WHEN EXISTS (
       OR o.submitted_at IS NOT NEW.submitted_at))
 BEGIN SELECT RAISE(ABORT, 'INSERT OR REPLACE cannot reset guarded flow state; DELETE and INSERT with a new id instead'); END;
 
--- The return operation: unique durable identity, append-only, consume-once.
--- The INSERT trigger is the SQL assertion of the FULL expected tuple
--- against current state - every mismatch RAISEs INSIDE the batch, so a
--- losing race or a stale expectation has ZERO effects (no op row, no
--- transition, no audit), and a replay dies on the append-only guard.
+-- The return operation: unique durable identity, append-only, consume-once,
+-- at most ONE pending op per recipe. The INSERT trigger is the SQL
+-- assertion of the FULL expected tuple against current state - every
+-- mismatch RAISEs inside the batch, so a losing race, a stale expectation
+-- or a replay has ZERO effects (no op row, no transition, no audit).
 CREATE TABLE return_operations (
   op_id               TEXT PRIMARY KEY,
   recipe_id           TEXT NOT NULL REFERENCES recipes(id),
@@ -77,7 +95,7 @@ CREATE TABLE return_operations (
   expected_head_seq   INTEGER,   -- NULL when the recipe has no revision yet
   expected_epoch      INTEGER NOT NULL,
   expected_submission TEXT NOT NULL,
-  actor               TEXT NOT NULL REFERENCES users(id),
+  actor               TEXT NOT NULL,  -- authenticated admin key identity, bound at the MCP boundary (see LAYER BOUNDARY)
   note                TEXT NOT NULL,
   created_at          TEXT NOT NULL DEFAULT (datetime('now')),
   consumed_at         TEXT
@@ -87,6 +105,10 @@ CREATE TRIGGER return_operations_insert_guard BEFORE INSERT ON return_operations
 BEGIN
   SELECT RAISE(ABORT, 'return_operations is append-only')
   WHERE EXISTS (SELECT 1 FROM return_operations x WHERE x.op_id = NEW.op_id);
+  SELECT RAISE(ABORT, 'a pending return operation already exists for this recipe')
+  WHERE EXISTS (SELECT 1 FROM return_operations x WHERE x.recipe_id = NEW.recipe_id AND x.consumed_at IS NULL);
+  SELECT RAISE(ABORT, 'actor and note required (note 500 chars max)')
+  WHERE length(trim(NEW.actor)) = 0 OR length(trim(NEW.note)) = 0 OR length(NEW.note) > 500;
   SELECT RAISE(ABORT, 'return operation expectation does not match current state')
   WHERE NOT EXISTS (
     SELECT 1 FROM recipes o
@@ -102,6 +124,9 @@ BEGIN
       AND (SELECT r.id FROM recipe_revisions r WHERE r.recipe_id = o.id ORDER BY seq DESC LIMIT 1) IS NEW.expected_head);
 END;
 
+-- Consumption is valid ONLY as part of a completed epoch transition: the
+-- recipe must already show exactly this op's expected_epoch + 1 with
+-- submitted_at cleared. A standalone consume (no transition) aborts.
 CREATE TRIGGER return_operations_consume_only BEFORE UPDATE ON return_operations
 WHEN NOT (OLD.consumed_at IS NULL AND NEW.consumed_at IS NOT NULL
   AND NEW.op_id = OLD.op_id AND NEW.recipe_id = OLD.recipe_id
@@ -110,8 +135,10 @@ WHEN NOT (OLD.consumed_at IS NULL AND NEW.consumed_at IS NOT NULL
   AND NEW.expected_head_seq IS OLD.expected_head_seq
   AND NEW.expected_epoch = OLD.expected_epoch
   AND NEW.expected_submission = OLD.expected_submission
-  AND NEW.actor = OLD.actor AND NEW.note = OLD.note)
-BEGIN SELECT RAISE(ABORT, 'return_operations only record consumption'); END;
+  AND NEW.actor = OLD.actor AND NEW.note = OLD.note
+  AND EXISTS (SELECT 1 FROM recipes o WHERE o.id = OLD.recipe_id
+    AND o.corrections_epoch = OLD.expected_epoch + 1 AND o.submitted_at IS NULL))
+BEGIN SELECT RAISE(ABORT, 'return_operations are consumed only by their epoch transition'); END;
 
 CREATE TRIGGER return_operations_no_delete BEFORE DELETE ON return_operations
 BEGIN SELECT RAISE(ABORT, 'return_operations is append-only'); END;
@@ -137,6 +164,53 @@ WHEN NOT (
       AND ro.expected_head_seq IS (SELECT MAX(seq) FROM recipe_revisions r WHERE r.recipe_id = OLD.id)
       AND ro.expected_head IS (SELECT r.id FROM recipe_revisions r WHERE r.recipe_id = OLD.id ORDER BY seq DESC LIMIT 1)))
 BEGIN SELECT RAISE(ABORT, 'corrections_epoch advances only through a validated return operation'); END;
+
+-- Transition-owned consume + audit: ONE SQL-enforced atomic unit. The
+-- transition, the op consumption and the audit row all live in this
+-- trigger - a completed transition ALWAYS has its audit, and the audit's
+-- actor is copied from the validated op, never supplied at transition
+-- time. (At most one pending op per recipe, so the match is unique.)
+CREATE TRIGGER recipes_epoch_transition_apply AFTER UPDATE OF corrections_epoch ON recipes
+WHEN NEW.corrections_epoch = OLD.corrections_epoch + 1
+BEGIN
+  UPDATE return_operations SET consumed_at = datetime('now')
+  WHERE recipe_id = NEW.id AND consumed_at IS NULL
+    AND expected_owner = NEW.owner_user_id
+    AND expected_epoch = OLD.corrections_epoch
+    AND expected_submission = OLD.submitted_at
+    AND expected_head_seq IS (SELECT MAX(seq) FROM recipe_revisions r WHERE r.recipe_id = NEW.id)
+    AND expected_head IS (SELECT r.id FROM recipe_revisions r WHERE r.recipe_id = NEW.id ORDER BY seq DESC LIMIT 1);
+  INSERT INTO mcp_audit (actor, role, tool, entity_id, details_json)
+  SELECT ro.actor, 'admin', 'recipes.return_for_corrections', ro.recipe_id,
+         json_object('note', ro.note, 'op_id', ro.op_id, 'old_epoch', OLD.corrections_epoch, 'new_epoch', NEW.corrections_epoch)
+  FROM return_operations ro
+  WHERE ro.recipe_id = NEW.id AND ro.consumed_at IS NOT NULL
+    AND ro.expected_epoch = OLD.corrections_epoch
+    AND NOT EXISTS (SELECT 1 FROM mcp_audit a WHERE a.tool = 'recipes.return_for_corrections'
+                    AND json_extract(a.details_json, '$.op_id') = ro.op_id);
+END;
+
+-- Audit integrity for this tool: no spoofed rows (only a consumed op can
+-- back one), no edits, no deletes, no second row for the same op.
+CREATE TRIGGER mcp_audit_return_insert_guard BEFORE INSERT ON mcp_audit
+WHEN NEW.tool = 'recipes.return_for_corrections'
+  AND (NOT EXISTS (
+         SELECT 1 FROM return_operations ro
+         WHERE ro.op_id = json_extract(NEW.details_json, '$.op_id')
+           AND ro.recipe_id = NEW.entity_id AND ro.consumed_at IS NOT NULL AND ro.actor = NEW.actor)
+       OR EXISTS (
+         SELECT 1 FROM mcp_audit a2
+         WHERE a2.tool = 'recipes.return_for_corrections'
+           AND json_extract(a2.details_json, '$.op_id') = json_extract(NEW.details_json, '$.op_id')))
+BEGIN SELECT RAISE(ABORT, 'return-for-corrections audit rows come only from the transition trigger'); END;
+
+CREATE TRIGGER mcp_audit_return_no_update BEFORE UPDATE ON mcp_audit
+WHEN OLD.tool = 'recipes.return_for_corrections'
+BEGIN SELECT RAISE(ABORT, 'return-for-corrections audit is immutable'); END;
+
+CREATE TRIGGER mcp_audit_return_no_delete BEFORE DELETE ON mcp_audit
+WHEN OLD.tool = 'recipes.return_for_corrections'
+BEGIN SELECT RAISE(ABORT, 'return-for-corrections audit is immutable'); END;
 
 -- Epoch integrity: no path (app bug or legacy writer) can stamp a consent
 -- event or publish request at any epoch but the recipe's current one.
