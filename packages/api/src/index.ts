@@ -17,7 +17,7 @@ import {
 import { renderHome, renderCountryHome, renderRecipe, renderAbout, renderPrivacy, renderHowWeTest, renderNotFound, type SiteNavItem } from '@2yolks/web/server';
 import { isUntested, localizedCountryName } from '@2yolks/contracts';
 import type { ImageStyle } from '@2yolks/contracts';
-import { recipeSlugAliases,  createDb, recipes, recipeLocales, recipeImages, sources, published, imageCleared } from './db';
+import { recipeSlugAliases,  createDb, recipes, recipeLocales, recipeImages, sources, published, imageCleared, searchGapLogs } from './db';
 import { appApi } from './appapi';
 import { mcpApp } from './mcp';
 import { accountApp, type AccountBindings } from './account';
@@ -284,7 +284,18 @@ app.get('/', async (c) => {
       .map((lang) => ({ country: ct.code, countryName: ct.name, lang })),
   );
   const recipeRows = await db
-    .select({ id: recipeLocales.recipeId, country: recipeLocales.country, lang: recipeLocales.lang, slug: recipeLocales.slug, title: recipeLocales.title, testedAt: recipes.testedAt, category: recipes.category, totalMinutes:recipes.totalMinutes })
+    .select({
+      id: recipeLocales.recipeId,
+      country: recipeLocales.country,
+      lang: recipeLocales.lang,
+      slug: recipeLocales.slug,
+      title: recipeLocales.title,
+      intro: recipeLocales.intro,
+      ingredientsJson: recipeLocales.ingredientsJson,
+      testedAt: recipes.testedAt,
+      category: recipes.category,
+      totalMinutes: recipes.totalMinutes,
+    })
     .from(recipeLocales)
     .innerJoin(recipes, eq(recipeLocales.recipeId, recipes.id))
     .innerJoin(sources, eq(recipes.sourceId, sources.id))
@@ -296,13 +307,65 @@ app.get('/', async (c) => {
     renderHome(
       {
         locales: markets,
-        lang, activeCategory,
-        recipes: recipeRows.map((r) => ({ id: r.id, country: r.country, lang: r.lang, slug: r.slug, title: r.title, untested: isUntested({ testedAt: r.testedAt }), category: r.category, totalMinutes:r.totalMinutes, imageId: heroByRecipe.get(r.id)?.id ?? null, imageStyle: heroByRecipe.get(r.id)?.style ?? null })),
+        lang,
+        activeCategory,
+        recipes: recipeRows.map((r) => ({
+          id: r.id,
+          country: r.country,
+          lang: r.lang,
+          slug: r.slug,
+          title: r.title,
+          untested: isUntested({ testedAt: r.testedAt }),
+          category: r.category,
+          totalMinutes: r.totalMinutes,
+          imageId: heroByRecipe.get(r.id)?.id ?? null,
+          imageStyle: heroByRecipe.get(r.id)?.style ?? null,
+          intro: r.intro ?? null,
+          ingredients: extractIngredientNames(r.ingredientsJson),
+        })),
       },
       nav,
       origin,
     ),
   );
+});
+
+function extractIngredientNames(json: string | null | undefined): string {
+  if (!json) return '';
+  try {
+    const list = JSON.parse(json);
+    if (!Array.isArray(list)) return '';
+    return list
+      .map((entry) => {
+        if (typeof entry === 'string') {
+          return entry.replace(/^[0-9/.\s\u00bc-\u00be\u2150-\u215e]+(?:cup|cups|tbsp|tsp|tablespoon|tablespoons|teaspoon|teaspoons|g|gram|grams|kg|ml|oz|ounce|ounces|lb|lbs|pound|pounds|pinch|pinches|can|cans|package|packages|bunch|bunches)?\s*/i, '').trim() || entry;
+        }
+        if (entry && typeof entry.name === 'string') return entry.name.trim();
+        return '';
+      })
+      .filter(Boolean)
+      .join(' ');
+  } catch {
+    return '';
+  }
+}
+
+app.post('/api/search-gap', async (c) => {
+  try {
+    const body = (await c.req.json()) as { query?: string; locale?: string };
+    const query = typeof body?.query === 'string' ? body.query.trim().slice(0, 100) : '';
+    const locale = typeof body?.locale === 'string' ? body.locale.trim().slice(0, 10) : 'en';
+    if (!query) return c.json({ ok: false }, 400);
+    const db = createDb(c.env.DB);
+    await db.insert(searchGapLogs).values({
+      query,
+      locale,
+      createdAt: new Date().toISOString(),
+    });
+    return c.json({ ok: true });
+  } catch {
+    return c.json({ ok: false }, 500);
+  }
 });
 
 const countryHome = async (c: Context<{ Bindings: Bindings }>) => {
@@ -313,7 +376,17 @@ const countryHome = async (c: Context<{ Bindings: Bindings }>) => {
   if (!country || country.wave === 0) return c.notFound();
   const db = createDb(c.env.DB);
   const rows = await db
-    .select({ slug: recipeLocales.slug, title: recipeLocales.title, id: recipeLocales.recipeId, lang: recipeLocales.lang, testedAt: recipes.testedAt, category: recipes.category, totalMinutes:recipes.totalMinutes })
+    .select({
+      slug: recipeLocales.slug,
+      title: recipeLocales.title,
+      id: recipeLocales.recipeId,
+      lang: recipeLocales.lang,
+      intro: recipeLocales.intro,
+      ingredientsJson: recipeLocales.ingredientsJson,
+      testedAt: recipes.testedAt,
+      category: recipes.category,
+      totalMinutes: recipes.totalMinutes,
+    })
     .from(recipeLocales)
     .innerJoin(recipes, eq(recipeLocales.recipeId, recipes.id))
     .innerJoin(sources, eq(recipes.sourceId, sources.id))
@@ -330,9 +403,11 @@ const countryHome = async (c: Context<{ Bindings: Bindings }>) => {
     lang: r.lang,
     country: parsed.country,
     category: r.category ?? null,
-    totalMinutes:r.totalMinutes,
+    totalMinutes: r.totalMinutes,
     imageId: null as string | null,
     imageStyle: null as 'photo' | 'illustration' | 'graphic' | null,
+    intro: r.intro ?? null,
+    ingredients: extractIngredientNames(r.ingredientsJson),
   }));
   const heroByRecipe = await heroImagesByRecipe(db);
   for (const r of mapped) { const h = heroByRecipe.get(r.id); r.imageId = h?.id ?? null; r.imageStyle = h?.style ?? null; }

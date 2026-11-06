@@ -28,6 +28,7 @@ import {
   isStructured,
   parseCategoryField,
   parseTimeFields,
+  RECIPE_CATEGORY_SLUGS,
   unitInfo,
   unknownRefs,
 } from '@2yolks/contracts';
@@ -214,6 +215,15 @@ const TOOLS: ToolDef[] = [
     inputSchema: { type: 'object', properties: {} },
   },
   {
+    name: 'search.gap_logs',
+    description: 'List recent zero-result search queries logged from discovery index searches. Args: limit (optional, max 100).',
+    role: 'viewer',
+    inputSchema: {
+      type: 'object',
+      properties: { limit: { type: 'number' } },
+    },
+  },
+  {
     name: 'recipes.create_draft',
     description:
       'Create a recipe draft (source + locales). Same validation as public submissions: ingredients may be strings or structured {ref, qty, qtyEnd?, unit?, name, note?} objects, exactly one original locale per submission, translations carry translationOf/translationMethod and pass the QA gate at creation. Optional recipe-level fields (migration 0004): prepMinutes/cookMinutes/restMinutes/totalMinutes (integers, total stored explicitly, never summed), baseServings (numeric base yield), category (dish-type slug, see contracts RECIPE_CATEGORY_SLUGS). Steps may carry {d:Nm} duration tokens (1-1440 minutes) that render localized and drive the cook-mode timer. The source is created uncleared, so the recipe cannot be served or published until sources.clear_rights. Executes only with confirmed: true; otherwise validates as a dry run.',
@@ -224,6 +234,11 @@ const TOOLS: ToolDef[] = [
         source: { type: 'object' },
         originCountry: { type: 'string' },
         locales: { type: 'array' },
+        category: {
+          type: 'string',
+          enum: RECIPE_CATEGORY_SLUGS as unknown as string[],
+          description: 'Primary dish-type category slug',
+        },
       },
       required: ['source', 'locales'],
     },
@@ -1100,6 +1115,15 @@ async function callSourcesList(db: D1Database, role: Role): Promise<CallResult> 
   return { status: 200, data: { sources: rows.results } };
 }
 
+async function callSearchGapLogs(db: D1Database, args: Record<string, unknown>): Promise<CallResult> {
+  const limit = Math.min(Math.max(Number(args['limit'] || 50), 1), 100);
+  const rows = await db
+    .prepare('SELECT id, query, locale, created_at FROM search_gap_logs ORDER BY id DESC LIMIT ?')
+    .bind(limit)
+    .all();
+  return { status: 200, data: { logs: rows.results } };
+}
+
 async function callRecipesCreateDraft(ctx: CallCtx, args: Record<string, unknown>): Promise<CallResult> {
   // The shared contract validator owns shape, structured ingredients, the
   // exactly-one-original rule and the translation QA floor for multi-locale
@@ -1123,6 +1147,7 @@ async function callRecipesCreateDraft(ctx: CallCtx, args: Record<string, unknown
   if (!times.ok) return { status: 400, data: { error: times.error } };
   const category = parseCategoryField(args);
   if (!category.ok) return { status: 400, data: { error: category.error } };
+  const finalCategory = category.present && category.value ? category.value : 'mains';
   // Canonicalize structured ingredients for storage and verify step tokens.
   const storedIngredients: IngredientEntry[][] = [];
   for (const l of sub.locales) {
@@ -1170,7 +1195,7 @@ async function callRecipesCreateDraft(ctx: CallCtx, args: Record<string, unknown
         times.values.restMinutes ?? null,
         times.values.totalMinutes ?? null,
         times.values.baseServings ?? null,
-        category.present ? category.value : null,
+        finalCategory,
       ),
     ...sub.locales.map((l, i) =>
       ctx.db
@@ -1340,6 +1365,7 @@ async function callRecipesUpdateDraft(ctx: CallCtx, args: Record<string, unknown
   if (!times.ok) return { status: 400, data: { error: times.error } };
   const category = parseCategoryField(args);
   if (!category.ok) return { status: 400, data: { error: category.error } };
+  const finalCategory = category.present && category.value ? category.value : 'mains';
   const timeSets: string[] = [];
   const timeParams: unknown[] = [];
   const TIME_COLS: Record<string, string> = {
@@ -1908,6 +1934,8 @@ async function dispatch(ctx: CallCtx, name: string, args: Record<string, unknown
       return callRecipesGet(ctx.db, args);
     case 'sources.list':
       return callSourcesList(ctx.db, ctx.role);
+    case 'search.gap_logs':
+      return callSearchGapLogs(ctx.db, args);
     case 'recipes.create_draft':
       return callRecipesCreateDraft(ctx, args);
     case 'recipes.update_draft':

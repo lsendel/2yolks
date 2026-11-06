@@ -112,8 +112,19 @@ export const recipeSlugAliases = sqliteTable(
   (t) => [primaryKey({ columns: [t.country, t.lang, t.slug] })],
 );
 
+export const searchGapLogs = sqliteTable(
+  'search_gap_logs',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    query: text('query').notNull(),
+    locale: text('locale').notNull(),
+    createdAt: text('created_at').notNull(),
+  },
+  (t) => [index('idx_search_gap_logs_created').on(t.createdAt)],
+);
+
 export function createDb(d1: D1Database) {
-  return drizzle(d1, { schema: { users, sources, recipes, recipeLocales, recipeImages, recipeSlugAliases } });
+  return drizzle(d1, { schema: { users, sources, recipes, recipeLocales, recipeImages, recipeSlugAliases, searchGapLogs } });
 }
 
 const DEMO_LICENSE = 'internal-demo';

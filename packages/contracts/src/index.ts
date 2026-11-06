@@ -301,6 +301,12 @@ export const CATEGORIES: Readonly<Record<RecipeCategorySlug, { en: string; es: s
   'soups-stews': { en: 'Soups & stews', es: 'Sopas y guisos', fr: 'Soupes et rago\u00fbts' },
   dumplings: { en: 'Dumplings', es: 'Dumplings', fr: 'Raviolis' },
   'tacos-tortillas': { en: 'Tacos & tortilla dishes', es: 'Tacos y platos de tortilla', fr: 'Tacos et plats \u00e0 la tortilla' },
+  'desserts-baking': { en: 'Desserts & baking', es: 'Postres y reposter\u00eda', fr: 'Desserts et p\u00e2tisseries' },
+  drinks: { en: 'Drinks', es: 'Bebidas', fr: 'Boissons' },
+  breakfast: { en: 'Breakfast', es: 'Desayuno', fr: 'Petit-d\u00e9jeuner' },
+  mains: { en: 'Mains', es: 'Platos principales', fr: 'Plats principaux' },
+  sides: { en: 'Sides', es: 'Guarniciones', fr: 'Accompagnements' },
+  'snacks-dips': { en: 'Snacks & dips', es: 'Botanas y salsas', fr: 'Collations et trempettes' },
 };
 
 // Honest-imagery styles the UI is allowed to label (migration 0004 CHECK).
@@ -434,7 +440,17 @@ export function parseTimeFields(input: Record<string, unknown>): TimeFieldsParse
 // classifications. NULL means uncategorized (listed under "All").
 // ---------------------------------------------------------------------------
 
-export const RECIPE_CATEGORY_SLUGS = ['soups-stews', 'dumplings', 'tacos-tortillas'] as const;
+export const RECIPE_CATEGORY_SLUGS = [
+  'soups-stews',
+  'dumplings',
+  'tacos-tortillas',
+  'desserts-baking',
+  'drinks',
+  'breakfast',
+  'mains',
+  'sides',
+  'snacks-dips',
+] as const;
 export type RecipeCategorySlug = (typeof RECIPE_CATEGORY_SLUGS)[number];
 
 export function isRecipeCategorySlug(v: unknown): v is RecipeCategorySlug {

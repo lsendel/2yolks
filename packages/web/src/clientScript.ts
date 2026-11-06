@@ -9,22 +9,263 @@ export const DISCOVERY_CLIENT_SCRIPT = `(function () {
   var input = document.querySelector('[data-recipe-search]');
   if (!input) return;
   var items = Array.prototype.slice.call(document.querySelectorAll('[data-recipe-item]'));
+  var list = document.querySelector('[data-recipe-list]') || (input.closest('section') ? input.closest('section').querySelector('ul.discovery-list') : null);
   var emptyEl = document.querySelector('[data-search-empty]');
-  input.addEventListener('input', function () {
-    var q = (input.value || '').trim().toLowerCase();
-    var shown = 0;
-    items.forEach(function (li) {
-      var hay = (li.getAttribute('data-search') || '').toLowerCase();
-      var match = !q || hay.indexOf(q) !== -1;
-      li.hidden = !match;
-      if (match) {
-        shown++;
-        var num = li.querySelector('.recipe-number');
-        if (num) num.textContent = (shown < 10 ? '0' : '') + shown;
+  var closestNote = document.querySelector('[data-closest-note]');
+  var clearBtn = document.querySelector('[data-clear-search]');
+  var emptyMsg = document.querySelector('[data-empty-msg]');
+  var emptySuggestions = document.querySelector('[data-empty-suggestions]');
+  var suggestionsList = document.querySelector('[data-suggestions-list]');
+
+  function norm(s) {
+    return (s || '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\\u0300-\\u036f]/g, '')
+      .trim()
+      .replace(/\\s+/g, ' ');
+  }
+
+  function editDist(a, b) {
+    if (a === b) return 0;
+    if (!a.length) return b.length;
+    if (!b.length) return a.length;
+    var v0 = new Array(b.length + 1);
+    var v1 = new Array(b.length + 1);
+    for (var i = 0; i <= b.length; i++) v0[i] = i;
+    for (var i = 0; i < a.length; i++) {
+      v1[0] = i + 1;
+      for (var j = 0; j < b.length; j++) {
+        var cost = a.charCodeAt(i) === b.charCodeAt(j) ? 0 : 1;
+        v1[j + 1] = Math.min(v1[j] + 1, v0[j + 1] + 1, v0[j] + cost);
+      }
+      for (var j = 0; j <= b.length; j++) v0[j] = v1[j];
+    }
+    return v0[b.length];
+  }
+
+  function getVariants(tok) {
+    var v = [tok];
+    if (tok.length > 3) {
+      if (tok.endsWith('ies')) v.push(tok.slice(0, -3) + 'y');
+      else if (tok.endsWith('es')) v.push(tok.slice(0, -2), tok.slice(0, -1));
+      else if (tok.endsWith('s')) v.push(tok.slice(0, -1));
+      else v.push(tok + 's', tok + 'es');
+    }
+    return v;
+  }
+
+  function matchTokenInText(tok, text) {
+    if (!tok || !text) return false;
+    if (text.indexOf(tok) !== -1) return true;
+    var vars = getVariants(tok);
+    for (var i = 0; i < vars.length; i++) {
+      if (text.indexOf(vars[i]) !== -1) return true;
+    }
+    if (tok.length >= 5) {
+      var words = text.split(/[^a-z0-9]+/);
+      for (var i = 0; i < words.length; i++) {
+        var w = words[i];
+        if (w.length >= 4 && Math.abs(w.length - tok.length) <= 2) {
+          if (editDist(tok, w) <= 2) return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  function strictMatchToken(tok, text) {
+    if (!tok || !text) return false;
+    if (text.indexOf(tok) !== -1) return true;
+    var vars = getVariants(tok);
+    for (var i = 0; i < vars.length; i++) {
+      if (text.indexOf(vars[i]) !== -1) return true;
+    }
+    return false;
+  }
+
+  var records = items.map(function (li, idx) {
+    var title = norm(li.getAttribute('data-title') || (li.querySelector('h3') ? li.querySelector('h3').textContent : ''));
+    var cat = norm(li.getAttribute('data-category') || '');
+    var body = norm(li.getAttribute('data-body') || '');
+    var rawSearch = norm(li.getAttribute('data-search') || (title + ' ' + cat + ' ' + body));
+    return {
+      el: li,
+      idx: idx,
+      title: title,
+      cat: cat,
+      body: body,
+      all: rawSearch
+    };
+  });
+
+  var logTimeout = null;
+  function reportZeroMatch(query) {
+    if (!query || query.length < 2) return;
+    clearTimeout(logTimeout);
+    logTimeout = setTimeout(function () {
+      try {
+        var lang = document.documentElement.lang || 'en';
+        fetch('/api/search-gap', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: query, locale: lang })
+        }).catch(function () {});
+      } catch (e) {}
+    }, 1200);
+  }
+
+  function updateUrl(q, push) {
+    try {
+      var u = new URL(window.location.href);
+      if (q) u.searchParams.set('q', q);
+      else u.searchParams.delete('q');
+      u.hash = 'recipes';
+      if (push) history.pushState(null, '', u.toString());
+      else history.replaceState(null, '', u.toString());
+    } catch (e) {}
+  }
+
+  function filterRecipes() {
+    var rawQ = (input.value || '').trim();
+    var q = norm(rawQ);
+    if (!q) {
+      if (closestNote) closestNote.hidden = true;
+      if (emptyEl) emptyEl.hidden = true;
+      records.forEach(function (r) {
+        r.el.hidden = false;
+        var num = r.el.querySelector('.recipe-number');
+        if (num) num.textContent = (r.idx + 1 < 10 ? '0' : '') + (r.idx + 1);
+        if (list) list.appendChild(r.el);
+      });
+      return;
+    }
+
+    var tokens = q.split(/\\s+/);
+    var matched = [];
+    var strictCount = 0;
+
+    records.forEach(function (rec) {
+      var allTokensMatch = true;
+      var titleMatchesAll = true;
+      var categoryMatchesAny = false;
+      var isStrictMatch = true;
+
+      for (var i = 0; i < tokens.length; i++) {
+        var tok = tokens[i];
+        var inTitle = matchTokenInText(tok, rec.title);
+        var inCat = matchTokenInText(tok, rec.cat);
+        var inBody = matchTokenInText(tok, rec.body);
+        if (!inTitle && !inCat && !inBody) {
+          allTokensMatch = false;
+          break;
+        }
+        if (!inTitle) titleMatchesAll = false;
+        if (inCat) categoryMatchesAny = true;
+
+        if (!strictMatchToken(tok, rec.all)) {
+          isStrictMatch = false;
+        }
+      }
+
+      if (allTokensMatch) {
+        var tier = titleMatchesAll ? 1 : (categoryMatchesAny ? 2 : 3);
+        if (isStrictMatch) strictCount++;
+        matched.push({ rec: rec, tier: tier });
       }
     });
-    if (emptyEl) emptyEl.hidden = shown > 0 || items.length === 0;
+
+    if (matched.length > 0) {
+      if (emptyEl) emptyEl.hidden = true;
+      if (closestNote) {
+        closestNote.hidden = (strictCount > 0);
+      }
+      matched.sort(function (a, b) {
+        if (a.tier !== b.tier) return a.tier - b.tier;
+        return a.rec.idx - b.rec.idx;
+      });
+
+      records.forEach(function (r) { r.el.hidden = true; });
+
+      matched.forEach(function (m, rank) {
+        m.rec.el.hidden = false;
+        var num = m.rec.el.querySelector('.recipe-number');
+        if (num) num.textContent = (rank + 1 < 10 ? '0' : '') + (rank + 1);
+        if (list) list.appendChild(m.rec.el);
+      });
+    } else {
+      records.forEach(function (r) { r.el.hidden = true; });
+      if (closestNote) closestNote.hidden = true;
+      if (emptyEl) {
+        emptyEl.hidden = false;
+        if (emptyMsg) {
+          var tmpl = emptyEl.getAttribute('data-nothing-matches') || "Nothing matches '{q}' yet";
+          emptyMsg.textContent = tmpl.replace('{q}', rawQ);
+        }
+        if (emptySuggestions && suggestionsList) {
+          suggestionsList.innerHTML = '';
+          var suggestions = [];
+          records.forEach(function (r) {
+            var minD = 999;
+            var titleWords = r.title.split(/[^a-z0-9]+/);
+            for (var w = 0; w < titleWords.length; w++) {
+              var d = editDist(q, titleWords[w]);
+              if (d < minD) minD = d;
+            }
+            if (minD <= 3) {
+              suggestions.push({ rec: r, dist: minD });
+            }
+          });
+          suggestions.sort(function (a, b) { return a.dist - b.dist; });
+          var top = suggestions.slice(0, 3);
+          if (top.length > 0) {
+            top.forEach(function (s) {
+              var link = s.rec.el.querySelector('h3 a');
+              var li = document.createElement('li');
+              var a = document.createElement('a');
+              a.textContent = s.rec.title;
+              if (link) a.href = link.href;
+              li.appendChild(a);
+              suggestionsList.appendChild(li);
+            });
+            emptySuggestions.hidden = false;
+          } else {
+            emptySuggestions.hidden = true;
+          }
+        }
+      }
+      reportZeroMatch(rawQ);
+    }
+  }
+
+  try {
+    var p = new URLSearchParams(window.location.search);
+    var initQ = p.get('q');
+    if (initQ) {
+      input.value = initQ;
+      filterRecipes();
+    }
+  } catch (e) {}
+
+  input.addEventListener('input', function () {
+    updateUrl(input.value.trim(), false);
+    filterRecipes();
   });
+
+  input.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') {
+      updateUrl(input.value.trim(), true);
+    }
+  });
+
+  if (clearBtn) {
+    clearBtn.addEventListener('click', function () {
+      input.value = '';
+      updateUrl('', true);
+      filterRecipes();
+      input.focus();
+    });
+  }
 })();`;
 
 export const RECIPE_CLIENT_SCRIPT = `(function () {
