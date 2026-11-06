@@ -246,4 +246,13 @@ describe('Search & Discovery Sprint (WS1, WS2, WS3, WS4)', () => {
     const results = runSearchScript('zzzqqq', html);
     expect(results).toHaveLength(0);
   });
+
+  it('WS5 acceptance: cross-locale recipes render provenance badge and participate in search', () => {
+    // When rendered with currentCountry = 'us', MX recipes (Birria Tacos, Red Chicken Enchiladas) get provenance badge
+    const html = renderHome({ recipes: CATALOG, locales: [], lang: 'en', currentCountry: 'us' });
+    expect(html).toContain('class="provenance-badge">Mexico</span>');
+    // When searching for Mexican recipe on US edition, it matches and is returned
+    const results = runSearchScript('birria', html);
+    expect(results).toContain('Birria Tacos');
+  });
 });

@@ -73,7 +73,7 @@ main.wide.discovery {max-width:1160px;padding:0;margin:auto;background:var(--plu
 .row-badges {display:flex;flex-wrap:wrap;gap:.35rem .75rem;align-items:center;}
 .status-label {color:var(--lime);font-size:.75rem;font-weight:600;}
 .featured-recipe .status-label {color:var(--plum);}
-.fallback-language {display:inline-block;font-size:.75rem;color:#dfd7e4;border:1px solid #756580;padding:.05rem .45rem;}
+.fallback-language, .provenance-badge {display:inline-block;font-size:.75rem;color:#dfd7e4;border:1px solid #756580;padding:.05rem .45rem;}
 .row-end {display:flex;flex-direction:column;align-items:flex-end;justify-content:space-between;gap:.5rem;min-width:70px;}
 .row-end .icon-stat {font-size:.78rem;color:#ded5e4;}
 .row-end .fact-icon {width:14px;height:14px;}

@@ -380,6 +380,7 @@ const countryHome = async (c: Context<{ Bindings: Bindings }>) => {
       slug: recipeLocales.slug,
       title: recipeLocales.title,
       id: recipeLocales.recipeId,
+      country: recipeLocales.country,
       lang: recipeLocales.lang,
       intro: recipeLocales.intro,
       ingredientsJson: recipeLocales.ingredientsJson,
@@ -390,18 +391,43 @@ const countryHome = async (c: Context<{ Bindings: Bindings }>) => {
     .from(recipeLocales)
     .innerJoin(recipes, eq(recipeLocales.recipeId, recipes.id))
     .innerJoin(sources, eq(recipes.sourceId, sources.id))
-    .where(and(eq(recipeLocales.country, parsed.country), published(db, demoAllowed(c))));
+    .where(published(db, demoAllowed(c)));
+
+  const pageLang = defaultLocale(parsed.country) ?? 'en';
+  const byRecipeId = new Map<string, typeof rows>();
+  for (const r of rows) {
+    const list = byRecipeId.get(r.id) ?? [];
+    list.push(r);
+    byRecipeId.set(r.id, list);
+  }
+  const selectedRows: typeof rows = [];
+  for (const list of byRecipeId.values()) {
+    const matching =
+      list.find((r) => r.country === parsed.country && r.lang === pageLang) ??
+      list.find((r) => r.country === parsed.country) ??
+      list.find((r) => r.lang === pageLang) ??
+      list.find((r) => r.lang === 'en') ??
+      list[0]!;
+    selectedRows.push(matching);
+  }
+  selectedRows.sort((a, b) => {
+    const aIsLocal = a.country === parsed.country ? 0 : 1;
+    const bIsLocal = b.country === parsed.country ? 0 : 1;
+    if (aIsLocal !== bIsLocal) return aIsLocal - bIsLocal;
+    return a.id.localeCompare(b.id);
+  });
+
   // ?cat=<slug> filters the listing by dish type. Unknown slugs are ignored
   // (full listing), never 404 on a hand-typed filter.
   const catParam = new URL(c.req.url).searchParams.get('cat');
   const activeCategory = catParam && isRecipeCategorySlug(catParam) ? catParam : null;
-  const mapped = rows.map((r) => ({
+  const mapped = selectedRows.map((r) => ({
     id: r.id,
     slug: r.slug,
     title: r.title,
     untested: isUntested({ testedAt: r.testedAt }),
     lang: r.lang,
-    country: parsed.country,
+    country: r.country,
     category: r.category ?? null,
     totalMinutes: r.totalMinutes,
     imageId: null as string | null,
@@ -413,7 +439,6 @@ const countryHome = async (c: Context<{ Bindings: Bindings }>) => {
   for (const r of mapped) { const h = heroByRecipe.get(r.id); r.imageId = h?.id ?? null; r.imageStyle = h?.style ?? null; }
   const categories = [...new Set(mapped.map((r) => r.category).filter((x): x is string => Boolean(x)))].sort();
   const filtered = activeCategory ? mapped.filter((r) => r.category === activeCategory) : mapped;
-  const pageLang = defaultLocale(parsed.country) ?? 'en';
   const nav = await siteNav(db, demoAllowed(c), pageLang);
   const origin = c.env.CANONICAL_ORIGIN ?? new URL(c.req.url).origin;
   return c.html(
