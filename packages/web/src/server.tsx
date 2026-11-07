@@ -18,6 +18,7 @@ export function safeJsonLd(value: object): string {
 }
 import {
   Home,
+  RecipeIndex,
   CountryHome,
   RecipeView,
   AboutView,
@@ -359,6 +360,59 @@ export function renderHome(props: HomeProps, nav?: SiteNavItem[], origin = 'http
       url: canonicalUrl,
       locale: seo.locale,
       alternateLocales: ['en_US', 'es_MX', 'fr_FR'].filter((l) => l !== seo.locale),
+      image: `${origin}/img/identity/after-hours.webp`,
+      imageAlt: seo.title,
+    },
+  });
+}
+
+const RECIPES_INDEX_SEO: Record<string, { title: string; description: string }> = {
+  en: { title: 'All recipes - 2yolks', description: 'Every published 2yolks recipe, grouped by course, with honest tested/untested labels.' },
+  es: { title: 'Todas las recetas - 2yolks', description: 'Todas las recetas publicadas de 2yolks, agrupadas por tipo, con su estado real de prueba.' },
+  fr: { title: 'Toutes les recettes - 2yolks', description: 'Toutes les recettes publiées de 2yolks, par catégorie, avec leur statut de test réel.' },
+};
+
+export function renderRecipeIndex(props: { recipes: RecipeRow[]; lang?: string }, nav?: SiteNavItem[], origin = 'https://2yolks.com'): string {
+  const lang = props.lang ?? 'en';
+  const seo = RECIPES_INDEX_SEO[lang] ?? RECIPES_INDEX_SEO.en!;
+  const canonicalUrl = lang === 'en' ? `${origin}/recipes` : `${origin}/recipes?lang=${lang}`;
+  const alternates = [
+    { hreflang: 'en', href: `${origin}/recipes` },
+    { hreflang: 'es', href: `${origin}/recipes?lang=es` },
+    { hreflang: 'fr', href: `${origin}/recipes?lang=fr` },
+    { hreflang: 'x-default', href: `${origin}/recipes` },
+  ];
+  const selected = discoveryRecipes(props.recipes, lang);
+  const jsonLd = selected.length > 0
+    ? [
+        {
+          '@context': 'https://schema.org',
+          '@type': 'ItemList',
+          name: seo.title,
+          numberOfItems: selected.length,
+          itemListElement: selected.map((r, i) => ({
+            '@type': 'ListItem',
+            position: i + 1,
+            name: r.title,
+            url: `${origin}${recipePathFor(r.country, r.lang, r.slug)}`,
+          })),
+        },
+      ]
+    : [];
+  const body = renderToString(<RecipeIndex recipes={props.recipes} lang={lang} />);
+  return shell(body, {
+    title: seo.title,
+    nav,
+    lang,
+    alternates,
+    jsonLd,
+    og: {
+      type: 'website',
+      title: seo.title,
+      description: seo.description,
+      url: canonicalUrl,
+      locale: (HOME_SEO[lang] ?? HOME_SEO.en!).locale,
+      alternateLocales: ['en_US', 'es_MX', 'fr_FR'].filter((l) => l !== (HOME_SEO[lang] ?? HOME_SEO.en!).locale),
       image: `${origin}/img/identity/after-hours.webp`,
       imageAlt: seo.title,
     },

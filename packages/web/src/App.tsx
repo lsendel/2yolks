@@ -178,6 +178,21 @@ export function discoveryRecipes(rows: RecipeRow[], lang: string): RecipeRow[] {
  for(const row of rows) groups.set(row.id,[...(groups.get(row.id)??[]),row]);
  return [...groups.values()].map(list=>list.find(r=>r.lang===lang)??list.find(r=>r.lang==='en')??list[0]!).sort((a,b)=>a.id.localeCompare(b.id));
 }
+export function RecipeIndex({ recipes, lang='en' }: { recipes: RecipeRow[]; lang?: string }) {
+ const d=DISCOVERY[lang]??DISCOVERY.en!; const t=uiStrings(lang);
+ const selected=discoveryRecipes(recipes,lang);
+ const groups=new Map<string,RecipeRow[]>();
+ for(const r of selected) groups.set(r.category??'',[...(groups.get(r.category??'')??[]),r]);
+ const categories=[...groups.keys()].sort((a,b)=>{
+  if(!a) return 1; if(!b) return -1;
+  return (categoryLabel(a,lang)??a).localeCompare(categoryLabel(b,lang)??b);
+ });
+ const time=(n:number)=>n>=60?`${Math.floor(n/60)} h${n%60?' '+n%60+' min':''}`:`${n} min`;
+ return <main className="wide discovery" id="main"><section className="discovery-index"><div className="index-heading"><h1>{d.all}</h1><p>{d.note}</p></div>
+ {categories.map(cat=><section key={cat||'uncategorized'} className="index-category"><h2>{cat?(categoryLabel(cat,lang)??cat):d.all}</h2><ul className="discovery-list">{(groups.get(cat)??[]).map(r=><li key={r.id} data-recipe-item><div><h3><a className="stretched-row" href={recipePathFor(r.country,r.lang,r.slug)}>{r.title}</a></h3><div className="row-badges">{r.untested?<span className="status-label">{t.untestedBadge}</span>:null}{r.lang!==lang?<span className="fallback-language">{LANG_NAMES[r.lang]}</span>:null}</div></div><div className="row-end">{r.totalMinutes!=null?<span className="icon-stat"><FactIcon/>{time(r.totalMinutes)}</span>:null}</div></li>)}</ul></section>)}
+ </section></main>;
+}
+
 export function Home({ recipes, lang='en', activeCategory=null, currentCountry=null }: HomeProps) {
  const d=DISCOVERY[lang]??DISCOVERY.en!; const selected=discoveryRecipes(recipes,lang);
  const t=uiStrings(lang);

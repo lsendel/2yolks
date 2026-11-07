@@ -14,7 +14,7 @@ import {
   validateRecipeSubmission,
   isRecipeCategorySlug,
   type RecipePage, asImageStyle } from '@2yolks/contracts';
-import { renderHome, renderCountryHome, renderRecipe, renderAbout, renderPrivacy, renderHowWeTest, renderNotFound, type SiteNavItem } from '@2yolks/web/server';
+import { renderHome, renderRecipeIndex, renderCountryHome, renderRecipe, renderAbout, renderPrivacy, renderHowWeTest, renderNotFound, type SiteNavItem } from '@2yolks/web/server';
 import { isUntested, localizedCountryName } from '@2yolks/contracts';
 import type { ImageStyle } from '@2yolks/contracts';
 import { recipeSlugAliases,  createDb, recipes, recipeLocales, recipeImages, sources, published, imageCleared, searchGapLogs } from './db';
@@ -153,6 +153,7 @@ app.get('/sitemap.xml', async (c) => {
     `  <url>\n    <loc>${xmlEscape(origin + '/')}</loc>\n    <xhtml:link rel="alternate" hreflang="en" href="${xmlEscape(origin + '/')}" />\n    <xhtml:link rel="alternate" hreflang="es" href="${xmlEscape(origin + '/?lang=es')}" />\n    <xhtml:link rel="alternate" hreflang="fr" href="${xmlEscape(origin + '/?lang=fr')}" />\n    <xhtml:link rel="alternate" hreflang="x-default" href="${xmlEscape(origin + '/')}" />\n  </url>`,
     `  <url><loc>${xmlEscape(origin + '/about')}</loc></url>`,
     `  <url><loc>${xmlEscape(origin + '/how-we-test')}</loc></url>`,
+    `  <url>\n    <loc>${xmlEscape(origin + '/recipes')}</loc>\n    <xhtml:link rel="alternate" hreflang="en" href="${xmlEscape(origin + '/recipes')}" />\n    <xhtml:link rel="alternate" hreflang="es" href="${xmlEscape(origin + '/recipes?lang=es')}" />\n    <xhtml:link rel="alternate" hreflang="fr" href="${xmlEscape(origin + '/recipes?lang=fr')}" />\n    <xhtml:link rel="alternate" hreflang="x-default" href="${xmlEscape(origin + '/recipes')}" />\n  </url>`,
   ];
   const byRecipe = new Map<string, typeof rows>();
   for (const r of rows) {
@@ -263,6 +264,51 @@ async function heroImagesByRecipe(db: ReturnType<typeof createDb>) {
   return byRecipe;
 }
 
+async function loadDiscoveryRecipeRows(db: ReturnType<typeof createDb>, demo: boolean) {
+  const recipeRows = await db
+    .select({
+      id: recipeLocales.recipeId,
+      country: recipeLocales.country,
+      lang: recipeLocales.lang,
+      slug: recipeLocales.slug,
+      title: recipeLocales.title,
+      intro: recipeLocales.intro,
+      ingredientsJson: recipeLocales.ingredientsJson,
+      testedAt: recipes.testedAt,
+      category: recipes.category,
+      totalMinutes: recipes.totalMinutes,
+    })
+    .from(recipeLocales)
+    .innerJoin(recipes, eq(recipeLocales.recipeId, recipes.id))
+    .innerJoin(sources, eq(recipes.sourceId, sources.id))
+    .where(published(db, demo));
+  const heroByRecipe = await heroImagesByRecipe(db);
+  return recipeRows.map((r) => ({
+    id: r.id,
+    country: r.country,
+    lang: r.lang,
+    slug: r.slug,
+    title: r.title,
+    untested: isUntested({ testedAt: r.testedAt }),
+    category: r.category,
+    totalMinutes: r.totalMinutes,
+    imageId: heroByRecipe.get(r.id)?.id ?? null,
+    imageStyle: heroByRecipe.get(r.id)?.style ?? null,
+    intro: r.intro ?? null,
+    ingredients: extractIngredientNames(r.ingredientsJson),
+  }));
+}
+
+app.get('/recipes', async (c) => {
+  const requestedLang = c.req.query('lang');
+  const lang = ['en', 'es', 'fr'].includes(requestedLang ?? '') ? requestedLang! : 'en';
+  const db = createDb(c.env.DB);
+  const rows = await loadDiscoveryRecipeRows(db, demoAllowed(c));
+  const nav = await siteNav(db, demoAllowed(c), lang);
+  const origin = c.env.CANONICAL_ORIGIN ?? new URL(c.req.url).origin;
+  return c.html(renderRecipeIndex({ lang, recipes: rows }, nav, origin));
+});
+
 app.get('/', async (c) => {
   const requestedLang=c.req.query('lang');
   const lang=['en','es','fr'].includes(requestedLang??'')?requestedLang!:'en';
@@ -283,24 +329,7 @@ app.get('/', async (c) => {
       .filter((lang) => lang === defaultLocale(ct.code) || live.some((l) => l.country === ct.code && l.lang === lang))
       .map((lang) => ({ country: ct.code, countryName: ct.name, lang })),
   );
-  const recipeRows = await db
-    .select({
-      id: recipeLocales.recipeId,
-      country: recipeLocales.country,
-      lang: recipeLocales.lang,
-      slug: recipeLocales.slug,
-      title: recipeLocales.title,
-      intro: recipeLocales.intro,
-      ingredientsJson: recipeLocales.ingredientsJson,
-      testedAt: recipes.testedAt,
-      category: recipes.category,
-      totalMinutes: recipes.totalMinutes,
-    })
-    .from(recipeLocales)
-    .innerJoin(recipes, eq(recipeLocales.recipeId, recipes.id))
-    .innerJoin(sources, eq(recipes.sourceId, sources.id))
-    .where(published(db, demoAllowed(c)));
-  const heroByRecipe = await heroImagesByRecipe(db);
+  const mapped = await loadDiscoveryRecipeRows(db, demoAllowed(c));
   const nav = await siteNav(db, demoAllowed(c), lang);
   const origin = c.env.CANONICAL_ORIGIN ?? new URL(c.req.url).origin;
   return c.html(
@@ -309,20 +338,7 @@ app.get('/', async (c) => {
         locales: markets,
         lang,
         activeCategory,
-        recipes: recipeRows.map((r) => ({
-          id: r.id,
-          country: r.country,
-          lang: r.lang,
-          slug: r.slug,
-          title: r.title,
-          untested: isUntested({ testedAt: r.testedAt }),
-          category: r.category,
-          totalMinutes: r.totalMinutes,
-          imageId: heroByRecipe.get(r.id)?.id ?? null,
-          imageStyle: heroByRecipe.get(r.id)?.style ?? null,
-          intro: r.intro ?? null,
-          ingredients: extractIngredientNames(r.ingredientsJson),
-        })),
+        recipes: mapped,
       },
       nav,
       origin,
