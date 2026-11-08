@@ -2001,15 +2001,16 @@ async function callModerateTestReport(ctx: CallCtx, args: Record<string, unknown
          WHERE id = (SELECT tr.recipe_id FROM recipe_test_reports tr WHERE tr.id = ?) AND tested_at IS NULL
            AND (SELECT tr.status FROM recipe_test_reports tr WHERE tr.id = ?) = 'approved'`,
       ).bind(id, id, id, id),
+      auditStmt(ctx, 'recipes.moderate_test_report', id, { decision: 'approve' }),
     ]);
     if (res[0]!.meta.changes !== 1) return { status: 409, data: { error: 'report not found or already moderated', id } };
     return { status: 200, data: { id, status: 'approved' } };
   }
-  const res = await ctx.db
-    .prepare("UPDATE recipe_test_reports SET status = 'rejected', moderated_at = ?, moderated_by = ? WHERE id = ? AND status = 'pending'")
-    .bind(now, ctx.actor, id)
-    .run();
-  if (res.meta.changes !== 1) return { status: 409, data: { error: 'report not found or already moderated', id } };
+  const res = await ctx.db.batch([
+    ctx.db.prepare("UPDATE recipe_test_reports SET status = 'rejected', moderated_at = ?, moderated_by = ? WHERE id = ? AND status = 'pending'").bind(now, ctx.actor, id),
+    auditStmt(ctx, 'recipes.moderate_test_report', id, { decision: 'reject' }),
+  ]);
+  if (res[0]!.meta.changes !== 1) return { status: 409, data: { error: 'report not found or already moderated', id } };
   return { status: 200, data: { id, status: 'rejected' } };
 }
 
