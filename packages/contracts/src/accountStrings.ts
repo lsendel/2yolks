@@ -39,6 +39,12 @@ export interface AccountStrings {
   okSaved: string;
   submitPanelTitle: string; submitPanelHint: string; submitPanelAttestHint: string; submitButton: string; removeDraft: string;
   sentInPageTitle: string; sentInTitle: string; sentInLead: string; backToRecipes: string;
+  // community kitchen-test reports
+  reportPageTitle: string; reportTitle: string; reportLead: string;
+  reportNoteLabel: string; reportNoteHint: string; reportAttestText: string; reportButton: string;
+  reportSentPageTitle: string; reportSentTitle: string; reportSentLead: string;
+  errReportOwn: string; errReportNotPublic: string; reportAlreadyLead: string; errReportAttest: string;
+  reportStatusPending: string; reportStatusApproved: string; reportStatusRejected: string;
   // validator fallbacks (friendly per-field messages)
   errValTitle: string; errValIntro: string; errValIngredients: string; errValSteps: string; errValCategory: string; errValTimes: string; errValSource: string;
   warnNoTitle: string; warnNoIngredients: string; warnNoSteps: string; warnImportNoIngredients: string; warnImportNoSteps: string;
@@ -112,6 +118,18 @@ const en: AccountStrings = {
   sentInPageTitle: 'Sent in', sentInTitle: 'Thanks, it is with us',
   sentInLead: 'We will review "{title}" and its rights before anything goes live. Nothing is published automatically.',
   backToRecipes: 'Back to your recipes',
+  reportPageTitle: 'You cooked it', reportTitle: 'You cooked this recipe?',
+  reportLead: 'Tell us how "{title}" went in your kitchen. A moderator reads every report before the recipe is marked tested.',
+  reportNoteLabel: 'How did it go? (optional)', reportNoteHint: 'Timing, yield, anything you had to change. Max 280 characters.',
+  reportAttestText: 'I cooked this recipe in a kitchen.',
+  reportButton: 'Send the report',
+  reportSentPageTitle: 'Report sent', reportSentTitle: 'Thanks for cooking it',
+  reportSentLead: 'Your report for "{title}" is in the review queue. The tested label appears only after a moderator approves it.',
+  errReportOwn: 'This is your own recipe - the tested label on it comes from your original submission, not a report.',
+  errReportNotPublic: 'That recipe is not published, so it cannot be reported as tested.',
+  reportAlreadyLead: 'You already reported this recipe as cooked. Status: {status}.',
+  reportStatusPending: 'waiting for review', reportStatusApproved: 'approved', reportStatusRejected: 'not approved',
+  errReportAttest: 'Tick the box to confirm you cooked this recipe before sending the report.',
   errValTitle: 'Give the recipe a name (max 200 characters).',
   errValIntro: 'The intro is too long (max 2000 characters).',
   errValIngredients: 'Add at least one ingredient, one per line.',
@@ -198,6 +216,18 @@ const es: AccountStrings = {
   sentInPageTitle: 'Enviada', sentInTitle: 'Gracias, ya la tenemos',
   sentInLead: 'Revisaremos "{title}" y sus derechos antes de que nada se publique. Nada se publica automáticamente.',
   backToRecipes: 'Volver a tus recetas',
+  reportPageTitle: 'La cocinaste', reportTitle: '¿Cocinaste esta receta?',
+  reportLead: 'Cuéntanos cómo salió "{title}" en tu cocina. Un moderador lee cada reporte antes de marcar la receta como probada.',
+  reportNoteLabel: '¿Cómo salió? (opcional)', reportNoteHint: 'Tiempos, porciones, cualquier cambio que tuviste que hacer. Máximo 280 caracteres.',
+  reportAttestText: 'Cociné esta receta en una cocina.',
+  reportButton: 'Enviar el reporte',
+  reportSentPageTitle: 'Reporte enviado', reportSentTitle: 'Gracias por cocinarla',
+  reportSentLead: 'Tu reporte para "{title}" está en la cola de revisión. La etiqueta de probada aparece solo después de que un moderador lo apruebe.',
+  errReportOwn: 'Esta receta es tuya: su etiqueta de probada viene de tu envío original, no de un reporte.',
+  errReportNotPublic: 'Esa receta no está publicada, así que no se puede reportar como probada.',
+  reportAlreadyLead: 'Ya reportaste esta receta como cocinada. Estado: {status}.',
+  reportStatusPending: 'esperando revisión', reportStatusApproved: 'aprobado', reportStatusRejected: 'no aprobado',
+  errReportAttest: 'Marca la casilla para confirmar que cocinaste esta receta antes de enviar el reporte.',
   errValTitle: 'Ponle un nombre a la receta (máx. 200 caracteres).',
   errValIntro: 'La introducción es demasiado larga (máx. 2000 caracteres).',
   errValIngredients: 'Añade al menos un ingrediente, uno por línea.',
@@ -284,6 +314,18 @@ const fr: AccountStrings = {
   sentInPageTitle: 'Envoyée', sentInTitle: 'Merci, nous l’avons bien reçue',
   sentInLead: 'Nous relirons « {title} » et ses droits avant toute mise en ligne. Rien n’est publié automatiquement.',
   backToRecipes: 'Retour à vos recettes',
+  reportPageTitle: 'Vous l’avez cuisinée', reportTitle: 'Vous avez cuisiné cette recette ?',
+  reportLead: 'Dites-nous comment « {title} » s’est passée dans votre cuisine. Un modérateur lit chaque signalement avant de marquer la recette comme testée.',
+  reportNoteLabel: 'Comment cela s’est-il passé ? (facultatif)', reportNoteHint: 'Temps, portions, tout ce que vous avez dû changer. 280 caractères maximum.',
+  reportAttestText: 'J’ai cuisiné cette recette dans une cuisine.',
+  reportButton: 'Envoyer le signalement',
+  reportSentPageTitle: 'Signalement envoyé', reportSentTitle: 'Merci de l’avoir cuisinée',
+  reportSentLead: 'Votre signalement pour « {title} » est dans la file de relecture. L’étiquette testée n’apparaît qu’après l’approbation d’un modérateur.',
+  errReportOwn: 'Cette recette est la vôtre : son étiquette testée vient de votre envoi initial, pas d’un signalement.',
+  errReportNotPublic: 'Cette recette n’est pas publiée, elle ne peut donc pas être signalée comme testée.',
+  reportAlreadyLead: 'Vous avez déjà signalé cette recette comme cuisinée. Statut : {status}.',
+  reportStatusPending: 'en attente de relecture', reportStatusApproved: 'approuvé', reportStatusRejected: 'non approuvé',
+  errReportAttest: 'Cochez la case pour confirmer que vous avez cuisiné cette recette avant d’envoyer le signalement.',
   errValTitle: 'Donnez un nom à la recette (200 caractères max).',
   errValIntro: 'L’introduction est trop longue (2000 caractères max).',
   errValIngredients: 'Ajoutez au moins un ingrédient, un par ligne.',

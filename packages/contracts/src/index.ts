@@ -148,6 +148,7 @@ export interface UiStrings {
   timerDone: string;
   untestedBadge: string;
   untestedNote: string;
+  testReportCta: string;
   machineNote: string;
   about: string;
   howWeTest: string;
@@ -197,6 +198,7 @@ const UI_STRINGS: Record<string, UiStrings> = {
     startTimer: 'Start timer', timerDone: 'Done!',
     untestedBadge: 'Not yet tested',
     untestedNote: 'Not yet tested in a kitchen. Written from standard techniques; we have not cooked it.',
+    testReportCta: 'Cooked this recipe? Tell us how it went.',
     machineNote: 'Machine-translated from the original recipe. Checked by automated tests and an AI review; not reviewed by a native speaker. If anything looks off, follow the original-language version.',
     about: 'About', howWeTest: 'How we test and label recipes', print: 'Print', home: 'Home',
     tagline: 'Honest recipes, clearly labeled.',
@@ -226,6 +228,7 @@ const UI_STRINGS: Record<string, UiStrings> = {
     startTimer: 'Iniciar temporizador', timerDone: '\u00a1Listo!',
     untestedBadge: 'A\u00fan no probada',
     untestedNote: 'A\u00fan no probada en cocina. Escrita con t\u00e9cnicas est\u00e1ndar; todav\u00eda no la hemos cocinado.',
+    testReportCta: '\u00bfLa cocinaste? Cu\u00e9ntanos c\u00f3mo sali\u00f3.',
     machineNote: 'Traducci\u00f3n autom\u00e1tica de la receta original. Revisada con pruebas autom\u00e1ticas y una revisi\u00f3n con IA; no la ha revisado un hablante nativo. Si algo no parece correcto, sigue la versi\u00f3n en el idioma original.',
     about: 'Acerca de', howWeTest: 'C\u00f3mo probamos y etiquetamos las recetas', print: 'Imprimir', home: 'Inicio',
     tagline: 'Recetas honestas, con etiquetas claras.',
@@ -255,6 +258,7 @@ const UI_STRINGS: Record<string, UiStrings> = {
     startTimer: 'D\u00e9marrer le minuteur', timerDone: 'Termin\u00e9 !',
     untestedBadge: 'Pas encore test\u00e9e',
     untestedNote: 'Pas encore test\u00e9e en cuisine. \u00c9crite \u00e0 partir de techniques courantes ; nous ne l\u2019avons pas encore cuisin\u00e9e.',
+    testReportCta: 'Vous l\u2019avez cuisin\u00e9e ? Dites-nous comment \u00e7a s\u2019est pass\u00e9.',
     machineNote: 'Traduction automatique de la recette originale. V\u00e9rifi\u00e9e par des tests automatiques et une relecture par IA ; non relue par un locuteur natif. Si quelque chose semble inexact, suivez la version dans la langue d\u2019origine.',
     about: '\u00c0 propos', howWeTest: 'Comment nous testons et \u00e9tiquetons les recettes', print: 'Imprimer', home: 'Accueil',
     tagline: 'Des recettes honn\u00eates, clairement \u00e9tiquet\u00e9es.',

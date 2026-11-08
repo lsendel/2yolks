@@ -40,6 +40,31 @@ export const recipes = sqliteTable('recipes', {
   authorName: text('author_name'),
 });
 
+/** Community kitchen-test reports (migration 0008). A report is a moderation
+ * queue row only: it never changes what the site shows by itself. An admin
+ * approves it through the MCP and only then is recipes.tested_at/tested_by
+ * stamped. Rejected reports are hidden, never deleted. */
+export const recipeTestReports = sqliteTable(
+  'recipe_test_reports',
+  {
+    id: text('id').primaryKey(),
+    recipeId: text('recipe_id')
+      .notNull()
+      .references(() => recipes.id),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id),
+    note: text('note'),
+    status: text('status', { enum: ['pending', 'approved', 'rejected'] })
+      .notNull()
+      .default('pending'),
+    createdAt: text('created_at').notNull(),
+    moderatedAt: text('moderated_at'),
+    moderatedBy: text('moderated_by'),
+  },
+  (t) => [index('idx_test_reports_status').on(t.status, t.createdAt)],
+);
+
 export const users = sqliteTable('users', {
   id: text('id').primaryKey(),
   email: text('email').notNull().unique(),

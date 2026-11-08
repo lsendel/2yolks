@@ -304,6 +304,27 @@ const TOOLS: ToolDef[] = [
     },
   },
   {
+    name: 'recipes.list_test_reports',
+    description:
+      'List community kitchen-test reports (the community-tested queue). Args: optional status (pending|approved|rejected, default pending). Returns report id, recipe id + published title, cook display name, note and created_at.',
+    role: 'admin',
+    inputSchema: {
+      type: 'object',
+      properties: { status: { type: 'string' } },
+    },
+  },
+  {
+    name: 'recipes.moderate_test_report',
+    description:
+      'Approve or reject a community kitchen-test report. Args: id (report id), decision (approve|reject). Executes only with confirmed: true; otherwise validates as a dry run. On approve the recipe is stamped tested_at = the report creation time and tested_by = the cook\'s display name, only while tested_at is still empty - the first approved report wins, later approvals only corroborate. Rejection hides the report; nothing is deleted.',
+    role: 'admin',
+    inputSchema: {
+      type: 'object',
+      properties: { id: { type: 'string' }, decision: { type: 'string' } },
+      required: ['id', 'decision'],
+    },
+  },
+  {
     name: 'sources.update',
     description: 'Update a source name/url/license/notes. Args: id plus fields to change.',
     role: 'admin',
@@ -1926,6 +1947,73 @@ async function callTool(ctx: CallCtx, name: string, args: Record<string, unknown
   }
 }
 
+// --- Community kitchen-test reports (migration 0008) ---------------------------
+// Reports are a queue only: nothing a cook submits changes the site until an
+// admin approves here. Approval stamps tested_at/tested_by; rejection hides.
+
+async function callListTestReports(db: D1Database, args: Record<string, unknown>): Promise<CallResult> {
+  const status = str(args['status'], 16) || 'pending';
+  if (status !== 'pending' && status !== 'approved' && status !== 'rejected') {
+    return { status: 400, data: { error: 'status must be pending, approved or rejected' } };
+  }
+  const rows = await db
+    .prepare(
+      `SELECT tr.id, tr.recipe_id, tr.note, tr.status, tr.created_at, tr.moderated_at, tr.moderated_by,
+              u.display_name AS cook_name, MIN(l.title) AS recipe_title
+       FROM recipe_test_reports tr
+       JOIN users u ON u.id = tr.user_id
+       LEFT JOIN recipe_locales l ON l.recipe_id = tr.recipe_id AND l.status = 'published'
+       WHERE tr.status = ?
+       GROUP BY tr.id
+       ORDER BY tr.created_at ASC LIMIT 200`,
+    )
+    .bind(status)
+    .all();
+  return { status: 200, data: { reports: rows.results } };
+}
+
+async function callModerateTestReport(ctx: CallCtx, args: Record<string, unknown>): Promise<CallResult> {
+  const id = str(args['id'], 64);
+  const decision = str(args['decision'], 16);
+  if (!id || (decision !== 'approve' && decision !== 'reject')) {
+    return { status: 400, data: { error: 'id and decision (approve|reject) are required' } };
+  }
+  if (ctx.dryRun) {
+    const row = await ctx.db.prepare("SELECT 1 AS x FROM recipe_test_reports WHERE id = ? AND status = 'pending'").bind(id).first();
+    return row
+      ? { status: 200, data: { dry_run: true, ok: true, id, decision } }
+      : { status: 409, data: { error: 'report not found or already moderated', id } };
+  }
+  const now = new Date().toISOString();
+  if (decision === 'approve') {
+    // Status flip and recipe stamp commit in one batch: a failure writes
+    // nothing, so the call is safe to retry.
+    const res = await ctx.db.batch([
+      ctx.db.prepare("UPDATE recipe_test_reports SET status = 'approved', moderated_at = ?, moderated_by = ? WHERE id = ? AND status = 'pending'").bind(now, ctx.actor, id),
+      // The first approved report stamps the recipe; later approvals corroborate only.
+      // The stamp re-reads the report's status inside the same transaction, so an
+      // approve on a report the flip did not move (already rejected/approved)
+      // cannot mark the recipe tested.
+      ctx.db.prepare(
+        `UPDATE recipes SET
+           tested_at = (SELECT tr.created_at FROM recipe_test_reports tr WHERE tr.id = ?),
+           tested_by = (SELECT COALESCE(u.display_name, 'A 2yolks cook') FROM recipe_test_reports tr JOIN users u ON u.id = tr.user_id WHERE tr.id = ?)
+         WHERE id = (SELECT tr.recipe_id FROM recipe_test_reports tr WHERE tr.id = ?) AND tested_at IS NULL
+           AND (SELECT tr.status FROM recipe_test_reports tr WHERE tr.id = ?) = 'approved'`,
+      ).bind(id, id, id, id),
+      auditStmt(ctx, 'recipes.moderate_test_report', id, { decision: 'approve' }),
+    ]);
+    if (res[0]!.meta.changes !== 1) return { status: 409, data: { error: 'report not found or already moderated', id } };
+    return { status: 200, data: { id, status: 'approved' } };
+  }
+  const res = await ctx.db.batch([
+    ctx.db.prepare("UPDATE recipe_test_reports SET status = 'rejected', moderated_at = ?, moderated_by = ? WHERE id = ? AND status = 'pending'").bind(now, ctx.actor, id),
+    auditStmt(ctx, 'recipes.moderate_test_report', id, { decision: 'reject' }),
+  ]);
+  if (res[0]!.meta.changes !== 1) return { status: 409, data: { error: 'report not found or already moderated', id } };
+  return { status: 200, data: { id, status: 'rejected' } };
+}
+
 async function dispatch(ctx: CallCtx, name: string, args: Record<string, unknown>): Promise<CallResult> {
   switch (name) {
     case 'recipes.list':
@@ -1948,6 +2036,10 @@ async function dispatch(ctx: CallCtx, name: string, args: Record<string, unknown
       return callStatusChange(ctx, args, 'recipe', 'published');
     case 'recipes.unpublish':
       return callStatusChange(ctx, args, 'recipe', 'draft');
+    case 'recipes.list_test_reports':
+      return callListTestReports(ctx.db, args);
+    case 'recipes.moderate_test_report':
+      return callModerateTestReport(ctx, args);
     case 'sources.update':
       return callSourcesUpdate(ctx, args);
     case 'sources.clear_rights':

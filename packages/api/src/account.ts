@@ -518,6 +518,78 @@ accountApp.post('/recipes/:id/submit', async (c) => {
   return page(c, t.sentInPageTitle, `<h1>${t.sentInTitle}</h1><p class="lead">${fill(t.sentInLead, { title: esc(row.l.title) })}</p><p><a class="btn" href="/account${qs(lang)}">${t.backToRecipes}</a></p>`);
 });
 
+// --- Community kitchen-test reports ------------------------------------------
+// A signed-in cook flags a published recipe as cooked in their kitchen. The
+// report is a moderation-queue row only: it changes nothing on the site until
+// an admin approves it through the MCP (recipes.moderate_test_report), which
+// stamps recipes.tested_at/tested_by. One report per cook per recipe; own
+// recipes are excluded (their tested label comes from the submission itself).
+
+const REPORT_NOTE_MAX = 280;
+
+async function loadReportTarget(c: Ctx, id: string) {
+  return c.env.DB.prepare(
+    `SELECT r.id AS id, r.owner_user_id AS ownerUserId, l.title AS title
+     FROM recipes r JOIN recipe_locales l ON l.recipe_id = r.id AND l.status = 'published'
+     WHERE r.id = ? LIMIT 1`,
+  ).bind(id).first<{ id: string; ownerUserId: string | null; title: string }>();
+}
+
+const reportStatusLabel = (t: AccountStrings, status: string) =>
+  status === 'approved' ? t.reportStatusApproved : status === 'rejected' ? t.reportStatusRejected : t.reportStatusPending;
+
+accountApp.get('/recipes/:id/test-report', async (c) => {
+  const lang = langOf(c);
+  const t = accountStrings(lang);
+  const user = c.get('user');
+  const row = await loadReportTarget(c, c.req.param('id'));
+  if (!row) return page(c, t.titleNotFound, banner('err', t.errReportNotPublic), 404);
+  if (row.ownerUserId === user.id) return page(c, t.reportPageTitle, banner('err', t.errReportOwn), 403);
+  const existing = await c.env.DB.prepare('SELECT status FROM recipe_test_reports WHERE recipe_id = ? AND user_id = ?').bind(row.id, user.id).first<{ status: string }>();
+  if (existing) return page(c, t.reportPageTitle, `<h1>${t.reportTitle}</h1><p class="lead">${fill(t.reportAlreadyLead, { status: reportStatusLabel(t, existing.status) })}</p>`, 409);
+  return page(c, t.reportPageTitle, `<h1>${t.reportTitle}</h1><p class="lead">${fill(t.reportLead, { title: esc(row.title) })}</p>
+<form method="post" action="/account/recipes/${esc(row.id)}/test-report${qs(lang)}">
+<label>${t.reportNoteLabel}<textarea name="note" rows="3" maxlength="${REPORT_NOTE_MAX}"></textarea></label>
+<p class="hint">${t.reportNoteHint}</p>
+<label class="check"><input type="checkbox" name="attest" value="1" required> ${t.reportAttestText}</label>
+<button type="submit">${t.reportButton}</button></form>`);
+});
+
+accountApp.post('/recipes/:id/test-report', async (c) => {
+  const lang = langOf(c);
+  const t = accountStrings(lang);
+  const user = c.get('user');
+  if (await limited(c.env.RL_SUBMIT, c, 'test-report')) return page(c, t.titleSlowDown, banner('err', t.errTooManyTries), 429);
+  const row = await loadReportTarget(c, c.req.param('id'));
+  if (!row) return page(c, t.titleNotFound, banner('err', t.errReportNotPublic), 404);
+  if (row.ownerUserId === user.id) return page(c, t.reportPageTitle, banner('err', t.errReportOwn), 403);
+  const form = await c.req.parseBody();
+  if (form['attest'] !== '1') return page(c, t.reportPageTitle, banner('err', t.errReportAttest), 400);
+  const note = str(form['note'], REPORT_NOTE_MAX).trim() || null;
+  const now = new Date().toISOString();
+  // The duplicate guard lives inside the INSERT (single statement) so two
+  // concurrent posts cannot both land; the unique index is the backstop.
+  const ins = await c.env.DB.prepare(
+    `INSERT INTO recipe_test_reports (id, recipe_id, user_id, note, status, created_at)
+     SELECT ?, ?, ?, ?, 'pending', ?
+     WHERE NOT EXISTS (SELECT 1 FROM recipe_test_reports WHERE recipe_id = ? AND user_id = ?)`,
+  ).bind(newId(), row.id, user.id, note, now, row.id, user.id).run();
+  if (ins.meta.changes !== 1) {
+    const existing = await c.env.DB.prepare('SELECT status FROM recipe_test_reports WHERE recipe_id = ? AND user_id = ?').bind(row.id, user.id).first<{ status: string }>();
+    return page(c, t.reportPageTitle, `<h1>${t.reportTitle}</h1><p class="lead">${fill(t.reportAlreadyLead, { status: reportStatusLabel(t, existing?.status ?? 'pending') })}</p>`, 409);
+  }
+  // The MCP queue (recipes.list_test_reports) is the source of truth; the email is an extra,
+  // counted against the same daily notice budget as recipe submissions.
+  if (c.env.REVIEW_NOTIFY_TO && (await reserveMail(c.env.DB, 'notice', NOTICES_PER_DAY))) {
+    await sendMail(c.env, {
+      to: c.env.REVIEW_NOTIFY_TO,
+      subject: `2yolks kitchen-test report: ${row.title}`.slice(0, 180),
+      text: `A cook reports testing a recipe in their kitchen.\n\nTitle: ${row.title}\nRecipe id: ${row.id}\nCook: ${user.displayName ?? ''} <${user.email}>\nNote: ${note ?? '(none)'}\n\nThe tested label changes only if you approve the report. Queue: MCP recipes.list_test_reports with status pending.\n`,
+    }).catch(() => false);
+  }
+  return page(c, t.reportSentPageTitle, `<h1>${t.reportSentTitle}</h1><p class="lead">${fill(t.reportSentLead, { title: esc(row.title) })}</p><p><a class="btn" href="/account${qs(lang)}">${t.backToRecipes}</a></p>`);
+});
+
 // "Remove" never deletes data: the locale is marked rejected (hidden from the owner's list), rows stay for review/audit.
 accountApp.post('/recipes/:id/delete', async (c) => {
   const user = c.get('user');
