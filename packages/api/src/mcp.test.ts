@@ -1177,3 +1177,23 @@ describe('community kitchen-test report moderation', () => {
     expect(row?.status).toBe('pending');
   });
 });
+
+describe('community test-report moderation regression: approve-on-rejected', () => {
+  beforeEach(async () => {
+    DB = migratedD1();
+    R2 = makeR2();
+    await DB.prepare("INSERT INTO sources (id,name,url,license,cleared_at,notes) VALUES ('src-p','Test Kitchen','https://example.com','cc-by','2024-01-01T00:00:00Z',NULL)").run();
+    await DB.prepare("INSERT INTO recipes (id,source_id,created_at) VALUES ('rp1','src-p','2024-01-02T00:00:00Z')").run();
+    await DB.prepare("INSERT INTO recipe_locales (recipe_id,country,lang,title,slug,ingredients_json,steps_json,status) VALUES ('rp1','us','en','Tomato Soup','tomato-soup-rp1','[]','[]','published')").run();
+    await DB.prepare("INSERT INTO users (id,email,display_name,created_at) VALUES ('u1','cook@example.com','Ana','2024-01-01T00:00:00Z')").run();
+    await DB.prepare("INSERT INTO recipe_test_reports (id,recipe_id,user_id,note,status,created_at) VALUES ('tr1','rp1','u1',NULL,'rejected','2024-02-01T00:00:00Z')").run();
+  });
+
+  it('approve on a rejected report conflicts AND leaves tested_at NULL', async () => {
+    const res = await toolCall(ADMIN_KEY, 'recipes.moderate_test_report', { id: 'tr1', decision: 'approve', confirmed: true });
+    expect(res.isError).toBe(true);
+    expect(String(res.data?.['error'])).toContain('already moderated');
+    const row = await DB.prepare('SELECT tested_at, tested_by FROM recipes WHERE id = ?').bind('rp1').first<{ tested_at: string | null; tested_by: string | null }>();
+    expect(row).toEqual({ tested_at: null, tested_by: null });
+  });
+});

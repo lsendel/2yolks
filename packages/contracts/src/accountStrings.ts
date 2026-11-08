@@ -42,7 +42,6 @@ export interface AccountStrings {
   // community kitchen-test reports
   reportPageTitle: string; reportTitle: string; reportLead: string;
   reportNoteLabel: string; reportNoteHint: string; reportAttestText: string; reportButton: string;
-  reportSignInTitle: string; reportSignInLead: string;
   reportSentPageTitle: string; reportSentTitle: string; reportSentLead: string;
   errReportOwn: string; errReportNotPublic: string; reportAlreadyLead: string; errReportAttest: string;
   reportStatusPending: string; reportStatusApproved: string; reportStatusRejected: string;
@@ -124,7 +123,6 @@ const en: AccountStrings = {
   reportNoteLabel: 'How did it go? (optional)', reportNoteHint: 'Timing, yield, anything you had to change. Max 280 characters.',
   reportAttestText: 'I cooked this recipe in a kitchen.',
   reportButton: 'Send the report',
-  reportSignInTitle: 'Sign in to report a test', reportSignInLead: 'Sign in to tell us you cooked a recipe. We only accept one report per cook per recipe.',
   reportSentPageTitle: 'Report sent', reportSentTitle: 'Thanks for cooking it',
   reportSentLead: 'Your report for "{title}" is in the review queue. The tested label appears only after a moderator approves it.',
   errReportOwn: 'This is your own recipe - the tested label on it comes from your original submission, not a report.',
@@ -223,7 +221,6 @@ const es: AccountStrings = {
   reportNoteLabel: '¿Cómo salió? (opcional)', reportNoteHint: 'Tiempos, porciones, cualquier cambio que tuviste que hacer. Máximo 280 caracteres.',
   reportAttestText: 'Cociné esta receta en una cocina.',
   reportButton: 'Enviar el reporte',
-  reportSignInTitle: 'Inicia sesión para reportar una prueba', reportSignInLead: 'Inicia sesión para contarnos que cocinaste una receta. Solo aceptamos un reporte por cocinero y receta.',
   reportSentPageTitle: 'Reporte enviado', reportSentTitle: 'Gracias por cocinarla',
   reportSentLead: 'Tu reporte para "{title}" está en la cola de revisión. La etiqueta de probada aparece solo después de que un moderador lo apruebe.',
   errReportOwn: 'Esta receta es tuya: su etiqueta de probada viene de tu envío original, no de un reporte.',
@@ -322,7 +319,6 @@ const fr: AccountStrings = {
   reportNoteLabel: 'Comment cela s’est-il passé ? (facultatif)', reportNoteHint: 'Temps, portions, tout ce que vous avez dû changer. 280 caractères maximum.',
   reportAttestText: 'J’ai cuisiné cette recette dans une cuisine.',
   reportButton: 'Envoyer le signalement',
-  reportSignInTitle: 'Connectez-vous pour signaler un test', reportSignInLead: 'Connectez-vous pour nous dire que vous avez cuisiné une recette. Nous n’acceptons qu’un signalement par cuisinier et par recette.',
   reportSentPageTitle: 'Signalement envoyé', reportSentTitle: 'Merci de l’avoir cuisinée',
   reportSentLead: 'Votre signalement pour « {title} » est dans la file de relecture. L’étiquette testée n’apparaît qu’après l’approbation d’un modérateur.',
   errReportOwn: 'Cette recette est la vôtre : son étiquette testée vient de votre envoi initial, pas d’un signalement.',

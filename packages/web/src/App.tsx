@@ -362,7 +362,7 @@ export function RecipeView({
         <p className="untested" role="note">
           <span className="badge">{t.untestedBadge}</span> {t.untestedNote}{' '}
           <a href="/how-we-test">{t.howWeTest}</a>{' '}
-          <a href={`/account/recipes/${page.recipe.id}/test-report`}>{t.testReportCta}</a>
+          <a href={`/account/recipes/${page.recipe.id}/test-report${lang === 'en' ? '' : `?lang=${lang}`}`}>{t.testReportCta}</a>
         </p>
       ) : null}
       {page.locale.translationOf && page.locale.translationMethod === 'machine' && page.locale.translationReviewerKind !== 'human' ? (
@@ -554,6 +554,9 @@ export function HowWeTestView() {
       <p>Signed-in cooks can report that they cooked a recipe: one report per cook per recipe, never on their own submissions. A moderator reads every report, and a recipe is marked tested only after a report is approved. Reports we cannot stand behind are hidden, never published.</p>
       <h2>C&oacute;mo probamos y etiquetamos las recetas</h2>
       <p>Cada receta es <strong>&quot;A&uacute;n no probada&quot;</strong> (escrita con t&eacute;cnicas est&aacute;ndar y revisada contra gu&iacute;as de seguridad alimentaria; tiempos y rendimientos son estimados) o <strong>&quot;Probada&quot;</strong> (alguien la cocin&oacute; y registr&oacute; rendimiento, tiempo y cambios, con fecha). Hoy ninguna tiene la etiqueta &quot;Probada&quot;.</p>
+      <p>Probada por la comunidad: las personas con cuenta pueden reportar que cocinaron una receta (un reporte por persona y receta, nunca sobre sus propias recetas). Un moderador lee cada reporte y la receta solo se marca como probada tras una aprobaci&oacute;n.</p>
+      <h2>Test communautaire</h2>
+      <p>Les cuisiniers connect&eacute;s peuvent signaler avoir cuisin&eacute; une recette (un signalement par cuisinier et par recette, jamais sur leurs propres recettes). Un mod&eacute;rateur lit chaque signalement et la recette n&apos;est marqu&eacute;e test&eacute;e qu&apos;apr&egrave;s approbation.</p>
     </main>
   );
 }

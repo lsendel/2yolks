@@ -1991,12 +1991,16 @@ async function callModerateTestReport(ctx: CallCtx, args: Record<string, unknown
     const res = await ctx.db.batch([
       ctx.db.prepare("UPDATE recipe_test_reports SET status = 'approved', moderated_at = ?, moderated_by = ? WHERE id = ? AND status = 'pending'").bind(now, ctx.actor, id),
       // The first approved report stamps the recipe; later approvals corroborate only.
+      // The stamp re-reads the report's status inside the same transaction, so an
+      // approve on a report the flip did not move (already rejected/approved)
+      // cannot mark the recipe tested.
       ctx.db.prepare(
         `UPDATE recipes SET
            tested_at = (SELECT tr.created_at FROM recipe_test_reports tr WHERE tr.id = ?),
            tested_by = (SELECT COALESCE(u.display_name, 'A 2yolks cook') FROM recipe_test_reports tr JOIN users u ON u.id = tr.user_id WHERE tr.id = ?)
-         WHERE id = (SELECT tr.recipe_id FROM recipe_test_reports tr WHERE tr.id = ?) AND tested_at IS NULL`,
-      ).bind(id, id, id),
+         WHERE id = (SELECT tr.recipe_id FROM recipe_test_reports tr WHERE tr.id = ?) AND tested_at IS NULL
+           AND (SELECT tr.status FROM recipe_test_reports tr WHERE tr.id = ?) = 'approved'`,
+      ).bind(id, id, id, id),
     ]);
     if (res[0]!.meta.changes !== 1) return { status: 409, data: { error: 'report not found or already moderated', id } };
     return { status: 200, data: { id, status: 'approved' } };
