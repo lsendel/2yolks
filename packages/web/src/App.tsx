@@ -361,7 +361,8 @@ export function RecipeView({
       {isUntested(page.recipe) ? (
         <p className="untested" role="note">
           <span className="badge">{t.untestedBadge}</span> {t.untestedNote}{' '}
-          <a href="/how-we-test">{t.howWeTest}</a>
+          <a href="/how-we-test">{t.howWeTest}</a>{' '}
+          <a href={`/account/recipes/${page.recipe.id}/test-report`}>{t.testReportCta}</a>
         </p>
       ) : null}
       {page.locale.translationOf && page.locale.translationMethod === 'machine' && page.locale.translationReviewerKind !== 'human' ? (
@@ -549,6 +550,8 @@ export function HowWeTestView() {
         <li><strong>Tested.</strong> A person cooked it, recorded the real yield and time, and noted changes. We show the date. No recipe has this label yet.</li>
       </ul>
       <p>We never invent ratings, reviews or testing. If a recipe has not been cooked, we say so.</p>
+      <h2>Community-tested</h2>
+      <p>Signed-in cooks can report that they cooked a recipe: one report per cook per recipe, never on their own submissions. A moderator reads every report, and a recipe is marked tested only after a report is approved. Reports we cannot stand behind are hidden, never published.</p>
       <h2>C&oacute;mo probamos y etiquetamos las recetas</h2>
       <p>Cada receta es <strong>&quot;A&uacute;n no probada&quot;</strong> (escrita con t&eacute;cnicas est&aacute;ndar y revisada contra gu&iacute;as de seguridad alimentaria; tiempos y rendimientos son estimados) o <strong>&quot;Probada&quot;</strong> (alguien la cocin&oacute; y registr&oacute; rendimiento, tiempo y cambios, con fecha). Hoy ninguna tiene la etiqueta &quot;Probada&quot;.</p>
     </main>

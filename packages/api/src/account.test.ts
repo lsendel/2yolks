@@ -705,3 +705,70 @@ describe('account i18n (en/es/fr)', () => {
     expect(await del.text()).toContain('ya fue enviado a revisión');
   });
 });
+
+describe('community kitchen-test reports', () => {
+  async function seedPublicRecipe(owner: string | null = null) {
+    await DB.prepare("INSERT INTO sources (id,name,url,license,cleared_at,notes) VALUES ('src-p','Test Kitchen','https://example.com','cc-by','2024-01-01T00:00:00Z',NULL)").run();
+    await DB.prepare("INSERT INTO recipes (id,source_id,created_at,owner_user_id) VALUES ('rp1','src-p','2024-01-02T00:00:00Z',?)").bind(owner).run();
+    await DB.prepare("INSERT INTO recipe_locales (recipe_id,country,lang,title,slug,ingredients_json,steps_json,status) VALUES ('rp1','us','en','Tomato Soup','tomato-soup-rp1','[]','[]','published')").run();
+  }
+
+  it('redirects visitors to sign-in before showing the report form', async () => {
+    await seedPublicRecipe();
+    const res = await get('/account/recipes/rp1/test-report');
+    expect(res.status).toBe(303);
+    expect(res.headers.get('location')).toBe('/account');
+    const home = await get('/account');
+    expect(await home.text()).toContain('name="email"');
+  });
+
+  it('shows the form for a published recipe and files a pending report with a notice email', async () => {
+    await seedPublicRecipe();
+    const cookie = await signIn();
+    const form = await get('/account/recipes/rp1/test-report', cookie);
+    expect(form.status).toBe(200);
+    const formHtml = await form.text();
+    expect(formHtml).toContain('You cooked this recipe?');
+    expect(formHtml).toContain('Tomato Soup');
+    const res = await post('/account/recipes/rp1/test-report', { note: 'Great, needed 5 more minutes.', attest: '1' }, { cookie });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain('Thanks for cooking it');
+    const row = await DB.prepare('SELECT status, note FROM recipe_test_reports WHERE recipe_id = ?').bind('rp1').first<{ status: string; note: string }>();
+    expect(row).toEqual({ status: 'pending', note: 'Great, needed 5 more minutes.' });
+    expect(sent.some((m) => m.subject.includes('kitchen-test report'))).toBe(true);
+  });
+
+  it('refuses a second report for the same recipe (in both directions)', async () => {
+    await seedPublicRecipe();
+    const cookie = await signIn();
+    await post('/account/recipes/rp1/test-report', { attest: '1' }, { cookie });
+    const res = await post('/account/recipes/rp1/test-report', { attest: '1' }, { cookie });
+    expect(res.status).toBe(409);
+    expect(await res.text()).toContain('already reported');
+    const form = await get('/account/recipes/rp1/test-report', cookie);
+    expect(form.status).toBe(409);
+    const n = await DB.prepare('SELECT count(*) AS n FROM recipe_test_reports').first<{ n: number }>();
+    expect(n?.n).toBe(1);
+  });
+
+  it('refuses reports on your own recipe and on unpublished recipes', async () => {
+    const cookie = await signIn();
+    const me = await DB.prepare('SELECT id FROM users WHERE email = ?').bind('cook@example.com').first<{ id: string }>();
+    await seedPublicRecipe(me!.id);
+    const own = await post('/account/recipes/rp1/test-report', { attest: '1' }, { cookie });
+    expect(own.status).toBe(403);
+    expect(await own.text()).toContain('your own recipe');
+    const missing = await post('/account/recipes/nope/test-report', { attest: '1' }, { cookie });
+    expect(missing.status).toBe(404);
+  });
+
+  it('requires the attestation checkbox', async () => {
+    await seedPublicRecipe();
+    const cookie = await signIn();
+    const res = await post('/account/recipes/rp1/test-report', { note: 'no box ticked' }, { cookie });
+    expect(res.status).toBe(400);
+    expect(await res.text()).toContain('Tick the box');
+    const n = await DB.prepare('SELECT count(*) AS n FROM recipe_test_reports').first<{ n: number }>();
+    expect(n?.n).toBe(0);
+  });
+});

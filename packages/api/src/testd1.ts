@@ -76,7 +76,7 @@ export function makeD1(sqlite: DatabaseSync): D1Database {
 
 export function migratedD1All(): D1Database {
   const sqlite = new DatabaseSync(':memory:');
-  for (const file of ['0001_init.sql', '0002_mcp_blog.sql', '0003_quality_translation.sql', '0004_recipe_times_images.sql', '0005_recipe_slug_aliases.sql', '0006_user_accounts.sql']) {
+  for (const file of ['0001_init.sql', '0002_mcp_blog.sql', '0003_quality_translation.sql', '0004_recipe_times_images.sql', '0005_recipe_slug_aliases.sql', '0006_user_accounts.sql', '0008_recipe_test_reports.sql']) {
     sqlite.exec(readFileSync(new URL(`../migrations/${file}`, import.meta.url), 'utf8'));
   }
   return makeD1(sqlite);
