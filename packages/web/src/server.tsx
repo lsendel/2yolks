@@ -79,6 +79,8 @@ interface ShellOptions {
     alternateLocales?: string[];
     image?: string | null;
     imageAlt?: string;
+    imageWidth?: number;
+    imageHeight?: number;
     type?: 'article' | 'website';
   };
   /** Countries-with-content nav for the header/footer. */
@@ -266,7 +268,7 @@ function shell(body: string, { title, alternates = [], jsonLd, noindex = false, 
     <meta property="og:locale" content="${escapeHtml(og.locale)}" />
     ${ogAlternates}
     ${og.description ? `<meta property="og:description" content="${escapeHtml(og.description)}" /><meta name="description" content="${escapeHtml(og.description)}" />` : ''}
-    ${og.image ? `<meta property="og:image" content="${escapeHtml(og.image)}" />${og.imageAlt ? `<meta property="og:image:alt" content="${escapeHtml(og.imageAlt)}" />` : ''}` : ''}
+    ${og.image ? `<meta property="og:image" content="${escapeHtml(og.image)}" />${og.imageWidth ? `<meta property="og:image:width" content="${og.imageWidth}" />` : ''}${og.imageHeight ? `<meta property="og:image:height" content="${og.imageHeight}" />` : ''}${og.imageAlt ? `<meta property="og:image:alt" content="${escapeHtml(og.imageAlt)}" />` : ''}` : ''}
     <meta name="twitter:card" content="${og.image ? 'summary_large_image' : 'summary'}" />
     <meta name="twitter:title" content="${escapeHtml(og.title)}" />
     ${og.description ? `<meta name="twitter:description" content="${escapeHtml(og.description)}" />` : ''}
@@ -637,6 +639,109 @@ export function renderRecipeCardSvg(page: RecipePage, origin = 'https://2yolks.c
 </svg>`;
 }
 
+/**
+ * Generates a 1200x630 (1.91:1) landscape Open Graph / link-preview SVG card
+ * for sharing across desktop, group chats, and social feeds.
+ */
+export function renderRecipeOgSvg(page: RecipePage, origin = 'https://2yolks.com'): string {
+  const lang = page.locale.lang;
+  const t = uiStrings(lang);
+  const sys = defaultUnitSystem(page.locale.country);
+  const entries = JSON.parse(page.locale.ingredientsJson) as IngredientEntry[];
+  const steps = JSON.parse(page.locale.stepsJson) as string[];
+  const cat = (categoryLabel(page.recipe.category, lang) ?? t.allRecipes).toUpperCase();
+  const titleLines = wrapTextLines(page.locale.title, 22, 3);
+  const introLines = page.locale.intro ? wrapTextLines(page.locale.intro, 44, 2) : [];
+  const topIngredients = entries
+    .slice(0, 5)
+    .map((e) => renderIngredient(e, lang, sys, 1))
+    .map((line) => (line.length > 30 ? `${line.slice(0, 28).trimEnd()}…` : line));
+  const moreCount = Math.max(0, entries.length - topIngredients.length);
+  const fmtMin = (m: number) => (m >= 60 ? `${Math.floor(m / 60)}h${m % 60 ? ` ${m % 60}m` : ''}` : `${m} min`);
+  const badges: string[] = [];
+  if (page.recipe.totalMinutes != null) badges.push(`${t.timeTotal}: ${fmtMin(page.recipe.totalMinutes)}`);
+  else if (page.recipe.cookMinutes != null) badges.push(`${t.timeCook}: ${fmtMin(page.recipe.cookMinutes)}`);
+  if (page.recipe.baseServings != null) badges.push(`${t.servings}: ${page.recipe.baseServings}`);
+  badges.push(`${steps.length} ${t.steps.toLowerCase()}`);
+  const statusText = isUntested(page.recipe) ? t.untestedBadge : `✓ ${t.testedBadge}`;
+  const canonicalHost = (() => {
+    try { return new URL(origin).host; } catch { return '2yolks.com'; }
+  })();
+  const canonicalPath = recipePathFor(page.locale.country, page.locale.lang, page.locale.slug);
+  const fullPath = `${canonicalHost}${canonicalPath}`;
+  const shortUrl = fullPath.length > 48 ? `${fullPath.slice(0, 46)}…` : fullPath;
+
+  const titleStartY = 238;
+  const titleStepY = 58;
+  const afterTitleY = titleStartY + titleLines.length * titleStepY + 14;
+  const introStepY = 30;
+  const catWidth = Math.min(600, Math.max(150, cat.length * 12 + 32));
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-label="${escapeHtml(page.locale.title)} — 2yolks">
+  <rect width="1200" height="630" fill="#211729" />
+  <rect x="24" y="24" width="1152" height="582" fill="none" stroke="#65566e" stroke-width="2" />
+  <rect x="24" y="24" width="1152" height="10" fill="#e0fa80" />
+
+  <!-- Left Column: Brand + Title + Intro + Facts -->
+  <g transform="translate(64, 72)">
+    <text x="0" y="28" fill="#faf7f4" font-family="Fraunces, Georgia, 'Times New Roman', serif" font-size="38" font-weight="700" letter-spacing="-1">2yolks</text>
+    <ellipse cx="144" cy="17" rx="14" ry="12.5" fill="#e0fa80" />
+    <ellipse cx="171" cy="15" rx="12.5" ry="11.5" fill="#ffd166" />
+    <rect x="378" y="-4" width="232" height="36" fill="#2e2038" stroke="#756580" stroke-width="1.5" />
+    <text x="494" y="21" text-anchor="middle" fill="#e0fa80" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="16" font-weight="700">${escapeHtml(statusText)}</text>
+  </g>
+
+  <!-- Category Pill -->
+  <g transform="translate(64, 134)">
+    <rect x="0" y="0" width="${catWidth}" height="34" fill="#e0fa80" />
+    <text x="16" y="23" fill="#211729" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="16" font-weight="800" letter-spacing="1.6">${escapeHtml(cat)}</text>
+  </g>
+
+  <!-- Recipe Title -->
+  ${titleLines
+    .map(
+      (line, idx) =>
+        `<text x="64" y="${titleStartY + idx * titleStepY}" fill="#faf7f4" font-family="Fraunces, Georgia, 'Times New Roman', serif" font-size="48" font-weight="700" letter-spacing="-1">${escapeHtml(line)}</text>`,
+    )
+    .join('\n  ')}
+
+  <!-- Intro -->
+  ${introLines
+    .map(
+      (line, idx) =>
+        `<text x="64" y="${afterTitleY + idx * introStepY}" fill="#ded5e4" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="21" font-weight="400">${escapeHtml(line)}</text>`,
+    )
+    .join('\n  ')}
+
+  <!-- Bottom Facts + URL -->
+  <g transform="translate(64, 514)">
+    <line x1="0" y1="0" x2="610" y2="0" stroke="#65566e" stroke-width="1.5" />
+    <text x="0" y="34" fill="#e0fa80" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="19" font-weight="700">${escapeHtml(badges.join('  ·  '))}</text>
+    <text x="0" y="64" fill="#cbb8d2" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="17" font-weight="500">${escapeHtml(shortUrl)}</text>
+  </g>
+
+  <!-- Right Column: Cream Ingredients Card -->
+  <g transform="translate(720, 68)">
+    <rect x="0" y="0" width="416" height="494" fill="#faf8f3" />
+    <rect x="0" y="0" width="416" height="8" fill="#e0fa80" />
+    <text x="28" y="54" fill="#211729" font-family="Fraunces, Georgia, 'Times New Roman', serif" font-size="30" font-weight="700">${escapeHtml(t.ingredients)}</text>
+    ${topIngredients
+      .map(
+        (ing, idx) => `<g transform="translate(28, ${102 + idx * 62})">
+      <rect x="0" y="-18" width="20" height="20" fill="none" stroke="#493253" stroke-width="2" />
+      <text x="34" y="-1" fill="#261b2c" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="21" font-weight="500">${escapeHtml(ing)}</text>
+    </g>`,
+      )
+      .join('\n    ')}
+    ${moreCount > 0
+      ? `<text x="28" y="${104 + topIngredients.length * 62}" fill="#64586a" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="19" font-style="italic">+ ${moreCount} ${escapeHtml(lang === 'es' ? 'ingredientes más' : lang === 'fr' ? 'autres ingrédients' : 'more ingredients')}</text>`
+      : ''}
+    <text x="388" y="472" text-anchor="end" fill="#493253" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="15" font-weight="700">#CookedWith2Yolks</text>
+  </g>
+</svg>`;
+}
+
 export function renderRecipe(
   page: RecipePage,
   alternates: { hreflang: string; href: string }[],
@@ -715,6 +820,9 @@ export function renderRecipe(
   const pinUrl = canonicalUrl && PIN_IMAGE_KEYS.has(`${page.locale.recipeId}:${page.locale.lang}`) ? `${origin}/img/pin/${page.locale.recipeId}.${page.locale.lang}.png` : null;
   // A rights-tracked hero image (migration 0004) wins over the title graphic.
   const imageUrl = page.heroImage?.url ?? pinUrl;
+  // Universal raster fallback for Open Graph / iMessage / WhatsApp / Slack when no photo or pin exists.
+  // Kept separate from <RecipeView imageUrl> so Pinterest sharing continues to require an explicit recipe image.
+  const ogImageUrl = imageUrl ?? (canonicalUrl ? `${origin}/img/identity/og-default.png` : null);
   const cookData = safeJsonLd({
     steps: steps.map((st) => renderStep(st, entries, page.locale.lang, sys, 1)),
     strings: { timerDone: t.timerDone },
@@ -752,7 +860,9 @@ export function renderRecipe(
           url: canonicalUrl,
           locale: `${page.locale.lang}_${page.locale.country.toUpperCase()}`,
           alternateLocales,
-          image: imageUrl,
+          image: ogImageUrl,
+          imageWidth: imageUrl ? undefined : 1200,
+          imageHeight: imageUrl ? undefined : 630,
           imageAlt: page.locale.title,
         }
       : undefined,

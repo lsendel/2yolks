@@ -198,6 +198,8 @@ export interface UiStrings {
   testedBadge: string;
   saveStoryCard: string;
   storyCardReady: string;
+  saveOgCard: string;
+  ogCardReady: string;
   shareGroceryList: string;
   groceryListReady: string;
   emptyShareCta: string;
@@ -244,6 +246,8 @@ const UI_STRINGS: Record<string, UiStrings> = {
     testedBadge: 'Tested',
     saveStoryCard: 'Story card (PNG)',
     storyCardReady: 'Story saved',
+    saveOgCard: 'Link card (PNG)',
+    ogCardReady: 'Card saved',
     shareGroceryList: 'Send grocery list',
     groceryListReady: 'Grocery list copied',
     emptyShareCta: 'Have a great recipe for this? Share yours',
@@ -288,6 +292,8 @@ const UI_STRINGS: Record<string, UiStrings> = {
     testedBadge: 'Probada',
     saveStoryCard: 'Tarjeta Story (PNG)',
     storyCardReady: 'Tarjeta guardada',
+    saveOgCard: 'Tarjeta enlace (PNG)',
+    ogCardReady: 'Tarjeta guardada',
     shareGroceryList: 'Enviar compras',
     groceryListReady: 'Lista copiada',
     emptyShareCta: '\u00bfTienes una receta para esto? Comp\u00e1rtela',
@@ -332,6 +338,8 @@ const UI_STRINGS: Record<string, UiStrings> = {
     testedBadge: 'Test\u00e9e',
     saveStoryCard: 'Carte Story (PNG)',
     storyCardReady: 'Carte enregistr\u00e9e',
+    saveOgCard: 'Carte lien (PNG)',
+    ogCardReady: 'Carte enregistr\u00e9e',
     shareGroceryList: 'Envoyer la liste',
     groceryListReady: 'Liste copi\u00e9e',
     emptyShareCta: 'Vous avez cette recette ? Partagez-la',

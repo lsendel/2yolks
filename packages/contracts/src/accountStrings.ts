@@ -42,6 +42,8 @@ export interface AccountStrings {
   // community kitchen-test reports
   reportPageTitle: string; reportTitle: string; reportLead: string;
   reportNoteLabel: string; reportNoteHint: string; reportAttestText: string; reportButton: string;
+  reportPhotoLabel: string; reportPhotoHint: string; reportPhotoAttestText: string;
+  errReportPhotoInvalid: string; errReportPhotoAttest: string;
   reportSentPageTitle: string; reportSentTitle: string; reportSentLead: string;
   errReportOwn: string; errReportNotPublic: string; reportAlreadyLead: string; errReportAttest: string;
   reportStatusPending: string; reportStatusApproved: string; reportStatusRejected: string;
@@ -55,8 +57,8 @@ export interface AccountStrings {
   aiPhotoLabel: string; aiPhotoHint: string;
   aiVoiceStart: string; aiVoiceStop: string; aiVoiceReady: string;
   aiNotesLabel: string; aiNotesPlaceholder: string;
-  aiExtractBtn: string; aiPolishBtn: string; aiUndoBtn: string;
-  aiWorking: string; aiDoneExtract: string; aiDonePolish: string;
+  aiExtractBtn: string; aiPolishBtn: string; aiTranslateBtn: string; aiTargetLangLabel: string; aiUndoBtn: string;
+  aiWorking: string; aiDoneExtract: string; aiDonePolish: string; aiDoneTranslate: string;
   aiQuestionsHeading: string; aiImprovementsHeading: string;
   aiErrBusy: string; aiErrInput: string;
 }
@@ -131,6 +133,11 @@ const en: AccountStrings = {
   reportLead: 'Tell us how "{title}" went in your kitchen. A moderator reads every report before the recipe is marked tested.',
   reportNoteLabel: 'How did it go? (optional)', reportNoteHint: 'Timing, yield, anything you had to change. Max 280 characters.',
   reportAttestText: 'I cooked this recipe in a kitchen.',
+  reportPhotoLabel: 'Photo of your finished dish (optional)',
+  reportPhotoHint: 'JPEG, PNG or WebP (max 1.5 MB). Shows only if a moderator approves your report and photo.',
+  reportPhotoAttestText: 'I took this photo myself and allow 2yolks to display it with credit if approved.',
+  errReportPhotoInvalid: 'That photo could not be verified as a valid JPEG, PNG, or WebP file under 1.5 MB.',
+  errReportPhotoAttest: 'Tick the photo permission box to attach your kitchen photo.',
   reportButton: 'Send the report',
   reportSentPageTitle: 'Report sent', reportSentTitle: 'Thanks for cooking it',
   reportSentLead: 'Your report for "{title}" is in the review queue. The tested label appears only after a moderator approves it.',
@@ -168,10 +175,13 @@ const en: AccountStrings = {
   aiNotesPlaceholder: 'Example: Browned 1 kg pork shoulder in chunks, boiled with onion and garlic 90 min, blended 5 guajillo + 2 ancho chiles with broth, added 800g hominy…',
   aiExtractBtn: 'Build recipe from photo / notes',
   aiPolishBtn: 'Polish & check current draft',
+  aiTranslateBtn: 'Translate draft',
+  aiTargetLangLabel: 'Target language',
   aiUndoBtn: 'Undo AI changes',
   aiWorking: 'Structuring your recipe…',
   aiDoneExtract: 'Draft structured from your notes. Review every line and answer any quick questions below.',
   aiDonePolish: 'Draft polished for clarity and Cook Mode. You can undo anytime.',
+  aiDoneTranslate: 'Draft translated while preserving all ingredient quantities, allergens, and timer tokens.',
   aiQuestionsHeading: 'Quick details to make this recipe foolproof:',
   aiImprovementsHeading: 'What the kitchen co-editor refined:',
   aiErrBusy: 'The AI kitchen assistant reached today’s free-tier limit. You can still paste text or fill the form directly.',
@@ -248,6 +258,11 @@ const es: AccountStrings = {
   reportLead: 'Cuéntanos cómo salió "{title}" en tu cocina. Un moderador lee cada reporte antes de marcar la receta como probada.',
   reportNoteLabel: '¿Cómo salió? (opcional)', reportNoteHint: 'Tiempos, porciones, cualquier cambio que tuviste que hacer. Máximo 280 caracteres.',
   reportAttestText: 'Cociné esta receta en una cocina.',
+  reportPhotoLabel: 'Foto de tu plato terminado (opcional)',
+  reportPhotoHint: 'JPEG, PNG o WebP (máx. 1.5 MB). Solo se muestra si un moderador aprueba tu reporte y la foto.',
+  reportPhotoAttestText: 'Yo tomé esta foto y permito que 2yolks la muestre con crédito si se aprueba.',
+  errReportPhotoInvalid: 'No se pudo verificar esa foto como un archivo JPEG, PNG o WebP válido de menos de 1.5 MB.',
+  errReportPhotoAttest: 'Marca la casilla de permiso de foto para adjuntar tu imagen.',
   reportButton: 'Enviar el reporte',
   reportSentPageTitle: 'Reporte enviado', reportSentTitle: 'Gracias por cocinarla',
   reportSentLead: 'Tu reporte para "{title}" está en la cola de revisión. La etiqueta de probada aparece solo después de que un moderador lo apruebe.',
@@ -285,10 +300,13 @@ const es: AccountStrings = {
   aiNotesPlaceholder: 'Ejemplo: Doré 1 kg de espaldilla en trozos, herví con cebolla y ajo 90 min, licué 5 guajillos y 2 anchos, agregué 800 g de maíz pozolero…',
   aiExtractBtn: 'Crear receta desde foto / notas',
   aiPolishBtn: 'Pulir y revisar mi borrador',
+  aiTranslateBtn: 'Traducir borrador',
+  aiTargetLangLabel: 'Idioma destino',
   aiUndoBtn: 'Deshacer cambios de IA',
   aiWorking: 'Estructurando tu receta…',
   aiDoneExtract: 'Borrador estructurado. Revisa cada línea y responde las preguntas rápidas abajo.',
   aiDonePolish: 'Borrador pulido para mayor claridad y Modo Cocina. Puedes deshacer en cualquier momento.',
+  aiDoneTranslate: 'Borrador traducido conservando todas las cantidades, alérgenos y temporizadores.',
   aiQuestionsHeading: 'Detalles rápidos para que la receta salga perfecta:',
   aiImprovementsHeading: 'Lo que mejoró el coeditor de cocina:',
   aiErrBusy: 'El asistente de IA alcanzó el límite gratuito de hoy. Aún puedes pegar texto o llenar el formulario directamente.',
@@ -365,6 +383,11 @@ const fr: AccountStrings = {
   reportLead: 'Dites-nous comment « {title} » s’est passée dans votre cuisine. Un modérateur lit chaque signalement avant de marquer la recette comme testée.',
   reportNoteLabel: 'Comment cela s’est-il passé ? (facultatif)', reportNoteHint: 'Temps, portions, tout ce que vous avez dû changer. 280 caractères maximum.',
   reportAttestText: 'J’ai cuisiné cette recette dans une cuisine.',
+  reportPhotoLabel: 'Photo de votre plat terminé (facultatif)',
+  reportPhotoHint: 'JPEG, PNG ou WebP (max 1,5 Mo). Affichée uniquement si un modérateur approuve votre signalement et la photo.',
+  reportPhotoAttestText: 'J’ai pris cette photo moi-même et j’autorise 2yolks à l’afficher avec crédit si elle est approuvée.',
+  errReportPhotoInvalid: 'Cette photo n’a pas pu être vérifiée comme un fichier JPEG, PNG ou WebP valide de moins de 1,5 Mo.',
+  errReportPhotoAttest: 'Cochez la case d’autorisation photo pour joindre votre photo de cuisine.',
   reportButton: 'Envoyer le signalement',
   reportSentPageTitle: 'Signalement envoyé', reportSentTitle: 'Merci de l’avoir cuisinée',
   reportSentLead: 'Votre signalement pour « {title} » est dans la file de relecture. L’étiquette testée n’apparaît qu’après l’approbation d’un modérateur.',
@@ -402,10 +425,13 @@ const fr: AccountStrings = {
   aiNotesPlaceholder: 'Exemple : J’ai fait dorer 1 kg d’épaule de porc en morceaux, mijoté 90 min avec oignon et ail, mixé 5 piments guajillo et 2 ancho…',
   aiExtractBtn: 'Créer la recette depuis photo / notes',
   aiPolishBtn: 'Soigner et vérifier mon brouillon',
+  aiTranslateBtn: 'Traduire le brouillon',
+  aiTargetLangLabel: 'Langue cible',
   aiUndoBtn: 'Annuler les modifications IA',
   aiWorking: 'Structuration de votre recette…',
   aiDoneExtract: 'Brouillon structuré. Vérifiez chaque ligne et répondez aux questions rapides ci-dessous.',
   aiDonePolish: 'Brouillon clarifié pour le Mode Cuisine. Vous pouvez annuler à tout moment.',
+  aiDoneTranslate: 'Brouillon traduit en conservant toutes les quantités, allergènes et minuteurs.',
   aiQuestionsHeading: 'Petites précisions pour réussir la recette à coup sûr :',
   aiImprovementsHeading: 'Ce que le co-éditeur a amélioré :',
   aiErrBusy: 'L’assistant IA a atteint son quota gratuit quotidien. Vous pouvez toujours coller un texte ou remplir le formulaire.',

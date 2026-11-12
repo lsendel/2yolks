@@ -61,6 +61,12 @@ export const recipeTestReports = sqliteTable(
     createdAt: text('created_at').notNull(),
     moderatedAt: text('moderated_at'),
     moderatedBy: text('moderated_by'),
+    imageR2Key: text('image_r2_key'),
+    imageMime: text('image_mime'),
+    imageBytes: integer('image_bytes'),
+    imageWidth: integer('image_width'),
+    imageHeight: integer('image_height'),
+    imageId: text('image_id'),
   },
   (t) => [index('idx_test_reports_status').on(t.status, t.createdAt)],
 );
@@ -149,7 +155,7 @@ export const searchGapLogs = sqliteTable(
 );
 
 export function createDb(d1: D1Database) {
-  return drizzle(d1, { schema: { users, sources, recipes, recipeLocales, recipeImages, recipeSlugAliases, searchGapLogs } });
+  return drizzle(d1, { schema: { users, sources, recipes, recipeLocales, recipeImages, recipeSlugAliases, searchGapLogs, recipeTestReports } });
 }
 
 const DEMO_LICENSE = 'internal-demo';

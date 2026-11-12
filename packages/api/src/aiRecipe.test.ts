@@ -8,6 +8,7 @@ import {
   GEMINI_API_REVISION,
   assistRecipeWithGemini,
   assistRecipeDeterministic,
+  translateStructuredRecipeWithGemini,
   reserveAiBudget,
 } from './aiRecipe';
 
@@ -224,5 +225,153 @@ describe('Gemini 3.8 Flash multimodal recipe co-editor & SVG story card routes',
     // Draft locale must never leak via card.svg
     const draftCard = await app.request(`${ORIGIN}/us/recipes/secret-draft-tacos/card.svg`, {}, { DB, CANONICAL_ORIGIN: ORIGIN, ASSETS: assets });
     expect(draftCard.status).toBe(404);
+  });
+
+  it('translateStructuredRecipeWithGemini retries 503, repairs QA failures once, and enforces numbers/allergens', async () => {
+    let calls = 0;
+    const mockFetch: typeof fetch = async () => {
+      calls++;
+      if (calls === 1) return new Response('busy', { status: 503 });
+      const payload =
+        calls === 2
+          ? {
+              // Drops allergen word (egg -> omit) and omits step number 10 -> triggers 1 repair pass
+              title: 'Crêpes aux cacahuètes',
+              intro: null,
+              ingredients: [
+                { index: 0, text: null, name: 'beurre', note: null },
+                { index: 1, text: '2 batidos grandes', name: null, note: null },
+              ],
+              steps: ['Mélanger {i:butter} et cuire quelques minutes.'],
+            }
+          : {
+              title: 'Crêpes rapides',
+              intro: null,
+              ingredients: [
+                { index: 0, text: null, name: 'beurre', note: 'fondu' },
+                { index: 1, text: '2 gros œufs', name: null, note: null },
+              ],
+              steps: ['Mélanger {i:butter} et cuire 10 minutes.'],
+            };
+      return new Response(
+        JSON.stringify({ id: `int_${calls}`, steps: [{ type: 'model_output', content: [{ type: 'text', text: JSON.stringify(payload) }] }] }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    };
+
+    const out = await translateStructuredRecipeWithGemini(
+      {
+        sourceLang: 'en',
+        targetLang: 'fr',
+        title: 'Quick Crepes',
+        intro: null,
+        ingredients: [{ ref: 'butter', qty: 30, unit: 'g', name: 'butter', note: 'melted' }, '2 large eggs'],
+        steps: ['Mix {i:butter} and cook 10 minutes.'],
+      },
+      'test-key',
+      mockFetch,
+      [0, 0],
+    );
+    expect(calls).toBe(3);
+    expect(out.title).toBe('Crêpes rapides');
+    expect(out.ingredients[0]).toEqual({ ref: 'butter', qty: 30, unit: 'g', name: 'beurre', note: 'fondu' });
+    expect(out.ingredients[1]).toBe('2 gros œufs');
+    expect(out.steps[0]).toContain('{i:butter}');
+
+    // Always-bad output should throw QA gate error after exhausting the repair pass
+    const badFetch: typeof fetch = async () =>
+      new Response(
+        JSON.stringify({
+          steps: [
+            {
+              type: 'model_output',
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify({
+                    title: 'Bad',
+                    intro: null,
+                    ingredients: [{ index: 0, text: null, name: 'mantequilla', note: null }, { index: 1, text: '2 piezas', name: null, note: null }],
+                    steps: ['Mix {i:butter} and cook.'],
+                  }),
+                },
+              ],
+            },
+          ],
+        }),
+        { status: 200 },
+      );
+    await expect(
+      translateStructuredRecipeWithGemini(
+        {
+          sourceLang: 'en',
+          targetLang: 'es',
+          title: 'Quick Crepes',
+          intro: null,
+          ingredients: [{ ref: 'butter', qty: 30, unit: 'g', name: 'butter' }, '2 large eggs'],
+          steps: ['Mix {i:butter} and cook 10 minutes.'],
+        },
+        'test-key',
+        badFetch,
+        [0],
+      ),
+    ).rejects.toThrow('Translation failed QA gate');
+  });
+
+  it('POST /account/recipes/ai-assist supports mode=translate with targetLocale', async () => {
+    const cookie = await createSessionCookie();
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify({
+          steps: [
+            {
+              type: 'model_output',
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify({
+                    title: 'Soupe tomate',
+                    intro: 'Simple.',
+                    ingredients: [{ index: 0, text: '2 tasses de bouillon', name: null, note: null }],
+                    steps: ['Mijoter 15 minutes.'],
+                  }),
+                },
+              ],
+            },
+          ],
+        }),
+        { status: 200 },
+      )) as typeof fetch;
+    try {
+      const res = await app.request(
+        `${ORIGIN}/account/recipes/ai-assist`,
+        {
+          method: 'POST',
+          headers: { origin: ORIGIN, cookie, 'content-type': 'application/json' },
+          body: JSON.stringify({
+            mode: 'translate',
+            uiLang: 'en',
+            recipeLocale: 'us:en',
+            targetLocale: 'us:fr',
+            draft: {
+              title: 'Tomato Soup',
+              intro: 'Simple.',
+              ingredients: ['2 cups stock'],
+              steps: ['Simmer 15 minutes.'],
+            },
+          }),
+        },
+        { DB, CANONICAL_ORIGIN: ORIGIN, GEMINI_API_KEY: 'test-key', ASSETS: { fetch: async () => new Response('no', { status: 404 }) } as unknown as Fetcher },
+      );
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { ok: boolean; provider: string; recipe: { title: string; steps: string[] } };
+      expect(body.ok).toBe(true);
+      expect(body.provider).toBe('gemini');
+      expect(body.recipe.title).toBe('Soupe tomate');
+      expect(body.recipe.steps).toEqual(['Mijoter 15 minutes.']);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
   });
 });

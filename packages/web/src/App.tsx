@@ -40,6 +40,13 @@ export interface SiteNavItem {
   current?: boolean;
 }
 
+/** Official 2yolks social channels — update handles in one place. */
+export const SOCIAL_LINKS = [
+  { name: 'instagram', label: '2yolks Instagram', href: 'https://www.instagram.com/2yolks' },
+  { name: 'tiktok', label: '2yolks TikTok', href: 'https://www.tiktok.com/@2yolks' },
+  { name: 'youtube', label: '2yolks YouTube', href: 'https://www.youtube.com/@2yolks' },
+] as const;
+
 /** Two-yolk egg mark. Pure SVG, no image asset, scales from favicon to hero. */
 export function BrandMark({ large = false }: { large?: boolean }) {
   return (
@@ -129,15 +136,11 @@ export function SiteFooter({ nav = [], lang = 'en' }: { nav?: SiteNavItem[]; lan
           </p>
           <p className="community-tag">{t.communityTag}</p>
           <div className="footer-social" aria-label="Social">
-            <a href="https://www.instagram.com/2yolks" target="_blank" rel="noopener noreferrer" aria-label="2yolks Instagram">
-              <SocialIcon name="instagram" />
-            </a>
-            <a href="https://www.tiktok.com/@2yolks" target="_blank" rel="noopener noreferrer" aria-label="2yolks TikTok">
-              <SocialIcon name="tiktok" />
-            </a>
-            <a href="https://www.youtube.com/@2yolks" target="_blank" rel="noopener noreferrer" aria-label="2yolks YouTube">
-              <SocialIcon name="youtube" />
-            </a>
+            {SOCIAL_LINKS.map((s) => (
+              <a key={s.name} href={s.href} target="_blank" rel="noopener noreferrer" aria-label={s.label}>
+                <SocialIcon name={s.name} />
+              </a>
+            ))}
           </div>
         </div>
         <nav className="footer-col" aria-label="Language">
@@ -649,7 +652,9 @@ export function RecipeView({
     crumbItems.push({ href: `/?lang=${lang}&cat=${page.recipe.category}#recipes`, label: cat });
   }
   crumbItems.push({ label: page.locale.title });
-  const cardSvgPath = `${recipePathFor(page.locale.country, page.locale.lang, page.locale.slug)}/card.svg`;
+  const recipeBasePath = recipePathFor(page.locale.country, page.locale.lang, page.locale.slug);
+  const cardSvgPath = `${recipeBasePath}/card.svg`;
+  const ogSvgPath = `${recipeBasePath}/og.svg`;
   return (
     <main id="main" className="recipe-page">
       <Crumbs items={crumbItems} />
@@ -814,6 +819,17 @@ export function RecipeView({
             >
               <SocialIcon name="story" />
               {t.saveStoryCard}
+            </button>
+            <button
+              type="button"
+              className="share-story-btn"
+              data-og-card
+              data-card-svg={ogSvgPath}
+              data-recipe-slug={page.locale.slug}
+              data-copied={t.ogCardReady}
+            >
+              <SocialIcon name="og" />
+              {t.saveOgCard}
             </button>
             <button type="button" className="share-card-btn" data-share-card data-copied={t.recipeCardCopied}>
               <SocialIcon name="card" />

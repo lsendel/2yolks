@@ -8,8 +8,13 @@ approves a report.
 ## What a cook can do
 
 - Sign in (email code), open a published recipe, and send one report per
-  recipe, with an optional 280-character note and a required checkbox:
-  "I cooked this recipe in a kitchen."
+  recipe, with an optional 280-character note, an optional kitchen photo
+  (JPEG/PNG/WebP under 1.5 MB with a rights checkbox confirming the cook took
+  it themselves), and a required checkbox: "I cooked this recipe in a kitchen."
+- Uploaded photos are validated structurally (container end-to-end) and stored
+  in R2 under `reports/` (`recipe_test_reports.image_r2_key`). They are NEVER
+  written to `recipe_images` on upload, so `/img/recipe/*` never serves an
+  unmoderated photo.
 - A cook cannot report their own submitted recipe. Its tested label comes
   from the original submission attestation (`recipes.attested_at`), not from
   the community path.
@@ -27,7 +32,10 @@ coordination (same note text across recipes, bursts from one account).
 Approving stamps `recipes.tested_at` (the report's creation time) and
 `recipes.tested_by` (the cook's display name, falling back to "A 2yolks
 cook") - only while `tested_at` is still empty. The first approved report
-wins; later approvals corroborate and never rewrite the stamp.
+wins; later approvals corroborate and never rewrite the stamp. When the report
+includes an image and `publishPhoto !== false`, moderation can atomically
+record a cleared `recipe_images` row (`license: 'user-original'`, `style: 'photo'`,
+promoted to hero when the recipe lacks one or `promoteAsHero: true`).
 
 **Reject** when the report is spam, boilerplate, coordinated, or about a
 recipe the cook plainly could not have cooked. Rejection hides the report

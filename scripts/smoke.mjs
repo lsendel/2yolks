@@ -141,10 +141,12 @@ try {
     const get2 = async (path) => { const res = await fetch(`http://127.0.0.1:${PORT2}` + path, { redirect: 'manual' }); return { status: res.status, headers: res.headers, body: await res.text(), location: res.headers.get('location') }; };
     r = await get2('/mx/recipes/huevos-rancheros');
     check('dev mode: recipe 200 with es chrome', r.status === 200 && r.body.includes('<h2>Ingredientes</h2>') && r.body.includes('Clásico'));
-    check('share links: plain, no pinterest without image, canonical + og', r.body.includes('facebook.com/sharer') && r.body.includes('wa.me') && !r.body.includes('pinterest.com') && r.body.includes('og:url') && r.body.includes('rel="canonical"') && r.body.includes('Compartir'));
+    check('share links: plain, no pinterest without image, canonical + og', r.body.includes('facebook.com/sharer') && r.body.includes('wa.me') && !r.body.includes('pinterest.com') && r.body.includes('og:url') && r.body.includes('og-default.png') && r.body.includes('rel="canonical"') && r.body.includes('Compartir'));
     check('dev mode: demo recipe page noindex meta', r.body.includes('noindex, nofollow'));
     check('hreflang exact equivalents + x-default', r.body.includes('hreflang="es-MX"') && r.body.includes('hreflang="en-US"') && r.body.includes('hreflang="x-default"'));
     check('hreflang uses pinned canonical origin', r.body.includes('https://2yolks.com/us/recipes/ranch-eggs'));
+    const ogRes = await get2('/mx/recipes/huevos-rancheros/og.svg');
+    check('recipe landscape og.svg 200', ogRes.status === 200 && /image\/svg\+xml/.test(ogRes.headers.get('content-type') || '') && ogRes.body.includes('viewBox="0 0 1200 630"'));
     r = await get2('/mx/en/recipes/ranch-eggs-translated');
     check('route-loaded translated page shows machine-translation label (loader passes provenance)', r.status === 200 && r.body.includes('class="machine-note"') && r.body.includes('not reviewed by a native speaker'), r.body.slice(0, 80));
     r = await get2('/mx/recipes/huevos-rancheros');

@@ -85,7 +85,7 @@ function makeD1(sqlite: DatabaseSync): D1Database {
 
 function migratedD1(): D1Database {
   const sqlite = new DatabaseSync(':memory:');
-  for (const file of ['0001_init.sql', '0002_mcp_blog.sql', '0003_quality_translation.sql', '0004_recipe_times_images.sql', '0005_recipe_slug_aliases.sql', '0006_user_accounts.sql', '0008_recipe_test_reports.sql']) {
+  for (const file of ['0001_init.sql', '0002_mcp_blog.sql', '0003_quality_translation.sql', '0004_recipe_times_images.sql', '0005_recipe_slug_aliases.sql', '0006_user_accounts.sql', '0008_recipe_test_reports.sql', '0009_ai_capture_budget.sql', '0010_test_report_photos.sql']) {
     const sql = readFileSync(new URL(`../migrations/${file}`, import.meta.url), 'utf8');
     sqlite.exec(sql);
   }
@@ -127,21 +127,21 @@ function rpc(method: string, params?: unknown, id = 1) {
   return { jsonrpc: '2.0', id, method, params };
 }
 
-function call(token: string | null, method: string, params?: unknown) {
+function call(token: string | null, method: string, params?: unknown, extra: Record<string, unknown> = {}) {
   const headers: Record<string, string> = { 'content-type': 'application/json' };
   if (token) headers['authorization'] = `Bearer ${token}`;
   return app.request(
     'https://2yolks.com/api/admin/mcp',
     { method: 'POST', headers, body: JSON.stringify(rpc(method, params)) },
-    env(DB),
+    env(DB, extra),
   );
 }
 
 // Per-test database, swapped via closure.
 let DB: D1Database;
 
-async function toolCall(token: string, name: string, args: Record<string, unknown>) {
-  const res = await call(token, 'tools/call', { name, arguments: args });
+async function toolCall(token: string, name: string, args: Record<string, unknown>, extra: Record<string, unknown> = {}) {
+  const res = await call(token, 'tools/call', { name, arguments: args }, extra);
   const body = (await res.json()) as {
     result?: { content?: { text: string }[]; isError?: boolean };
     error?: { code: number; message: string };
@@ -1195,5 +1195,128 @@ describe('community test-report moderation regression: approve-on-rejected', () 
     expect(String(res.data?.['error'])).toContain('already moderated');
     const row = await DB.prepare('SELECT tested_at, tested_by FROM recipes WHERE id = ?').bind('rp1').first<{ tested_at: string | null; tested_by: string | null }>();
     expect(row).toEqual({ tested_at: null, tested_by: null });
+  });
+});
+
+describe('test-report photo moderation & MCP translation', () => {
+  const realFetch = globalThis.fetch;
+
+  beforeEach(async () => {
+    DB = migratedD1();
+    R2 = makeR2();
+    await DB.prepare("INSERT INTO sources (id,name,url,license,cleared_at,notes) VALUES ('src-p','Test Kitchen','https://example.com','cc-by','2024-01-01T00:00:00Z',NULL)").run();
+    await DB.prepare("INSERT INTO recipes (id,source_id,origin_country,created_at) VALUES ('rp1','src-p','us','2024-01-02T00:00:00Z')").run();
+    await DB.prepare(
+      "INSERT INTO recipe_locales (recipe_id,country,lang,title,slug,intro,ingredients_json,steps_json,status) VALUES ('rp1','us','en','Tomato Soup','tomato-soup-rp1','Warm soup.',?,?,'published')",
+    )
+      .bind(
+        JSON.stringify([{ ref: 'tomatoes', qty: 400, unit: 'g', name: 'ripe tomatoes' }, '2 tbsp cream']),
+        JSON.stringify(['Simmer {i:tomatoes} with cream for 20 minutes.']),
+      )
+      .run();
+    await DB.prepare("INSERT INTO users (id,email,display_name,created_at) VALUES ('u1','cook@example.com','Ana','2024-01-01T00:00:00Z')").run();
+  });
+
+  function png1x1(): Uint8Array {
+    const bin = atob(PNG_1X1);
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+
+  it('promotes a pending report photo to recipe_images and /img/recipe/:id on approve, never on reject', async () => {
+    const bytes = png1x1();
+    await R2.put('reports/rp1/rep_ok.png', bytes, { httpMetadata: { contentType: 'image/png' } });
+    await DB.prepare(
+      "INSERT INTO recipe_test_reports (id,recipe_id,user_id,note,status,created_at,image_r2_key,image_mime,image_bytes,image_width,image_height) VALUES ('rep_ok','rp1','u1','Made it!','pending','2024-02-01T00:00:00Z','reports/rp1/rep_ok.png','image/png',?,1,1)",
+    )
+      .bind(bytes.length)
+      .run();
+
+    const list = await toolCall(ADMIN_KEY, 'recipes.list_test_reports', { status: 'pending' });
+    expect((list.data?.['reports'] as Record<string, unknown>[])[0]).toMatchObject({
+      id: 'rep_ok',
+      has_photo: 1,
+      image_mime: 'image/png',
+      image_width: 1,
+      image_height: 1,
+    });
+
+    const ok = await toolCall(ADMIN_KEY, 'recipes.moderate_test_report', { id: 'rep_ok', decision: 'approve', confirmed: true });
+    expect(ok.isError).toBe(false);
+    expect(ok.data?.['promoted_hero']).toBe(true);
+    const imageId = String(ok.data?.['image_id']);
+    expect(imageId).toBeTruthy();
+
+    const imgRes = await app.request(`https://2yolks.com/img/recipe/${imageId}`, {}, env(DB));
+    expect(imgRes.status).toBe(200);
+    expect(imgRes.headers.get('content-type')).toBe('image/png');
+
+    // Rejection never promotes into recipe_images
+    await DB.prepare("INSERT INTO users (id,email,display_name,created_at) VALUES ('u2','spam@example.com','Spam','2024-01-01T00:00:00Z')").run();
+    await R2.put('reports/rp1/rep_no.png', bytes, { httpMetadata: { contentType: 'image/png' } });
+    await DB.prepare(
+      "INSERT INTO recipe_test_reports (id,recipe_id,user_id,note,status,created_at,image_r2_key,image_mime,image_bytes,image_width,image_height) VALUES ('rep_no','rp1','u2','Spam','pending','2024-02-02T00:00:00Z','reports/rp1/rep_no.png','image/png',?,1,1)",
+    )
+      .bind(bytes.length)
+      .run();
+    const rej = await toolCall(ADMIN_KEY, 'recipes.moderate_test_report', { id: 'rep_no', decision: 'reject', confirmed: true });
+    expect(rej.isError).toBe(false);
+    const countImgs = await DB.prepare('SELECT count(*) AS n FROM recipe_images').first<{ n: number }>();
+    expect(countImgs?.n).toBe(1);
+  });
+
+  it('recipes.translate_locale supports dry-run and inserts a QA-checked draft locale via Gemini 3.8 Flash', async () => {
+    const dry = await toolCall(EDITOR_KEY, 'recipes.translate_locale', { id: 'rp1', country: 'us', lang: 'es' }, { GEMINI_API_KEY: 'test-key' });
+    expect(dry.isError).toBe(false);
+    expect(dry.data).toMatchObject({ dry_run: true, ok: true, id: 'rp1', locale: 'us/es', translation_of: 'us/en' });
+
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify({
+          steps: [
+            {
+              type: 'model_output',
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify({
+                    title: 'Sopa de Tomate',
+                    intro: 'Sopa tibia.',
+                    ingredients: [
+                      { index: 0, text: null, name: 'tomates maduros', note: null },
+                      { index: 1, text: '2 cucharadas de crema', name: null, note: null },
+                    ],
+                    steps: ['Cuece a fuego lento {i:tomatoes} con crema durante 20 minutos.'],
+                  }),
+                },
+              ],
+            },
+          ],
+        }),
+        { status: 200 },
+      )) as typeof fetch;
+
+    try {
+      const res = await toolCall(
+        EDITOR_KEY,
+        'recipes.translate_locale',
+        { id: 'rp1', country: 'us', lang: 'es', confirmed: true },
+        { GEMINI_API_KEY: 'test-key' },
+      );
+      expect(res.isError).toBe(false);
+      expect(res.data).toMatchObject({ id: 'rp1', locale: 'us/es', slug: 'sopa-de-tomate', status: 'draft', translation_of: 'us/en' });
+
+      const row = await DB.prepare('SELECT status, translation_of, translation_method FROM recipe_locales WHERE recipe_id = ? AND country = ? AND lang = ?')
+        .bind('rp1', 'us', 'es')
+        .first<{ status: string; translation_of: string; translation_method: string }>();
+      expect(row).toEqual({ status: 'draft', translation_of: 'us/en', translation_method: 'machine' });
+
+      const audit = await DB.prepare("SELECT tool, actor FROM mcp_audit WHERE entity_id = 'rp1' AND tool = 'recipes.translate_locale'")
+        .first<{ tool: string; actor: string }>();
+      expect(audit).toEqual({ tool: 'recipes.translate_locale', actor: 'harvester-1' });
+    } finally {
+      globalThis.fetch = realFetch;
+    }
   });
 });
