@@ -50,6 +50,15 @@ export interface AccountStrings {
   warnNoTitle: string; warnNoIngredients: string; warnNoSteps: string; warnImportNoIngredients: string; warnImportNoSteps: string;
   // ssrf import errors
   errSsrfUrlLong: string; errSsrfInvalid: string; errSsrfHttps: string; errSsrfCredentials: string; errSsrfPort: string; errSsrfIpHost: string; errSsrfInternal: string; errSsrfResolve: string; errSsrfNoResolve: string; errSsrfNonPublic: string; errSsrfRedirect: string; errSsrfStatus: string; errSsrfNotPage: string; errSsrfTooLarge: string;
+  // AI kitchen co-editor (photo + voice/rough notes -> structured draft & polish)
+  aiPanelTitle: string; aiPanelLead: string;
+  aiPhotoLabel: string; aiPhotoHint: string;
+  aiVoiceStart: string; aiVoiceStop: string; aiVoiceReady: string;
+  aiNotesLabel: string; aiNotesPlaceholder: string;
+  aiExtractBtn: string; aiPolishBtn: string; aiUndoBtn: string;
+  aiWorking: string; aiDoneExtract: string; aiDonePolish: string;
+  aiQuestionsHeading: string; aiImprovementsHeading: string;
+  aiErrBusy: string; aiErrInput: string;
 }
 
 const en: AccountStrings = {
@@ -148,6 +157,25 @@ const en: AccountStrings = {
   errSsrfNoResolve: 'We could not reach that site.', errSsrfNonPublic: 'That address cannot be imported.',
   errSsrfRedirect: 'That link redirects somewhere we cannot follow.', errSsrfStatus: 'That page did not answer correctly.',
   errSsrfNotPage: 'That link is not a web page.', errSsrfTooLarge: 'That page is too large to import.',
+  aiPanelTitle: 'Snap, speak, or rough-draft with AI',
+  aiPanelLead: 'Attach a photo of your dish or handwritten card, record a quick voice note, or type rough notes — our kitchen co-editor structures the recipe and flags missing details while keeping your voice.',
+  aiPhotoLabel: 'Dish photo or handwritten recipe card',
+  aiPhotoHint: 'JPEG, PNG or WebP (resized in your browser before sending; never stored on third-party servers).',
+  aiVoiceStart: 'Dictate voice note',
+  aiVoiceStop: 'Stop recording',
+  aiVoiceReady: 'Voice note attached',
+  aiNotesLabel: 'Rough notes (how you cooked it)',
+  aiNotesPlaceholder: 'Example: Browned 1 kg pork shoulder in chunks, boiled with onion and garlic 90 min, blended 5 guajillo + 2 ancho chiles with broth, added 800g hominy…',
+  aiExtractBtn: 'Build recipe from photo / notes',
+  aiPolishBtn: 'Polish & check current draft',
+  aiUndoBtn: 'Undo AI changes',
+  aiWorking: 'Structuring your recipe…',
+  aiDoneExtract: 'Draft structured from your notes. Review every line and answer any quick questions below.',
+  aiDonePolish: 'Draft polished for clarity and Cook Mode. You can undo anytime.',
+  aiQuestionsHeading: 'Quick details to make this recipe foolproof:',
+  aiImprovementsHeading: 'What the kitchen co-editor refined:',
+  aiErrBusy: 'The AI kitchen assistant reached today’s free-tier limit. You can still paste text or fill the form directly.',
+  aiErrInput: 'Add a photo, voice note, rough notes, or draft steps first.',
 };
 
 const es: AccountStrings = {
@@ -246,6 +274,25 @@ const es: AccountStrings = {
   errSsrfNoResolve: 'No pudimos conectar con ese sitio.', errSsrfNonPublic: 'Esa dirección no se puede importar.',
   errSsrfRedirect: 'Ese enlace redirige a un lugar que no podemos seguir.', errSsrfStatus: 'Esa página no respondió correctamente.',
   errSsrfNotPage: 'Ese enlace no es una página web.', errSsrfTooLarge: 'Esa página es demasiado grande para importar.',
+  aiPanelTitle: 'Foto, nota de voz o borrador rápido con IA',
+  aiPanelLead: 'Sube una foto de tu plato o tarjeta escrita a mano, graba una nota de voz o escribe notas sueltas — el coeditor estructura la receta y detecta detalles faltantes conservando tu estilo.',
+  aiPhotoLabel: 'Foto del plato o receta escrita a mano',
+  aiPhotoHint: 'JPEG, PNG o WebP (se reduce en tu navegador antes de enviarse; nunca se almacena en servidores externos).',
+  aiVoiceStart: 'Dictar nota de voz',
+  aiVoiceStop: 'Detener grabación',
+  aiVoiceReady: 'Nota de voz adjunta',
+  aiNotesLabel: 'Notas rápidas (cómo lo cocinaste)',
+  aiNotesPlaceholder: 'Ejemplo: Doré 1 kg de espaldilla en trozos, herví con cebolla y ajo 90 min, licué 5 guajillos y 2 anchos, agregué 800 g de maíz pozolero…',
+  aiExtractBtn: 'Crear receta desde foto / notas',
+  aiPolishBtn: 'Pulir y revisar mi borrador',
+  aiUndoBtn: 'Deshacer cambios de IA',
+  aiWorking: 'Estructurando tu receta…',
+  aiDoneExtract: 'Borrador estructurado. Revisa cada línea y responde las preguntas rápidas abajo.',
+  aiDonePolish: 'Borrador pulido para mayor claridad y Modo Cocina. Puedes deshacer en cualquier momento.',
+  aiQuestionsHeading: 'Detalles rápidos para que la receta salga perfecta:',
+  aiImprovementsHeading: 'Lo que mejoró el coeditor de cocina:',
+  aiErrBusy: 'El asistente de IA alcanzó el límite gratuito de hoy. Aún puedes pegar texto o llenar el formulario directamente.',
+  aiErrInput: 'Agrega primero una foto, nota de voz, notas rápidas o pasos en el borrador.',
 };
 
 const fr: AccountStrings = {
@@ -344,6 +391,25 @@ const fr: AccountStrings = {
   errSsrfNoResolve: 'Impossible de joindre ce site.', errSsrfNonPublic: 'Cette adresse ne peut pas être importée.',
   errSsrfRedirect: 'Ce lien redirige vers une destination que nous ne pouvons pas suivre.', errSsrfStatus: 'Cette page n’a pas répondu correctement.',
   errSsrfNotPage: 'Ce lien n’est pas une page web.', errSsrfTooLarge: 'Cette page est trop volumineuse pour être importée.',
+  aiPanelTitle: 'Photo, note vocale ou brouillon rapide avec l’IA',
+  aiPanelLead: 'Ajoutez une photo de votre plat ou d’une fiche manuscrite, dictez une note vocale ou écrivez vos notes en vrac — notre co-éditeur structure la recette et signale les détails manquants.',
+  aiPhotoLabel: 'Photo du plat ou fiche manuscrite',
+  aiPhotoHint: 'JPEG, PNG ou WebP (redimensionnée dans votre navigateur avant envoi ; jamais conservée par des tiers).',
+  aiVoiceStart: 'Dicter une note vocale',
+  aiVoiceStop: 'Arrêter l’enregistrement',
+  aiVoiceReady: 'Note vocale jointe',
+  aiNotesLabel: 'Notes rapides (comment vous l’avez cuisiné)',
+  aiNotesPlaceholder: 'Exemple : J’ai fait dorer 1 kg d’épaule de porc en morceaux, mijoté 90 min avec oignon et ail, mixé 5 piments guajillo et 2 ancho…',
+  aiExtractBtn: 'Créer la recette depuis photo / notes',
+  aiPolishBtn: 'Soigner et vérifier mon brouillon',
+  aiUndoBtn: 'Annuler les modifications IA',
+  aiWorking: 'Structuration de votre recette…',
+  aiDoneExtract: 'Brouillon structuré. Vérifiez chaque ligne et répondez aux questions rapides ci-dessous.',
+  aiDonePolish: 'Brouillon clarifié pour le Mode Cuisine. Vous pouvez annuler à tout moment.',
+  aiQuestionsHeading: 'Petites précisions pour réussir la recette à coup sûr :',
+  aiImprovementsHeading: 'Ce que le co-éditeur a amélioré :',
+  aiErrBusy: 'L’assistant IA a atteint son quota gratuit quotidien. Vous pouvez toujours coller un texte ou remplir le formulaire.',
+  aiErrInput: 'Ajoutez d’abord une photo, une note vocale, des notes ou des étapes.',
 };
 
 const ACCOUNT_STRINGS: Record<string, AccountStrings> = { en, es, fr };

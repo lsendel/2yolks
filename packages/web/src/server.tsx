@@ -1,6 +1,6 @@
 import { renderToString } from 'react-dom/server';
 
-/** Escape text interpolated into raw HTML head elements. */
+/** Escape text interpolated into raw HTML/SVG elements. */
 export function escapeHtml(text: string): string {
   return text
     .replace(/&/g, '&amp;')
@@ -16,6 +16,7 @@ export function safeJsonLd(value: object): string {
     .replace(/>/g, '\\u003e')
     .replace(/&/g, '\\u0026');
 }
+
 import {
   Home,
   RecipeIndex,
@@ -33,9 +34,25 @@ import {
   type SiteNavItem,
   type RecipeRow,
 } from './App';
-import { RECIPE_CLIENT_SCRIPT, DISCOVERY_CLIENT_SCRIPT, CAPTURE_CLIENT_SCRIPT, CAPTURE_CHECK_STRINGS } from './clientScript';
+import {
+  THEME_CLIENT_SCRIPT,
+  RECIPE_CLIENT_SCRIPT,
+  DISCOVERY_CLIENT_SCRIPT,
+  CAPTURE_CLIENT_SCRIPT,
+  CAPTURE_CHECK_STRINGS,
+} from './clientScript';
 import type { RecipePage, IngredientEntry } from '@2yolks/contracts';
-import { uiStrings, renderIngredient, renderStep, defaultUnitSystem, COUNTRY_INTROS, defaultLocale, categoryLabel, recipePathFor } from '@2yolks/contracts';
+import {
+  uiStrings,
+  renderIngredient,
+  renderStep,
+  defaultUnitSystem,
+  COUNTRY_INTROS,
+  defaultLocale,
+  categoryLabel,
+  recipePathFor,
+  isUntested,
+} from '@2yolks/contracts';
 
 export type { SiteNavItem } from './App';
 
@@ -74,15 +91,15 @@ import { AFTER_HOURS_CSS } from './identity';
 
 const BASE_CSS = `
 @font-face { font-family: 'Fraunces'; font-style: normal; font-weight: 300 700; font-display: swap; src: url('/fonts/fraunces-var.woff2') format('woff2'); }
-:root { color-scheme: light; --brand: #c2410c; --brand-strong: #9a3412; --yolk: #f59e0b; --ink: #1c1917; --muted: #57534e; --bg: #fffbf5; --card: #ffffff; --line: #e7e5e4; --line-strong: #d6d3d1; --amber-bg: #fffbeb; --amber-line: #fcd34d; --amber-ink: #78350f; --blue-bg: #eff6ff; --blue-line: #93c5fd; --radius: 0.875rem; --shadow: 0 1px 2px rgb(28 25 23 / 0.05), 0 12px 32px -16px rgb(28 25 23 / 0.28); --font-body: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif; --font-display: 'Fraunces', Georgia, 'Times New Roman', serif; }
+:root { color-scheme: light; --brand: #493253; --brand-strong: #302038; --yolk: #ffd166; --ink: #261b2c; --muted: #64586a; --bg: #faf8f3; --card: #fffdf8; --line: #d7d0cc; --line-strong: #827384; --amber-bg: #fffbeb; --amber-line: #fcd34d; --amber-ink: #78350f; --blue-bg: #eff6ff; --blue-line: #93c5fd; --radius: 0; --shadow: 0 1px 2px rgb(28 25 23 / 0.05), 0 12px 32px -16px rgb(28 25 23 / 0.28); --font-body: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif; --font-display: 'Fraunces', Georgia, 'Times New Roman', serif; }
 * { box-sizing: border-box; }
 body { margin: 0; font-family: var(--font-body); background: var(--bg); color: var(--ink); line-height: 1.6; }
 a { color: var(--brand); }
 a:focus-visible, button:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
-h1, h2 { font-family: var(--font-display); font-weight: 600; letter-spacing: -0.01em; line-height: 1.15; }
+h1, h2 { font-family: var(--font-display); font-weight: 650; letter-spacing: -0.02em; line-height: 1.12; }
 h1 { font-size: clamp(2rem, 4.5vw, 2.9rem); margin: 0.25rem 0 1rem; overflow-wrap: break-word; }
 h2 { font-size: 1.65rem; margin: 2.25rem 0 0.75rem; }
-main { max-width: 44rem; margin: 0 auto; padding: 1.5rem 1rem 3.5rem; }
+main { max-width: 44rem; margin: 0 auto; padding: 1.75rem 1.25rem 3.5rem; }
 main.wide { max-width: 72rem; }
 main img { max-width: 100%; height: auto; }
 /* Header */
@@ -90,42 +107,16 @@ main img { max-width: 100%; height: auto; }
 .header-inner { max-width: 72rem; margin: 0 auto; padding: 0.7rem 1rem; display: flex; align-items: center; gap: 0.75rem 1rem; flex-wrap: wrap; }
 .brand { display: inline-flex; align-items: center; gap: 0.55rem; text-decoration: none; color: var(--ink); }
 .brand-mark { width: 1.75rem; height: 1.75rem; flex-shrink: 0; }
-.brand-word { font-family: var(--font-display); font-weight: 600; font-size: 1.4rem; letter-spacing: -0.01em; }
+.brand-word { font-family: var(--font-display); font-weight: 700; font-size: 1.4rem; letter-spacing: -0.03em; }
 .site-nav { margin-left: auto; display: flex; flex-wrap: wrap; gap: 0.15rem; }
-.site-nav a { padding: 0.45rem 0.85rem; border-radius: 999px; color: var(--muted); text-decoration: none; font-weight: 600; font-size: 0.95rem; }
-.site-nav a:hover { color: var(--ink); background: #f5f5f4; }
-.site-nav a[aria-current="page"] { color: var(--brand-strong); background: #ffedd5; }
+.site-nav a { padding: 0.45rem 0.85rem; color: var(--muted); text-decoration: none; font-weight: 600; font-size: 0.95rem; }
 .skip { position: absolute; left: -9999px; top: 0; background: var(--card); color: var(--ink); padding: 0.5rem 1rem; border: 1px solid var(--line-strong); z-index: 100; }
 .skip:focus { left: 0; }
-/* Hero */
-.hero { display: flex; align-items: center; gap: 2rem; padding: 3.25rem 0 1.75rem; }
-.hero-text { max-width: 44rem; }
-.hero h1 { font-size: clamp(2.4rem, 5.5vw, 3.9rem); line-height: 1.05; margin: 0 0 1rem; }
-.lede { font-size: 1.15rem; color: var(--muted); max-width: 38rem; margin: 0; }
-.hero-art { margin-left: auto; flex-shrink: 0; }
-.hero-egg { width: clamp(96px, 13vw, 160px); height: auto; transform: rotate(6deg); filter: drop-shadow(0 16px 24px rgb(194 65 12 / 0.18)); }
-/* Sections */
-.section { padding: 1.75rem 0 1rem; }
-.section > h2 { margin: 0 0 1.1rem; font-size: 1.75rem; }
-.page-head { margin-bottom: 1.25rem; }
-.page-head h1 { margin: 0 0 0.5rem; }
-/* Country cards */
-.country-grid { list-style: none; margin: 0; padding: 0; display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
-.country-card { position: relative; display: block; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 1.5rem 1.5rem 1.25rem; text-decoration: none; color: var(--ink); overflow: hidden; transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s; }
-.country-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 4px; background: linear-gradient(90deg, var(--brand), var(--yolk)); }
-.country-card:hover { border-color: var(--line-strong); box-shadow: var(--shadow); transform: translateY(-2px); }
-.country-card h3 { font-family: var(--font-display); font-size: 1.6rem; font-weight: 600; margin: 0.25rem 0 0.35rem; }
-.country-card .meta { color: var(--muted); font-size: 0.95rem; margin: 0; padding-right: 1.5rem; }
-.country-card .go { position: absolute; right: 1.25rem; bottom: 0.9rem; color: var(--brand); font-size: 1.3rem; font-weight: 700; }
-.country-block { margin-top: 1.5rem; }
-.country-block-head { font-size: 1.25rem; margin: 0 0 0.75rem; }
-.country-block-head a { color: var(--ink); text-decoration: none; }
-.country-block-head a:hover { color: var(--brand); }
 /* Recipe cards */
 .recipe-grid { list-style: none; margin: 0; padding: 0; display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
 .recipe-card { position: relative; display: flex; flex-direction: column; gap: 0.4rem; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 1.1rem 1.25rem; transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s; }
 .recipe-card:hover { border-color: var(--line-strong); box-shadow: var(--shadow); transform: translateY(-2px); }
-.recipe-card h3 { font-family: var(--font-display); font-size: 1.2rem; font-weight: 600; line-height: 1.3; margin: 0; }
+.recipe-card h3 { font-family: var(--font-display); font-size: 1.2rem; font-weight: 650; line-height: 1.3; margin: 0; }
 .recipe-card h3 a { color: var(--ink); text-decoration: none; }
 .recipe-card h3 a:hover { color: var(--brand); }
 .recipe-card h3 a.stretched::after { content: ''; position: absolute; inset: 0; border-radius: var(--radius); }
@@ -133,7 +124,7 @@ main img { max-width: 100%; height: auto; }
 .meta-country { display: inline-flex; align-items: center; gap: 0.35rem; }
 .yolk-dot { width: 0.5rem; height: 0.5rem; border-radius: 50%; background: var(--yolk); display: inline-block; }
 .chips { display: flex; flex-wrap: wrap; gap: 0.375rem; margin: 0.25rem 0 0; position: relative; z-index: 1; }
-.chip { display: inline-flex; align-items: center; font-size: 0.8rem; font-weight: 600; color: var(--muted); background: var(--bg); border: 1px solid var(--line); border-radius: 999px; padding: 0.18rem 0.65rem; text-decoration: none; }
+.chip { display: inline-flex; align-items: center; font-size: 0.8rem; font-weight: 600; color: var(--muted); background: var(--bg); border: 1px solid var(--line); padding: 0.18rem 0.65rem; text-decoration: none; }
 .chip:hover { color: var(--brand); border-color: var(--brand); }
 /* Category filter */
 .cat-nav { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0 0 1.25rem; }
@@ -155,22 +146,22 @@ main img { max-width: 100%; height: auto; }
 .time-meta { display: flex; flex-wrap: wrap; gap: 0.4rem 1rem; margin: 0 0 1rem; padding: 0.65rem 0.9rem; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); font-size: 0.95rem; }
 .time-item { white-space: nowrap; }
 .time-label { color: var(--muted); font-weight: 600; margin-right: 0.15rem; }
-.badge { display: inline-block; padding: 0.05rem 0.55rem; border-radius: 999px; background: var(--amber-bg); color: var(--amber-ink); border: 1px solid var(--amber-line); font-size: 0.75rem; font-weight: 700; }
-.machine-note { background: var(--blue-bg); border: 1px solid var(--blue-line); border-radius: var(--radius); padding: 0.6rem 0.9rem; font-size: 0.95rem; }
-.untested { background: var(--amber-bg); border: 1px solid var(--amber-line); border-radius: var(--radius); padding: 0.6rem 0.9rem; font-size: 0.95rem; }
+.badge { display: inline-block; padding: 0.05rem 0.55rem; background: var(--amber-bg); color: var(--amber-ink); border: 1px solid var(--amber-line); font-size: 0.75rem; font-weight: 700; }
+.machine-note { background: var(--blue-bg); border: 1px solid var(--blue-line); padding: 0.6rem 0.9rem; font-size: 0.95rem; }
+.untested { background: var(--amber-bg); border: 1px solid var(--amber-line); padding: 0.6rem 0.9rem; font-size: 0.95rem; }
 .langs { font-size: 0.9rem; color: var(--muted); display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; align-items: center; }
 .langs a { display: inline-flex; align-items: center; min-height: 44px; }
 .langs .chip { min-height: 0; }
 .recipe-actions { display: flex; flex-wrap: wrap; gap: 0.5rem 0.75rem; align-items: center; margin: 0.5rem 0 1rem; }
 .recipe-actions .jump { font-weight: 700; text-decoration: none; }
 .recipe-actions .jump:hover { text-decoration: underline; }
-.recipe-actions .cook-open { margin-left: auto; background: var(--brand); color: #fff; border: 0; border-radius: 999px; padding: 0.55rem 1.2rem; font-weight: 700; cursor: pointer; font-size: 0.95rem; }
+.recipe-actions .cook-open { margin-left: auto; background: var(--brand); color: #fff; border: 0; padding: 0.55rem 1.2rem; font-weight: 700; cursor: pointer; font-size: 0.95rem; }
 .recipe-actions .cook-open:hover { background: var(--brand-strong); }
-.recipe-actions .print-open { background: var(--card); color: var(--ink); border: 1px solid var(--line); border-radius: 999px; padding: 0.55rem 1.1rem; font-weight: 600; cursor: pointer; font-size: 0.95rem; }
+.recipe-actions .print-open { background: var(--card); color: var(--ink); border: 1px solid var(--line); padding: 0.55rem 1.1rem; font-weight: 600; cursor: pointer; font-size: 0.95rem; }
 .recipe-actions .print-open:hover { border-color: var(--line-strong); }
 .scaler, .unit-toggle { display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center; margin: 0 0 0.75rem; }
 .scaler-label { color: var(--muted); font-size: 0.9rem; margin-right: 0.25rem; }
-.scaler button, .unit-toggle button { border: 1px solid var(--line); background: var(--card); border-radius: 999px; padding: 0.3rem 0.8rem; cursor: pointer; font-weight: 600; font-size: 0.9rem; color: var(--ink); }
+.scaler button, .unit-toggle button { border: 1px solid var(--line); background: var(--card); padding: 0.3rem 0.8rem; cursor: pointer; font-weight: 600; font-size: 0.9rem; color: var(--ink); }
 .scaler button:hover, .unit-toggle button:hover { border-color: var(--brand); color: var(--brand); }
 .scaler button[aria-pressed="true"], .unit-toggle button[aria-pressed="true"] { background: var(--brand); color: #fff; border-color: var(--brand); }
 ul.ingredients { list-style: none; padding: 0; margin: 0.5rem 0 0; }
@@ -181,25 +172,25 @@ ul.ingredients input { transform: translateY(0.15em); accent-color: var(--brand)
 ul.ingredients input:checked ~ .line { text-decoration: line-through; color: var(--muted); }
 ol.steps { list-style: none; padding: 0; margin: 0.5rem 0 0; counter-reset: step; }
 ol.steps li { counter-increment: step; position: relative; padding-left: 2.9rem; margin: 1rem 0; }
-ol.steps li::before { content: counter(step, decimal-leading-zero); position: absolute; left: 0; top: 0.05rem; font-family: var(--font-display); font-weight: 600; font-size: 1.05rem; color: var(--brand); }
+ol.steps li::before { content: counter(step, decimal-leading-zero); position: absolute; left: 0; top: 0.05rem; font-family: var(--font-display); font-weight: 650; font-size: 1.05rem; color: var(--brand); }
 /* Cook mode */
 .cook-mode { position: fixed; inset: 0; background: var(--bg); z-index: 50; display: flex; }
 .cook-mode[hidden] { display: none; }
 .cook-inner { max-width: 44rem; margin: auto; padding: 1.5rem; width: 100%; display: flex; flex-direction: column; gap: 1.5rem; min-height: 60vh; justify-content: center; }
 .cook-top { display: flex; justify-content: space-between; align-items: center; color: var(--muted); }
-.cook-close { background: var(--card); border: 1px solid var(--line); border-radius: 999px; padding: 0.4rem 1rem; cursor: pointer; font-weight: 600; }
+.cook-close { background: var(--card); color: var(--ink); border: 1px solid var(--line); padding: 0.4rem 1rem; cursor: pointer; font-weight: 600; }
 .cook-step { font-family: var(--font-display); font-size: clamp(1.45rem, 4vw, 1.9rem); line-height: 1.35; font-weight: 500; margin: 0; }
 .cook-nav { display: flex; justify-content: space-between; gap: 1rem; }
-.cook-nav button { flex: 1; background: var(--brand); color: #fff; border: 0; border-radius: 999px; padding: 0.8rem; font-size: 1.05rem; font-weight: 700; cursor: pointer; }
+.cook-nav button { flex: 1; background: var(--brand); color: #fff; border: 0; padding: 0.8rem; font-size: 1.05rem; font-weight: 700; cursor: pointer; }
 .cook-nav button:first-child { background: var(--card); color: var(--ink); border: 1px solid var(--line); }
 .cook-timer { display: flex; gap: 0.75rem; align-items: center; }
 .cook-timer[hidden] { display: none; }
-.timer-btn { border: 1px solid var(--brand); color: var(--brand); background: none; border-radius: 999px; padding: 0.45rem 1rem; font-weight: 600; cursor: pointer; }
+.timer-btn { border: 1px solid var(--brand); color: var(--brand); background: none; padding: 0.45rem 1rem; font-weight: 600; cursor: pointer; }
 .timer-display { font-size: 1.4rem; font-weight: 700; font-variant-numeric: tabular-nums; }
 /* Share + source */
 .share { display: flex; flex-wrap: wrap; gap: 0.5rem 0.75rem; align-items: center; margin: 1.75rem 0 0; font-size: 0.95rem; }
 .share-label { color: var(--muted); }
-.share button { border: 1px solid var(--line); background: var(--card); border-radius: 999px; padding: 0.3rem 0.85rem; cursor: pointer; font-weight: 600; font-size: 0.9rem; }
+.share button { border: 1px solid var(--line); background: var(--card); padding: 0.3rem 0.85rem; cursor: pointer; font-weight: 600; font-size: 0.9rem; }
 .share button:hover { border-color: var(--brand); color: var(--brand); }
 .share button[hidden] { display: none; }
 .share a { font-weight: 600; text-decoration: none; }
@@ -213,7 +204,7 @@ ol.steps li::before { content: counter(step, decimal-leading-zero); position: ab
 .footer-col a { display: block; color: var(--ink); text-decoration: none; padding: 0.22rem 0; font-size: 0.95rem; }
 .footer-col a:hover { color: var(--brand); }
 .footer-fine { max-width: 72rem; margin: 0 auto; padding: 1rem; color: var(--muted); font-size: 0.82rem; border-top: 1px dashed var(--line); }
-@media (max-width: 640px) { .footer-inner { grid-template-columns: 1fr; gap: 1.25rem; } .hero { padding: 2.25rem 0 1.25rem; } .hero-art { display: none; } }
+@media (max-width: 640px) { .footer-inner { grid-template-columns: 1fr; gap: 1.25rem; } }
 @media print { .share, .site-header, .site-footer, .recipe-actions, .scaler, .unit-toggle, .cook-mode, .langs, .crumbs-nav { display: none !important; } body { background: #fff; } main { max-width: none; } ul.ingredients input { display: none; } ul.ingredients li { border-bottom: 0; } }
 `;
 
@@ -242,6 +233,8 @@ const PIN_IMAGE_KEYS = new Set<string>([
   '22d307a4:en',
   '4e23e226:es',
 ]);
+
+const THEME_INIT_SCRIPT = `<script>(function(){try{var t=localStorage.getItem('2y-theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>`;
 
 function shell(body: string, { title, alternates = [], jsonLd, noindex = false, og, nav = [], lang = 'en' }: ShellOptions): string {
   const links = alternates
@@ -279,10 +272,11 @@ function shell(body: string, { title, alternates = [], jsonLd, noindex = false, 
     ${og.description ? `<meta name="twitter:description" content="${escapeHtml(og.description)}" />` : ''}
     ${og.image ? `<meta name="twitter:image" content="${escapeHtml(og.image)}" />` : ''}` : ''}
     ${ld}
+    ${THEME_INIT_SCRIPT}
     <style>${BASE_CSS}\n${AFTER_HOURS_CSS}</style>
     ${ANALYTICS_BEACON}
   </head>
-  <body>${header}${body}${footer}</body>
+  <body>${header}${body}${footer}<script>${THEME_CLIENT_SCRIPT}</script></body>
 </html>`;
 }
 
@@ -441,38 +435,206 @@ export function renderCountryHome(props: CountryHomeProps, nav?: SiteNavItem[], 
   });
 }
 
-export function renderPrivacy(nav?: SiteNavItem[], origin = 'https://2yolks.com'): string {
-  const title = 'Privacy - 2yolks';
-  const description = 'How 2yolks handles privacy: cookieless reading, local unit preferences, and private recipe drafts.';
-  return shell(renderToString(<PrivacyView />), {
+function staticAlternates(origin: string, path: string) {
+  return [
+    { hreflang: 'en', href: `${origin}${path}` },
+    { hreflang: 'es', href: `${origin}${path}?lang=es` },
+    { hreflang: 'fr', href: `${origin}${path}?lang=fr` },
+    { hreflang: 'x-default', href: `${origin}${path}` },
+  ];
+}
+
+export function renderPrivacy(nav?: SiteNavItem[], origin = 'https://2yolks.com', lang = 'en'): string {
+  const l = ['en', 'es', 'fr'].includes(lang) ? lang : 'en';
+  const title = l === 'es' ? 'Privacidad - 2yolks' : l === 'fr' ? 'Confidentialité - 2yolks' : 'Privacy - 2yolks';
+  const description = l === 'es'
+    ? 'Cómo gestiona 2yolks la privacidad: lectura sin cookies y borradores privados.'
+    : l === 'fr'
+      ? 'Comment 2yolks gère la confidentialité : lecture sans cookies et brouillons privés.'
+      : 'How 2yolks handles privacy: cookieless reading, local unit preferences, and private recipe drafts.';
+  const url = l === 'en' ? `${origin}/privacy` : `${origin}/privacy?lang=${l}`;
+  return shell(renderToString(<PrivacyView lang={l} />), {
     title,
     nav,
-    og: { type: 'website', title, description, url: `${origin}/privacy`, locale: 'en_US' },
+    lang: l,
+    alternates: staticAlternates(origin, '/privacy'),
+    og: { type: 'website', title, description, url, locale: (HOME_SEO[l] ?? HOME_SEO.en!).locale },
   });
 }
 
-export function renderAbout(nav?: SiteNavItem[], origin = 'https://2yolks.com'): string {
-  const title = 'About 2yolks';
-  const description = '2yolks is an international recipe platform in English, Spanish, and French with honest testing labels and cleared sources.';
-  return shell(renderToString(<AboutView />), {
+export function renderAbout(nav?: SiteNavItem[], origin = 'https://2yolks.com', lang = 'en'): string {
+  const l = ['en', 'es', 'fr'].includes(lang) ? lang : 'en';
+  const title = l === 'es' ? 'Acerca de 2yolks' : l === 'fr' ? 'À propos de 2yolks' : 'About 2yolks';
+  const description = l === 'es'
+    ? '2yolks es una plataforma internacional de recetas en español, inglés y francés con etiquetas honestas.'
+    : l === 'fr'
+      ? '2yolks est une plateforme internationale de recettes en français, anglais et espagnol avec un statut de test honnête.'
+      : '2yolks is an international recipe platform in English, Spanish, and French with honest testing labels and cleared sources.';
+  const url = l === 'en' ? `${origin}/about` : `${origin}/about?lang=${l}`;
+  return shell(renderToString(<AboutView lang={l} />), {
     title,
     nav,
-    og: { type: 'website', title, description, url: `${origin}/about`, locale: 'en_US', image: `${origin}/img/identity/after-hours.webp` },
+    lang: l,
+    alternates: staticAlternates(origin, '/about'),
+    og: { type: 'website', title, description, url, locale: (HOME_SEO[l] ?? HOME_SEO.en!).locale, image: `${origin}/img/identity/after-hours.webp` },
   });
 }
 
-export function renderHowWeTest(nav?: SiteNavItem[], origin = 'https://2yolks.com'): string {
-  const title = 'How we test and label recipes - 2yolks';
-  const description = 'Every recipe on 2yolks is clearly labeled as Not yet tested or Tested with real kitchen yield and timing.';
-  return shell(renderToString(<HowWeTestView />), {
+export function renderHowWeTest(nav?: SiteNavItem[], origin = 'https://2yolks.com', lang = 'en'): string {
+  const l = ['en', 'es', 'fr'].includes(lang) ? lang : 'en';
+  const title = l === 'es'
+    ? 'Cómo probamos y etiquetamos las recetas - 2yolks'
+    : l === 'fr'
+      ? 'Comment nous testons et étiquetons les recettes - 2yolks'
+      : 'How we test and label recipes - 2yolks';
+  const description = l === 'es'
+    ? 'Cada receta en 2yolks indica claramente si aún no ha sido probada o si ya fue cocinada.'
+    : l === 'fr'
+      ? 'Chaque recette sur 2yolks indique clairement si elle est pas encore testée ou testée en cuisine.'
+      : 'Every recipe on 2yolks is clearly labeled as Not yet tested or Tested with real kitchen yield and timing.';
+  const url = l === 'en' ? `${origin}/how-we-test` : `${origin}/how-we-test?lang=${l}`;
+  return shell(renderToString(<HowWeTestView lang={l} />), {
     title,
     nav,
-    og: { type: 'website', title, description, url: `${origin}/how-we-test`, locale: 'en_US', image: `${origin}/img/identity/after-hours.webp` },
+    lang: l,
+    alternates: staticAlternates(origin, '/how-we-test'),
+    og: { type: 'website', title, description, url, locale: (HOME_SEO[l] ?? HOME_SEO.en!).locale, image: `${origin}/img/identity/after-hours.webp` },
   });
 }
 
 export function renderNotFound(): string {
   return shell(renderToString(<NotFoundView />), { title: 'Page not found - 2yolks', noindex: true });
+}
+
+function wrapTextLines(text: string, maxChars: number, maxLines: number): string[] {
+  const words = text.trim().split(/\s+/).filter(Boolean);
+  const out: string[] = [];
+  let cur = '';
+  for (const w of words) {
+    const next = cur ? `${cur} ${w}` : w;
+    if (next.length <= maxChars || !cur) {
+      cur = next;
+    } else {
+      out.push(cur);
+      cur = w;
+      if (out.length === maxLines - 1) break;
+    }
+  }
+  if (cur && out.length < maxLines) {
+    const usedWords = out.join(' ').split(/\s+/).filter(Boolean).length;
+    const remaining = words.slice(usedWords).join(' ');
+    out.push(remaining.length > maxChars + 4 ? `${remaining.slice(0, maxChars - 1).trimEnd()}…` : remaining);
+  }
+  return out;
+}
+
+/**
+ * Generates a crisp 1080x1920 (9:16) editorial SVG Story / Pinterest / WhatsApp
+ * recipe card on the fly from any published RecipePage. Zero server image libraries.
+ */
+export function renderRecipeCardSvg(page: RecipePage, origin = 'https://2yolks.com'): string {
+  const lang = page.locale.lang;
+  const t = uiStrings(lang);
+  const sys = defaultUnitSystem(page.locale.country);
+  const entries = JSON.parse(page.locale.ingredientsJson) as IngredientEntry[];
+  const steps = JSON.parse(page.locale.stepsJson) as string[];
+  const cat = (categoryLabel(page.recipe.category, lang) ?? t.allRecipes).toUpperCase();
+  const titleLines = wrapTextLines(page.locale.title, 20, 3);
+  const introLines = page.locale.intro ? wrapTextLines(page.locale.intro, 44, 2) : [];
+  const topIngredients = entries
+    .slice(0, 6)
+    .map((e) => renderIngredient(e, lang, sys, 1))
+    .map((line) => (line.length > 46 ? `${line.slice(0, 44).trimEnd()}…` : line));
+  const moreCount = Math.max(0, entries.length - topIngredients.length);
+  const fmtMin = (m: number) => (m >= 60 ? `${Math.floor(m / 60)}h${m % 60 ? ` ${m % 60}m` : ''}` : `${m} min`);
+  const badges: string[] = [];
+  if (page.recipe.totalMinutes != null) badges.push(`${t.timeTotal}: ${fmtMin(page.recipe.totalMinutes)}`);
+  else if (page.recipe.cookMinutes != null) badges.push(`${t.timeCook}: ${fmtMin(page.recipe.cookMinutes)}`);
+  if (page.recipe.baseServings != null) badges.push(`${t.servings}: ${page.recipe.baseServings}`);
+  badges.push(`${steps.length} ${t.steps.toLowerCase()}`);
+  const statusText = isUntested(page.recipe) ? t.untestedBadge : `✓ ${t.testedBadge}`;
+  const canonicalHost = (() => {
+    try { return new URL(origin).host; } catch { return '2yolks.com'; }
+  })();
+  const canonicalPath = recipePathFor(page.locale.country, page.locale.lang, page.locale.slug);
+
+  const titleStartY = 330;
+  const titleStepY = 92;
+  const afterTitleY = titleStartY + titleLines.length * titleStepY + 22;
+  const introStepY = 44;
+  const afterIntroY = afterTitleY + (introLines.length ? introLines.length * introStepY + 34 : 16);
+  const metaBoxY = afterIntroY;
+  const ingBoxY = metaBoxY + 130;
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1920" viewBox="0 0 1080 1920" role="img" aria-label="${escapeHtml(page.locale.title)} — 2yolks">
+  <rect width="1080" height="1920" fill="#211729" />
+  <rect x="44" y="44" width="992" height="1832" fill="none" stroke="#65566e" stroke-width="2" />
+  <rect x="44" y="44" width="992" height="14" fill="#e0fa80" />
+
+  <!-- Brand Header -->
+  <g transform="translate(96, 128)">
+    <text x="0" y="38" fill="#faf7f4" font-family="Fraunces, Georgia, 'Times New Roman', serif" font-size="52" font-weight="700" letter-spacing="-1.5">2yolks</text>
+    <ellipse cx="195" cy="22" rx="20" ry="18" fill="#e0fa80" />
+    <ellipse cx="232" cy="19" rx="18" ry="16.5" fill="#ffd166" />
+    <rect x="610" y="-4" width="278" height="52" fill="#2e2038" stroke="#756580" stroke-width="1.5" />
+    <text x="749" y="30" text-anchor="middle" fill="#e0fa80" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="22" font-weight="700">${escapeHtml(statusText)}</text>
+  </g>
+
+  <!-- Category Eyebrow -->
+  <g transform="translate(96, 224)">
+    <rect x="0" y="0" width="${Math.min(888, Math.max(180, cat.length * 17 + 44))}" height="48" fill="#e0fa80" />
+    <text x="22" y="32" fill="#211729" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="22" font-weight="800" letter-spacing="2.2">${escapeHtml(cat)}</text>
+  </g>
+
+  <!-- Recipe Title -->
+  ${titleLines
+    .map(
+      (line, idx) =>
+        `<text x="96" y="${titleStartY + idx * titleStepY}" fill="#faf7f4" font-family="Fraunces, Georgia, 'Times New Roman', serif" font-size="78" font-weight="700" letter-spacing="-1.6">${escapeHtml(line)}</text>`,
+    )
+    .join('\n  ')}
+
+  <!-- Intro -->
+  ${introLines
+    .map(
+      (line, idx) =>
+        `<text x="96" y="${afterTitleY + idx * introStepY}" fill="#ded5e4" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="30" font-weight="400">${escapeHtml(line)}</text>`,
+    )
+    .join('\n  ')}
+
+  <!-- Facts Strip -->
+  <g transform="translate(96, ${metaBoxY})">
+    <rect x="0" y="0" width="888" height="84" fill="#2b1e35" stroke="#65566e" stroke-width="1.5" />
+    <rect x="0" y="0" width="8" height="84" fill="#e0fa80" />
+    <text x="34" y="52" fill="#e0fa80" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="28" font-weight="700">${escapeHtml(badges.join('   ·   '))}</text>
+  </g>
+
+  <!-- Ingredients Card -->
+  <g transform="translate(96, ${ingBoxY})">
+    <rect x="0" y="0" width="888" height="${Math.min(1680 - ingBoxY, 130 + topIngredients.length * 76 + (moreCount > 0 ? 64 : 24))}" fill="#faf8f3" />
+    <rect x="0" y="0" width="888" height="10" fill="#e0fa80" />
+    <text x="44" y="72" fill="#211729" font-family="Fraunces, Georgia, 'Times New Roman', serif" font-size="40" font-weight="700">${escapeHtml(t.ingredients)}</text>
+    ${topIngredients
+      .map(
+        (ing, idx) => `<g transform="translate(44, ${128 + idx * 74})">
+      <rect x="0" y="-26" width="28" height="28" fill="none" stroke="#493253" stroke-width="2.5" />
+      <text x="48" y="-2" fill="#261b2c" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="30" font-weight="500">${escapeHtml(ing)}</text>
+    </g>`,
+      )
+      .join('\n    ')}
+    ${moreCount > 0
+      ? `<text x="44" y="${132 + topIngredients.length * 74}" fill="#64586a" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="26" font-style="italic">+ ${moreCount} ${escapeHtml(lang === 'es' ? 'ingredientes más' : lang === 'fr' ? 'autres ingrédients' : 'more ingredients')}</text>`
+      : ''}
+  </g>
+
+  <!-- Footer Stamp -->
+  <g transform="translate(96, 1765)">
+    <line x1="0" y1="0" x2="888" y2="0" stroke="#65566e" stroke-width="1.5" />
+    <text x="0" y="54" fill="#e0fa80" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="28" font-weight="700">${escapeHtml(canonicalHost + canonicalPath)}</text>
+    <text x="888" y="54" text-anchor="end" fill="#cbb8d2" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="24" font-weight="600">#CookedWith2Yolks</text>
+  </g>
+</svg>`;
 }
 
 export function renderRecipe(
@@ -600,32 +762,52 @@ export function renderRecipe(
 }
 
 const ACCOUNT_CSS = `
-.acct { max-width: 44rem; margin: 2rem auto; padding: 1.75rem 1.5rem 2rem; border-radius: 1.1rem; }
+.acct { max-width: 46rem; margin: 2rem auto; padding: 1.75rem 1.5rem 2.5rem; }
 .acct h1 { font-family: var(--font-display); margin: 0 0 0.5rem; }
 .acct .lead { color: var(--muted); margin: 0 0 1.5rem; }
 .acct form { display: grid; gap: 0.9rem; margin: 0 0 1.75rem; }
 .acct label { display: grid; gap: 0.3rem; font-weight: 600; font-size: 0.95rem; }
 .acct label small, .acct .hint { font-weight: 400; color: var(--muted); }
-.acct input[type=text], .acct input[type=email], .acct input[type=url], .acct input[type=number], .acct select, .acct textarea { font: inherit; padding: 0.6rem 0.75rem; border: 1px solid var(--line); border-radius: 0.6rem; background: var(--card); color: var(--ink); width: 100%; box-sizing: border-box; }
+.acct input[type=text], .acct input[type=email], .acct input[type=url], .acct input[type=number], .acct select, .acct textarea { font: inherit; padding: 0.6rem 0.75rem; border: 1px solid var(--line-strong); background: var(--card); color: var(--ink); width: 100%; box-sizing: border-box; }
 .acct textarea { min-height: 9rem; }
 .acct .row { display: grid; grid-template-columns: 1fr 1fr; gap: 0.9rem; }
 .acct .check { display: flex; gap: 0.6rem; align-items: flex-start; font-weight: 400; }
 .acct .check input { margin-top: 0.25rem; }
-.acct button, .acct .btn { background: var(--brand); color: #fff; border: 0; border-radius: 999px; padding: 0.7rem 1.4rem; font: inherit; font-weight: 700; cursor: pointer; text-decoration: none; justify-self: start; }
-.acct button.quiet { background: var(--card); color: var(--ink); border: 1px solid var(--line); }
+.acct button, .acct .btn { background: var(--plum); color: var(--lime); border: 1px solid var(--plum); padding: 0.68rem 1.35rem; font: inherit; font-weight: 750; cursor: pointer; text-decoration: none; justify-self: start; display: inline-flex; align-items: center; gap: 0.4rem; }
+.acct button:hover, .acct .btn:hover { background: var(--brand-strong); }
+.acct button:disabled { opacity: 0.55; cursor: not-allowed; }
+.acct button.quiet { background: var(--card); color: var(--ink); border: 1px solid var(--line-strong); font-weight: 650; }
+.acct button.quiet:hover { border-color: var(--plum); }
 .acct .live-checks { list-style: none; padding: 0; margin: 0 0 1rem; font-size: 0.85rem; }
 .acct .live-checks li { padding: 0.15rem 0; }
-.acct .live-checks li.idle { color: #9b8fa3; }
-.acct .live-checks li.ok { color: #3f7a3f; }
-.acct .live-checks li.todo { color: #8a6d3b; }
-.acct .panel { border: 1px solid var(--line); background: var(--card); border-radius: 0.9rem; padding: 1rem 1.1rem; margin: 0 0 1.25rem; }
-.acct .panel h2 { margin: 0 0 0.5rem; font-size: 1.05rem; }
-.acct .err { border-left: 4px solid #b3261e; background: #fdecea; padding: 0.7rem 1rem; border-radius: 0.4rem; margin: 0 0 1rem; }
-.acct .ok { border-left: 4px solid #2e7d32; background: #edf7ee; padding: 0.7rem 1rem; border-radius: 0.4rem; margin: 0 0 1rem; }
+.acct .live-checks li.idle { color: var(--muted); }
+.acct .live-checks li.ok { color: #2e7d32; }
+.acct .live-checks li.todo { color: #9a6700; }
+html[data-theme="dark"] .acct .live-checks li.ok { color: var(--lime); }
+html[data-theme="dark"] .acct .live-checks li.todo { color: #ffd166; }
+html[data-theme="dark"] .acct button, html[data-theme="dark"] .acct .btn { background: var(--lime); color: var(--plum); border-color: var(--lime); }
+html[data-theme="dark"] .acct button.quiet { background: var(--card); color: var(--ink); border-color: var(--line-strong); }
+.acct .panel { border: 1px solid var(--line); background: var(--card); padding: 1.15rem 1.25rem; margin: 0 0 1.25rem; }
+.acct .panel h2 { margin: 0 0 0.45rem; font-size: 1.15rem; }
+.acct .ai-panel { border: 1px solid var(--plum); border-left: 5px solid var(--lime); background: var(--card); }
+html[data-theme="dark"] .acct .ai-panel { border-color: var(--line-strong); border-left-color: var(--lime); }
+.acct .ai-grid { display: grid; gap: 0.85rem; margin-top: 0.75rem; }
+.acct .ai-media-row { display: flex; flex-wrap: wrap; gap: 0.85rem; align-items: center; }
+.acct .ai-preview { width: 84px; height: 84px; object-fit: cover; border: 1px solid var(--line-strong); }
+.acct .ai-actions { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center; }
+.acct .ai-feedback { margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px dashed var(--line); font-size: 0.9rem; }
+.acct .ai-feedback h3 { font-size: 0.95rem; margin: 0 0 0.45rem; }
+.acct .ai-feedback ul { margin: 0; padding-left: 1.2rem; }
+.acct .ai-question { margin-bottom: 0.65rem; }
+.acct .ai-question p { margin: 0 0 0.35rem; font-weight: 600; }
+.acct .ai-choices { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.acct .ai-chip { padding: 0.3rem 0.7rem; font-size: 0.82rem; }
+.acct .err { border-left: 4px solid #b3261e; background: #fdecea; color: #410e0b; padding: 0.7rem 1rem; margin: 0 0 1rem; }
+.acct .ok { border-left: 4px solid #2e7d32; background: #edf7ee; color: #1b431e; padding: 0.7rem 1rem; margin: 0 0 1rem; }
 .acct ul.mine { list-style: none; padding: 0; margin: 0; }
 .acct ul.mine li { display: flex; justify-content: space-between; gap: 1rem; align-items: center; padding: 0.7rem 0; border-bottom: 1px solid var(--line); }
-.acct .badge { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
-@media (max-width: 640px) { .acct .row { grid-template-columns: 1fr; } .acct { margin: 1rem 0.75rem; padding: 1.25rem 1rem 1.5rem; } }
+.acct .badge { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); background: transparent; border: 0; padding: 0; }
+@media (max-width: 640px) { .acct .row { grid-template-columns: 1fr; } .acct { margin: 1rem 0.5rem; padding: 1.25rem 0.85rem 1.75rem; } }
 `;
 
 /** Private, never-indexed page in the After hours shell (account + submissions).

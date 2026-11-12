@@ -13,6 +13,7 @@ import { createDb, recipes, recipeLocales, sources, users } from './db';
 import { sendMail, type MailEnv } from './email';
 import { parseRecipeText, parseJsonLdRecipe, type ParsedRecipe } from './parse';
 import { safeFetchText, SsrfError } from './ssrf';
+import { assistRecipe, reserveAiBudget, sanitizeMediaPart, DEFAULT_AI_DAILY_CAP, type AiAssistRequest } from './aiRecipe';
 
 type RateLimiter = { limit(opts: { key: string }): Promise<{ success: boolean }> };
 export type AccountBindings = MailEnv & {
@@ -22,6 +23,10 @@ export type AccountBindings = MailEnv & {
   REVIEW_NOTIFY_TO?: string;
   /** 'true' turns on link import. Default OFF (DNS-rebinding residual, see ssrf.ts). */
   IMPORT_ENABLED?: string;
+  /** Optional Gemini API key for multimodal recipe capture & co-editing (gemini-3.8-flash). */
+  GEMINI_API_KEY?: string;
+  /** Optional daily cap override for AI invocations (defaults to 40/day). */
+  AI_DAILY_CAP?: string;
   /** Optional Workers rate-limit bindings (approximate, per location). Absent = skipped. */
   RL_AUTH?: RateLimiter;
   RL_SUBMIT?: RateLimiter;
@@ -103,14 +108,26 @@ export async function cleanupExpired(db: D1Database, now: number): Promise<void>
 }
 
 // Cap request bodies before anything is parsed or buffered (streaming-safe).
-accountApp.use('*', bodyLimit({
+// Form routes stay capped at 256 KB; /recipes/ai-assist allows up to 1 MB for a client-resized photo + voice note.
+const standardBodyLimit = bodyLimit({
   maxSize: 256 * 1024,
   onError: (c) => {
     const lang = langOf(c as Ctx);
     const t = accountStrings(lang);
     return c.html(renderAccountPage(t.titleTooLarge, `<div class="err" role="alert">${t.errTooLarge}</div>`, lang, new URL(c.req.url).pathname), 413);
   },
-}));
+});
+const aiBodyLimit = bodyLimit({
+  maxSize: 1024 * 1024,
+  onError: (c) => {
+    const lang = langOf(c as Ctx);
+    return c.json({ ok: false, error: accountStrings(lang).errTooLarge }, 413);
+  },
+});
+accountApp.use('*', async (c, next) => {
+  if (c.req.path.endsWith('/recipes/ai-assist')) return aiBodyLimit(c, next);
+  return standardBodyLimit(c, next);
+});
 
 export async function limited(rl: RateLimiter | undefined, c: Ctx, scope: string): Promise<boolean> {
   if (!rl) return false;
@@ -301,12 +318,32 @@ function captureDataIslands(): string {
 
 function renderForm(s: FormState, t: AccountStrings, acctLang: string, errors: string[] = [], note = '', importOn = false): string {
   const errBox = errors.length ? banner('err', `<strong>${t.fixThese}</strong><ul>${errors.map((e) => `<li>${esc(e)}</li>`).join('')}</ul>`) : '';
+  const aiPanel = `<div class="panel ai-panel" data-ai-panel data-ai-endpoint="/account/recipes/ai-assist${qs(acctLang)}" data-msg-working="${esc(t.aiWorking)}" data-msg-done-extract="${esc(t.aiDoneExtract)}" data-msg-done-polish="${esc(t.aiDonePolish)}" data-msg-err-input="${esc(t.aiErrInput)}">
+<h2>${t.aiPanelTitle}</h2>
+<p class="hint">${t.aiPanelLead}</p>
+<div class="ai-grid">
+  <div class="ai-media-row">
+    <label>${t.aiPhotoLabel}<small>${t.aiPhotoHint}</small><input type="file" accept="image/jpeg,image/png,image/webp" data-ai-photo></label>
+    <img class="ai-preview" data-ai-photo-preview alt="" hidden>
+    <button type="button" class="quiet" data-ai-voice-btn data-label-start="${esc(t.aiVoiceStart)}" data-label-stop="${esc(t.aiVoiceStop)}" data-label-ready="${esc(t.aiVoiceReady)}" hidden>${t.aiVoiceStart}</button>
+    <span class="hint" data-ai-voice-status hidden></span>
+  </div>
+  <label>${t.aiNotesLabel}<textarea data-ai-notes style="min-height:4.5rem" maxlength="12000" placeholder="${esc(t.aiNotesPlaceholder)}"></textarea></label>
+  <div class="ai-actions">
+    <button type="button" data-ai-extract>${t.aiExtractBtn}</button>
+    <button type="button" class="quiet" data-ai-polish>${t.aiPolishBtn}</button>
+    <button type="button" class="quiet" data-ai-undo hidden>${t.aiUndoBtn}</button>
+  </div>
+  <div data-ai-status hidden></div>
+  <div class="ai-feedback" data-ai-improvements-wrap hidden><h3>${t.aiImprovementsHeading}</h3><ul data-ai-improvements></ul></div>
+  <div class="ai-feedback" data-ai-questions-wrap hidden><h3>${t.aiQuestionsHeading}</h3><div data-ai-questions></div></div>
+</div></div>`;
   const entry = s.id ? '' : `<div class="panel"><h2>${t.startFaster}</h2>
 <form method="post" action="/account/recipes/paste${qs(acctLang)}"><label>${t.pasteLabel}<small>${t.pasteHint}</small><textarea name="text" maxlength="60000"></textarea></label><button class="quiet" type="submit">${t.pasteButton}</button></form>
 ${importOn ? `<form method="post" action="/account/recipes/import${qs(acctLang)}"><label>${t.importLabel}<small>${t.importHint}</small><input type="url" name="url" maxlength="2000" placeholder="https://"></label><button class="quiet" type="submit">${t.importButton}</button></form>` : `<p class="hint"><strong>${t.importOffName}</strong> ${t.importOffText}</p>`}</div>`;
   const lang = acctLang;
   const ft = FORM_STRINGS[lang]!;
-  return `<h1>${s.id ? t.formTitleEdit : t.formTitleNew}</h1><p class="lead">${t.formLead}</p>${note}${errBox}${entry}
+  return `<h1>${s.id ? t.formTitleEdit : t.formTitleNew}</h1><p class="lead">${t.formLead}</p>${note}${errBox}${aiPanel}${entry}
 <form method="post" action="/account/recipes/save${qs(acctLang)}" data-capture-form>${s.id ? `<input type="hidden" name="id" value="${esc(s.id)}">` : ''}
 <label><span data-category-prompt>${esc(ft.prompt)}</span><select name="category">${categoryOptions(s.category, lang)}</select></label>
 <label>${t.labelTitle}<input type="text" name="title" value="${esc(s.title)}" maxlength="200" required></label>
@@ -383,6 +420,55 @@ accountApp.post('/recipes/paste', async (c) => {
   const t = accountStrings(langOf(c));
   const warn = p.warnings.length ? banner('err', p.warnings.map((w) => esc(parseWarningMessage(t, w))).join('<br>')) : banner('ok', t.pasteFilled);
   return page(c, t.formTitleNew, rf(c, fromParsed(blank(c.get('user')), p), [], warn));
+});
+
+accountApp.post('/recipes/ai-assist', async (c) => {
+  const user = c.get('user');
+  const lang = langOf(c);
+  const t = accountStrings(lang);
+  if (await limited(c.env.RL_SUBMIT, c, 'ai-assist')) {
+    return c.json({ ok: false, error: t.errTooManyTries }, 429, { 'cache-control': 'no-store' });
+  }
+  let raw: Record<string, unknown>;
+  try {
+    raw = (await c.req.json()) as Record<string, unknown>;
+  } catch {
+    return c.json({ ok: false, error: t.errGeneric }, 400, { 'cache-control': 'no-store' });
+  }
+  const mode: 'extract' | 'polish' = raw['mode'] === 'polish' ? 'polish' : 'extract';
+  const uiLang = isAccountLang(raw['uiLang']) ? raw['uiLang'] : (lang as 'en' | 'es' | 'fr');
+  const recipeLocale = typeof raw['recipeLocale'] === 'string' && raw['recipeLocale'].includes(':') ? raw['recipeLocale'].slice(0, 12) : 'us:en';
+  const notes = str(raw['notes'], 12_000).trim();
+  const image = sanitizeMediaPart(raw['image'], 'image');
+  const audio = sanitizeMediaPart(raw['audio'], 'audio');
+  const dRaw = (raw['draft'] && typeof raw['draft'] === 'object' ? raw['draft'] : {}) as Record<string, unknown>;
+  const draft = {
+    title: str(dRaw['title'], 200).trim(),
+    category: isRecipeCategorySlug(str(dRaw['category'], 40)) ? str(dRaw['category'], 40) : '',
+    intro: str(dRaw['intro'], 2000).trim(),
+    ingredients: Array.isArray(dRaw['ingredients']) ? dRaw['ingredients'].map((x) => str(x, 300).trim()).filter(Boolean).slice(0, 60) : [],
+    steps: Array.isArray(dRaw['steps']) ? dRaw['steps'].map((x) => str(x, 800).trim()).filter(Boolean).slice(0, 50) : [],
+    prep: str(dRaw['prep'], 8).trim(),
+    cook: str(dRaw['cook'], 8).trim(),
+    servings: str(dRaw['servings'], 8).trim(),
+  };
+
+  if (!image && !audio && !notes && draft.ingredients.length === 0 && draft.steps.length === 0) {
+    return c.json({ ok: false, error: t.aiErrInput }, 400, { 'cache-control': 'no-store' });
+  }
+
+  const dailyCap = c.env.AI_DAILY_CAP && Number(c.env.AI_DAILY_CAP) > 0 ? Number(c.env.AI_DAILY_CAP) : DEFAULT_AI_DAILY_CAP;
+  if (!(await reserveAiBudget(c.env.DB, user.id, mode, dailyCap))) {
+    return c.json({ ok: false, error: t.aiErrBusy }, 429, { 'cache-control': 'no-store' });
+  }
+
+  const req: AiAssistRequest = { mode, uiLang, recipeLocale, notes, image, audio, draft };
+  try {
+    const out = await assistRecipe(req, { apiKey: c.env.GEMINI_API_KEY });
+    return c.json({ ok: true, ...out }, 200, { 'cache-control': 'no-store' });
+  } catch {
+    return c.json({ ok: false, error: t.errGeneric }, 503, { 'cache-control': 'no-store' });
+  }
 });
 
 accountApp.post('/recipes/import', async (c) => {

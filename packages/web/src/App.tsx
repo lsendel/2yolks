@@ -1,6 +1,34 @@
 import type { RecipePage } from '@2yolks/contracts';
 import type { IngredientEntry } from '@2yolks/contracts';
-import { SCALE_MULTIPLIERS, defaultUnitSystem, renderIngredient, renderStep, ingredientVariants, stepVariants, isConvertible, hasStepTokens, countryPath, recipePathFor, uiStrings, parseIngredient, scalingIsSafe, isUntested, COUNTRY_INTROS, defaultLocale, categoryLabel, asImageStyle, localizedCountryName } from '@2yolks/contracts';
+import {
+  SCALE_MULTIPLIERS,
+  defaultUnitSystem,
+  renderIngredient,
+  renderStep,
+  ingredientVariants,
+  stepVariants,
+  isConvertible,
+  hasStepTokens,
+  recipePathFor,
+  uiStrings,
+  parseIngredient,
+  scalingIsSafe,
+  isUntested,
+  defaultLocale,
+  categoryLabel,
+  asImageStyle,
+  localizedCountryName,
+} from '@2yolks/contracts';
+import {
+  TwinYolkLogoMark,
+  ArrowUpRightIcon,
+  CategoryIcon,
+  FactIcon,
+  SocialIcon,
+  EmptySkilletIllustration,
+} from './icons';
+
+export { FactIcon };
 
 // ---------------------------------------------------------------------------
 // Site chrome
@@ -35,18 +63,109 @@ export function BrandMark({ large = false }: { large?: boolean }) {
   );
 }
 
+const langQuery = (lang: string) => (lang === 'en' ? '' : `?lang=${lang}`);
+
 export function SiteHeader({ nav = [], lang = 'en' }: { nav?: SiteNavItem[]; lang?: string }) {
   const t = uiStrings(lang);
-  return <header className="site-header"><a className="skip" href="#main">{t.skipToContent}</a><div className="header-inner">
-    <a className="brand" href={`/?lang=${lang}`}><span className="brand-word">2yolks</span><span className="brand-yolks" aria-hidden="true">●●</span></a>
-    <nav className="site-nav" aria-label={lang==='es'?'Recetas':lang==='fr'?'Recettes':'Recipes'}><a href={`/?lang=${lang}#recipes`}>{lang==='es'?'Recetas':lang==='fr'?'Recettes':'Recipes'}</a><a href="/how-we-test">{t.testingShort}</a></nav>
-    <nav className="language-nav" aria-label="Language">{nav.map(item=><a key={item.href} href={item.href} aria-current={item.current?'page':undefined}>{item.label}</a>)}</nav>
-  </div></header>;
+  const lq = langQuery(lang);
+  return (
+    <header className="site-header">
+      <a className="skip" href="#main">{t.skipToContent}</a>
+      <div className="header-inner">
+        <a className="brand" href={`/?lang=${lang}`}>
+          <span className="brand-word">2yolks</span>
+          <TwinYolkLogoMark />
+        </a>
+        <nav className="site-nav" aria-label={lang === 'es' ? 'Recetas' : lang === 'fr' ? 'Recettes' : 'Recipes'}>
+          <a href={`/recipes${lq}`}>{t.allRecipes}</a>
+          <a href={`/how-we-test${lq}`}>{t.testingShort}</a>
+          <a href={`/account${lq}`}>{t.myKitchenNav}</a>
+          <a className="nav-share-cta" href={`/account/recipes/new${lq}`}>
+            <SocialIcon name="plus" />
+            {t.shareRecipeNav}
+          </a>
+        </nav>
+        <div className="header-tools">
+          <nav className="language-nav" aria-label="Language">
+            {nav.map((item) => (
+              <a key={item.href} href={item.href} aria-current={item.current ? 'page' : undefined}>
+                {item.label}
+              </a>
+            ))}
+          </nav>
+          <button
+            type="button"
+            className="theme-toggle"
+            data-theme-toggle
+            aria-label={t.themeToggle}
+            title={t.themeToggle}
+          >
+            <SocialIcon name="moon" className="social-icon icon-moon" />
+            <SocialIcon name="sun" className="social-icon icon-sun" />
+          </button>
+        </div>
+      </div>
+    </header>
+  );
 }
+
 export function SiteFooter({ nav = [], lang = 'en' }: { nav?: SiteNavItem[]; lang?: string }) {
-  return <footer className="site-footer"><div className="footer-inner"><div><a className="brand" href={`/?lang=${lang}`}><span className="brand-word">2yolks</span><span className="brand-yolks" aria-hidden="true">●●</span></a><p>{lang==='es'?'Una cocina pequeña. Un gran apetito.':lang==='fr'?'Petite cuisine. Grand appétit.':'Small kitchen. Big appetite.'}</p></div><nav className="footer-col" aria-label="Language">{nav.map(item=><a key={item.href} href={item.href}>{item.label}</a>)}</nav><nav className="footer-col" aria-label="2yolks"><a href="/about">{lang==='es'?'Acerca de':lang==='fr'?'À propos':'About'}</a><a href="/how-we-test">{lang==='es'?'Cómo probamos':lang==='fr'?'Comment nous testons':'How we test'}</a><a href="/privacy">{lang==='es'?'Privacidad':lang==='fr'?'Confidentialité':'Privacy'}</a></nav></div><p className="footer-fine">{lang==='es'?'Solo marcamos una receta como probada después de cocinarla.':lang==='fr'?'Une recette est testée seulement après avoir été cuisinée.':'A recipe is marked tested only after it has been cooked.'}</p></footer>;
+  const t = uiStrings(lang);
+  const lq = langQuery(lang);
+  return (
+    <footer className="site-footer">
+      <div className="footer-inner">
+        <div>
+          <a className="brand" href={`/?lang=${lang}`}>
+            <span className="brand-word">2yolks</span>
+            <TwinYolkLogoMark />
+          </a>
+          <p className="footer-note">
+            {lang === 'es'
+              ? 'Una cocina pequeña. Un gran apetito.'
+              : lang === 'fr'
+                ? 'Petite cuisine. Grand appétit.'
+                : 'Small kitchen. Big appetite.'}
+          </p>
+          <p className="community-tag">{t.communityTag}</p>
+          <div className="footer-social" aria-label="Social">
+            <a href="https://www.instagram.com/2yolks" target="_blank" rel="noopener noreferrer" aria-label="2yolks Instagram">
+              <SocialIcon name="instagram" />
+            </a>
+            <a href="https://www.tiktok.com/@2yolks" target="_blank" rel="noopener noreferrer" aria-label="2yolks TikTok">
+              <SocialIcon name="tiktok" />
+            </a>
+            <a href="https://www.youtube.com/@2yolks" target="_blank" rel="noopener noreferrer" aria-label="2yolks YouTube">
+              <SocialIcon name="youtube" />
+            </a>
+          </div>
+        </div>
+        <nav className="footer-col" aria-label="Language">
+          {nav.map((item) => (
+            <a key={item.href} href={item.href}>{item.label}</a>
+          ))}
+        </nav>
+        <nav className="footer-col" aria-label="Kitchen">
+          <a href={`/recipes${lq}`}>{t.allRecipes}</a>
+          <a href={`/account/recipes/new${lq}`}>{t.shareRecipeNav}</a>
+          <a href={`/account${lq}`}>{t.myKitchenNav}</a>
+        </nav>
+        <nav className="footer-col" aria-label="2yolks">
+          <a href={`/about${lq}`}>{t.about}</a>
+          <a href={`/how-we-test${lq}`}>{t.testingShort}</a>
+          <a href={`/privacy${lq}`}>{lang === 'es' ? 'Privacidad' : lang === 'fr' ? 'Confidentialité' : 'Privacy'}</a>
+        </nav>
+      </div>
+      <p className="footer-fine">
+        {lang === 'es'
+          ? 'Solo marcamos una receta como probada después de cocinarla.'
+          : lang === 'fr'
+            ? 'Une recette est testée seulement après avoir été cuisinée.'
+            : 'A recipe is marked tested only after it has been cooked.'}
+      </p>
+    </footer>
+  );
 }
-export function FactIcon({kind='clock'}:{kind?:string}) { return <svg className="fact-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">{kind==='servings'?<><circle cx="12" cy="7" r="4"/><path d="M4 22v-3a8 8 0 0 1 16 0v3"/></>:kind==='cook'?<><path d="M5 9h14v10H5zM2 12h3m14 0h3M8 6V3m4 3V2m4 4V3"/></>:<><circle cx="12" cy="12" r="9"/><path d="M12 6v6l4 2"/></>}</svg>; }
 
 export function Crumbs({ items }: { items: { href?: string; label: string }[] }) {
   return (
@@ -142,7 +261,7 @@ export function RecipeCard({
           </span>
         ) : null}
         {cat ? <span className="meta-cat">{cat}</span> : null}
-        {primary.untested ? <span className="badge">{t.untestedBadge}</span> : null}
+        {primary.untested ? <span className="badge">{t.untestedBadge}</span> : <span className="tested-badge"><FactIcon kind="check" />{t.testedBadge}</span>}
       </p>
       {others.length > 0 ? (
         <p className="chips">
@@ -168,51 +287,277 @@ export interface HomeProps {
   activeCategory?: string | null;
   currentCountry?: string | null;
 }
-const DISCOVERY: Record<string,{eyebrow:string;title:string;intro:string;cta:string;index:string;all:string;note:string;illustration:string;total:string;empty:string;noExact:string;nothingMatches:string;didYouMean:string;clearSearch:string}> = {
- en:{eyebrow:'RECIPES WITHOUT BORDERS',title:'Small kitchen. Big appetite.',intro:'Find something worth cooking. Recipes to read, make and share.',cta:"What's cooking?",index:'Find your flavor',all:'All recipes',note:'Every recipe, honestly labeled.',illustration:'AI-generated ingredient illustration, not a dish photograph',total:'Total',empty:'No recipes in this filter yet.',noExact:'No exact match — closest matches:',nothingMatches:"Nothing matches '{q}' yet",didYouMean:'Did you mean:',clearSearch:'Clear search'},
- es:{eyebrow:'RECETAS SIN FRONTERAS',title:'Cocina pequeña. Gran apetito.',intro:'Encuentra algo que quieras cocinar. Recetas para leer, preparar y compartir.',cta:'¿Qué cocinamos?',index:'Encuentra tu sabor',all:'Todas las recetas',note:'Cada receta, con su estado real.',illustration:'Ilustración de ingredientes generada por IA, no es una foto del plato',total:'Total',empty:'Aún no hay recetas en este filtro.',noExact:'Sin coincidencias exactas — resultados más cercanos:',nothingMatches:"Aún no hay coincidencias para '{q}'",didYouMean:'Quizás quisiste decir:',clearSearch:'Borrar búsqueda'},
- fr:{eyebrow:'RECETTES SANS FRONTIÈRES',title:'Petite cuisine. Grand appétit.',intro:'Trouvez une recette à cuisiner. Des recettes à lire, préparer et partager.',cta:'On cuisine quoi ?',index:'Trouvez votre saveur',all:'Toutes les recettes',note:'Chaque recette, avec son statut réel.',illustration:"Illustration d’ingrédients générée par IA, pas une photo du plat",total:'Total',empty:'Aucune recette dans ce filtre.',noExact:'Aucune correspondance exacte — résultats les plus proches :',nothingMatches:"Aucune correspondance pour « {q} » pour l'instant",didYouMean:'Vouliez-vous dire :',clearSearch:'Effacer la recherche'}
+
+const DISCOVERY: Record<string, { eyebrow: string; title: string; intro: string; cta: string; index: string; all: string; note: string; illustration: string; total: string; empty: string; noExact: string; nothingMatches: string; didYouMean: string; clearSearch: string }> = {
+  en: { eyebrow: 'RECIPES WITHOUT BORDERS', title: 'Small kitchen. Big appetite.', intro: 'Find something worth cooking. Recipes to read, make and share.', cta: "What's cooking?", index: 'Find your flavor', all: 'All recipes', note: 'Every recipe, honestly labeled.', illustration: 'AI-generated ingredient illustration, not a dish photograph', total: 'Total', empty: 'No recipes in this filter yet.', noExact: 'No exact match — closest matches:', nothingMatches: "Nothing matches '{q}' yet", didYouMean: 'Did you mean:', clearSearch: 'Clear search' },
+  es: { eyebrow: 'RECETAS SIN FRONTERAS', title: 'Cocina pequeña. Gran apetito.', intro: 'Encuentra algo que quieras cocinar. Recetas para leer, preparar y compartir.', cta: '¿Qué cocinamos?', index: 'Encuentra tu sabor', all: 'Todas las recetas', note: 'Cada receta, con su estado real.', illustration: 'Ilustración de ingredientes generada por IA, no es una foto del plato', total: 'Total', empty: 'Aún no hay recetas en este filtro.', noExact: 'Sin coincidencias exactas — resultados más cercanos:', nothingMatches: "Aún no hay coincidencias para '{q}'", didYouMean: 'Quizás quisiste decir:', clearSearch: 'Borrar búsqueda' },
+  fr: { eyebrow: 'RECETTES SANS FRONTIÈRES', title: 'Petite cuisine. Grand appétit.', intro: 'Trouvez une recette à cuisiner. Des recettes à lire, préparer et partager.', cta: 'On cuisine quoi ?', index: 'Trouvez votre saveur', all: 'Toutes les recettes', note: 'Chaque recette, avec son statut réel.', illustration: 'Illustration d’ingrédients générée par IA, pas une photo du plat', total: 'Total', empty: 'Aucune recette dans ce filtre.', noExact: 'Aucune correspondance exacte — résultats les plus proches :', nothingMatches: "Aucune correspondance pour « {q} » pour l'instant", didYouMean: 'Vouliez-vous dire :', clearSearch: 'Effacer la recherche' },
 };
+
 export function discoveryRecipes(rows: RecipeRow[], lang: string): RecipeRow[] {
- const groups = new Map<string,RecipeRow[]>();
- for(const row of rows) groups.set(row.id,[...(groups.get(row.id)??[]),row]);
- return [...groups.values()].map(list=>list.find(r=>r.lang===lang)??list.find(r=>r.lang==='en')??list[0]!).sort((a,b)=>a.id.localeCompare(b.id));
-}
-export function RecipeIndex({ recipes, lang='en' }: { recipes: RecipeRow[]; lang?: string }) {
- const d=DISCOVERY[lang]??DISCOVERY.en!; const t=uiStrings(lang);
- const selected=discoveryRecipes(recipes,lang);
- const groups=new Map<string,RecipeRow[]>();
- for(const r of selected) groups.set(r.category??'',[...(groups.get(r.category??'')??[]),r]);
- const categories=[...groups.keys()].sort((a,b)=>{
-  if(!a) return 1; if(!b) return -1;
-  return (categoryLabel(a,lang)??a).localeCompare(categoryLabel(b,lang)??b);
- });
- const time=(n:number)=>n>=60?`${Math.floor(n/60)} h${n%60?' '+n%60+' min':''}`:`${n} min`;
- return <main className="wide discovery" id="main"><section className="discovery-index"><div className="index-heading"><h1>{d.all}</h1><p>{d.note}</p></div>
- {categories.map(cat=><section key={cat||'uncategorized'} className="index-category"><h2>{cat?(categoryLabel(cat,lang)??cat):d.all}</h2><ul className="discovery-list">{(groups.get(cat)??[]).map(r=><li key={r.id} data-recipe-item><div><h3><a className="stretched-row" href={recipePathFor(r.country,r.lang,r.slug)}>{r.title}</a></h3><div className="row-badges">{r.untested?<span className="status-label">{t.untestedBadge}</span>:null}{r.lang!==lang?<span className="fallback-language">{LANG_NAMES[r.lang]}</span>:null}</div></div><div className="row-end">{r.totalMinutes!=null?<span className="icon-stat"><FactIcon/>{time(r.totalMinutes)}</span>:null}</div></li>)}</ul></section>)}
- </section></main>;
+  const groups = new Map<string, RecipeRow[]>();
+  for (const row of rows) groups.set(row.id, [...(groups.get(row.id) ?? []), row]);
+  return [...groups.values()]
+    .map((list) => list.find((r) => r.lang === lang) ?? list.find((r) => r.lang === 'en') ?? list[0]!)
+    .sort((a, b) => a.id.localeCompare(b.id));
 }
 
-export function Home({ recipes, lang='en', activeCategory=null, currentCountry=null }: HomeProps) {
- const d=DISCOVERY[lang]??DISCOVERY.en!; const selected=discoveryRecipes(recipes,lang);
- const t=uiStrings(lang);
- const counts = new Map<string, number>();
- for (const r of selected) {
-   if (r.category && categoryLabel(r.category, lang)) {
-     counts.set(r.category, (counts.get(r.category) ?? 0) + 1);
-   }
- }
- const categories = [...counts.keys()].sort((a, b) => {
-   const diff = (counts.get(b) ?? 0) - (counts.get(a) ?? 0);
-   return diff !== 0 ? diff : a.localeCompare(b);
- });
- const filtered=activeCategory?selected.filter(r=>r.category===activeCategory):selected;
- const featured=selected.find(r=>r.id==='w1pozole')??selected[0];
- const href=(r:RecipeRow)=>recipePathFor(r.country,r.lang,r.slug);
- const time=(n:number)=>n>=60?`${Math.floor(n/60)} h${n%60?' '+n%60+' min':''}`:`${n} min`;
- return <main className="wide discovery" id="main"><section className="after-hero"><div className="after-copy"><span className="eyebrow">{d.eyebrow}</span><h1>{d.title}</h1><p>{d.intro}</p><a className="discovery-cta" href="#recipes">{d.cta}<span aria-hidden="true">↗</span></a></div><figure className="identity-art"><img src="/img/identity/after-hours.webp" alt="" width="900" height="900" fetchPriority="high"/><figcaption>{d.illustration}</figcaption></figure></section>
- {featured?<section className="featured-recipe"><div><span className="eyebrow">{categoryLabel(featured.category,lang)??d.all}</span><h2><a href={href(featured)}>{featured.title}<span aria-hidden="true">↗</span></a></h2></div><div className="featured-facts">{featured.totalMinutes!=null?<span className="icon-stat"><FactIcon/>{d.total} · {time(featured.totalMinutes)}</span>:null}{featured.untested?<span className="status-label">{t.untestedBadge}</span>:null}</div></section>:null}
- <section id="recipes" className="discovery-index"><div className="index-heading"><h2>{d.index}</h2><p>{d.note}</p></div><div className="discovery-toolbar"><nav className="cat-nav" aria-label={t.categories}><a href={`/?lang=${lang}#recipes`} className="chip" aria-current={!activeCategory?'page':undefined}>{d.all}</a>{categories.map(cat=><a key={cat} className="chip" aria-current={cat===activeCategory?'page':undefined} href={`/?lang=${lang}&cat=${cat}#recipes`}>{categoryLabel(cat,lang)}</a>)}</nav><div className="discovery-search-wrap"><input type="search" className="discovery-search" data-recipe-search placeholder={t.searchPlaceholder} aria-label={t.searchPlaceholder} autoComplete="off"/></div></div><p className="closest-match-note" data-closest-note hidden>{d.noExact}</p><ul className="discovery-list" data-recipe-list>{filtered.map((r,i)=>{const catText=categoryLabel(r.category,lang);const searchBody=`${r.ingredients??''} ${r.intro??''}`.trim();const isCrossLocale=Boolean(currentCountry && r.country && r.country !== currentCountry);return <li key={r.id} data-recipe-item data-title={r.title} data-category={catText??''} data-body={searchBody} data-search={`${r.title} ${catText??''} ${searchBody}`.toLowerCase()} className={r.imageId&&asImageStyle(r.imageStyle)?'has-thumb':undefined}><span className="recipe-number">{String(i+1).padStart(2,'0')}</span>{r.imageId&&asImageStyle(r.imageStyle)?<span className="recipe-thumb"><img src={`/img/recipe/${r.imageId}`} alt="" loading="lazy" width="96" height="96"/><span className="thumb-label">{r.imageStyle==='illustration'?t.imageLabelIllustration:r.imageStyle==='graphic'?t.imageLabelGraphic:r.imageStyle==='photo'?t.imageLabelPhoto:null}</span></span>:null}<div>{catText?<span className="eyebrow">{catText}</span>:null}<h3><a className="stretched-row" href={href(r)}>{r.title}</a></h3><div className="row-badges">{r.untested?<span className="status-label">{t.untestedBadge}</span>:null}{r.lang!==lang?<span className="fallback-language">{LANG_NAMES[r.lang]}</span>:null}{isCrossLocale?<span className="provenance-badge">{localizedCountryName(r.country, lang)}</span>:null}</div></div><div className="row-end">{r.totalMinutes!=null?<span className="icon-stat"><FactIcon/>{time(r.totalMinutes)}</span>:null}<a href={href(r)} aria-label={r.title} tabIndex={-1}>↗</a></div></li>;})}</ul><div className="empty-note" data-search-empty data-nothing-matches={d.nothingMatches} hidden><p data-empty-msg>{d.empty}</p><div data-empty-suggestions hidden><p className="suggestions-heading">{d.didYouMean}</p><ul data-suggestions-list className="suggestions-list"></ul></div><button type="button" className="btn-clear" data-clear-search>{d.clearSearch}</button></div>{filtered.length===0?<p className="empty-note">{d.empty}</p>:null}</section></main>;
+export function RecipeIndex({ recipes, lang = 'en' }: { recipes: RecipeRow[]; lang?: string }) {
+  const d = DISCOVERY[lang] ?? DISCOVERY.en!;
+  const t = uiStrings(lang);
+  const selected = discoveryRecipes(recipes, lang);
+  const groups = new Map<string, RecipeRow[]>();
+  for (const r of selected) groups.set(r.category ?? '', [...(groups.get(r.category ?? '') ?? []), r]);
+  const categories = [...groups.keys()].sort((a, b) => {
+    if (!a) return 1;
+    if (!b) return -1;
+    return (categoryLabel(a, lang) ?? a).localeCompare(categoryLabel(b, lang) ?? b);
+  });
+  const time = (n: number) => (n >= 60 ? `${Math.floor(n / 60)} h${n % 60 ? ' ' + (n % 60) + ' min' : ''}` : `${n} min`);
+  return (
+    <main className="wide discovery" id="main">
+      <section className="discovery-index">
+        <div className="index-heading">
+          <h1>{d.all}</h1>
+          <p>{d.note}</p>
+        </div>
+        {categories.map((cat) => (
+          <section key={cat || 'uncategorized'} className="index-category">
+            <h2>{cat ? (categoryLabel(cat, lang) ?? cat) : d.all}</h2>
+            <ul className="discovery-list">
+              {(groups.get(cat) ?? []).map((r) => (
+                <li key={r.id} data-recipe-item>
+                  <div>
+                    <h3>
+                      <a className="stretched-row" href={recipePathFor(r.country, r.lang, r.slug)}>{r.title}</a>
+                    </h3>
+                    <div className="row-badges">
+                      {r.untested ? (
+                        <span className="status-label">{t.untestedBadge}</span>
+                      ) : (
+                        <span className="tested-badge"><FactIcon kind="check" />{t.testedBadge}</span>
+                      )}
+                      {r.lang !== lang ? <span className="fallback-language">{LANG_NAMES[r.lang]}</span> : null}
+                    </div>
+                  </div>
+                  <div className="row-end">
+                    {r.totalMinutes != null ? <span className="icon-stat"><FactIcon />{time(r.totalMinutes)}</span> : null}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ))}
+      </section>
+    </main>
+  );
+}
+
+export function Home({ recipes, lang = 'en', activeCategory = null, currentCountry = null }: HomeProps) {
+  const d = DISCOVERY[lang] ?? DISCOVERY.en!;
+  const selected = discoveryRecipes(recipes, lang);
+  const t = uiStrings(lang);
+  const lq = langQuery(lang);
+  const counts = new Map<string, number>();
+  for (const r of selected) {
+    if (r.category && categoryLabel(r.category, lang)) {
+      counts.set(r.category, (counts.get(r.category) ?? 0) + 1);
+    }
+  }
+  const categories = [...counts.keys()].sort((a, b) => {
+    const diff = (counts.get(b) ?? 0) - (counts.get(a) ?? 0);
+    return diff !== 0 ? diff : a.localeCompare(b);
+  });
+  const filtered = activeCategory ? selected.filter((r) => r.category === activeCategory) : selected;
+  const featured = selected.find((r) => r.id === 'w1pozole') ?? selected[0];
+  const href = (r: RecipeRow) => recipePathFor(r.country, r.lang, r.slug);
+  const time = (n: number) => (n >= 60 ? `${Math.floor(n / 60)} h${n % 60 ? ' ' + (n % 60) + ' min' : ''}` : `${n} min`);
+  return (
+    <main className="wide discovery" id="main">
+      <section className="after-hero">
+        <div className="after-copy">
+          <span className="eyebrow">{d.eyebrow}</span>
+          <h1>{d.title}</h1>
+          <p>{d.intro}</p>
+          <div className="hero-cta-row">
+            <a className="discovery-cta" href="#recipes">
+              {d.cta}
+              <ArrowUpRightIcon />
+            </a>
+            <a className="discovery-cta-secondary" href={`/account/recipes/new${lq}`}>
+              <SocialIcon name="plus" />
+              {t.shareRecipeNav}
+            </a>
+          </div>
+        </div>
+        <figure className="identity-art">
+          <img src="/img/identity/after-hours.webp" alt="" width="900" height="900" fetchPriority="high" />
+          <figcaption>{d.illustration}</figcaption>
+        </figure>
+      </section>
+      {featured ? (
+        <section className="featured-recipe">
+          <div>
+            <span className="eyebrow">{categoryLabel(featured.category, lang) ?? d.all}</span>
+            <h2>
+              <a href={href(featured)}>
+                {featured.title}
+                <ArrowUpRightIcon />
+              </a>
+            </h2>
+          </div>
+          <div className="featured-facts">
+            {featured.totalMinutes != null ? (
+              <span className="icon-stat">
+                <FactIcon />
+                {d.total} · {time(featured.totalMinutes)}
+              </span>
+            ) : null}
+            {featured.untested ? (
+              <span className="status-label">{t.untestedBadge}</span>
+            ) : (
+              <span className="tested-badge">
+                <FactIcon kind="check" />
+                {t.testedBadge}
+              </span>
+            )}
+          </div>
+        </section>
+      ) : null}
+      <section id="recipes" className="discovery-index">
+        <div className="index-heading">
+          <h2>{d.index}</h2>
+          <p>{d.note}</p>
+        </div>
+        <div className="discovery-toolbar">
+          <nav className="cat-nav" aria-label={t.categories}>
+            <a href={`/?lang=${lang}#recipes`} className="chip" aria-current={!activeCategory ? 'page' : undefined}>
+              {d.all}
+            </a>
+            {categories.map((cat) => (
+              <a
+                key={cat}
+                className="chip"
+                aria-current={cat === activeCategory ? 'page' : undefined}
+                href={`/?lang=${lang}&cat=${cat}#recipes`}
+              >
+                <CategoryIcon slug={cat} />
+                {categoryLabel(cat, lang)}
+              </a>
+            ))}
+          </nav>
+          <div className="toolbar-controls">
+            <div className="discovery-search-wrap">
+              <input
+                type="search"
+                className="discovery-search"
+                data-recipe-search
+                placeholder={t.searchPlaceholder}
+                aria-label={t.searchPlaceholder}
+                autoComplete="off"
+              />
+            </div>
+            <div className="view-toggle" role="group" aria-label={d.index} data-view-toggle>
+              <button type="button" data-view-btn="list" aria-pressed="true" title={t.viewList}>
+                <SocialIcon name="index" />
+                {t.viewList}
+              </button>
+              <button type="button" data-view-btn="grid" aria-pressed="false" title={t.viewGrid}>
+                <SocialIcon name="grid" />
+                {t.viewGrid}
+              </button>
+            </div>
+          </div>
+        </div>
+        <p className="closest-match-note" data-closest-note hidden>{d.noExact}</p>
+        <ul className="discovery-list" data-recipe-list>
+          {filtered.map((r, i) => {
+            const catText = categoryLabel(r.category, lang);
+            const searchBody = `${r.ingredients ?? ''} ${r.intro ?? ''}`.trim();
+            const isCrossLocale = Boolean(currentCountry && r.country && r.country !== currentCountry);
+            return (
+              <li
+                key={r.id}
+                data-recipe-item
+                data-title={r.title}
+                data-category={catText ?? ''}
+                data-body={searchBody}
+                data-search={`${r.title} ${catText ?? ''} ${searchBody}`.toLowerCase()}
+                className={r.imageId && asImageStyle(r.imageStyle) ? 'has-thumb' : undefined}
+              >
+                <span className="recipe-number">{String(i + 1).padStart(2, '0')}</span>
+                {r.imageId && asImageStyle(r.imageStyle) ? (
+                  <span className="recipe-thumb">
+                    <img src={`/img/recipe/${r.imageId}`} alt="" loading="lazy" width="96" height="96" />
+                    <span className="thumb-label">
+                      {r.imageStyle === 'illustration'
+                        ? t.imageLabelIllustration
+                        : r.imageStyle === 'graphic'
+                          ? t.imageLabelGraphic
+                          : r.imageStyle === 'photo'
+                            ? t.imageLabelPhoto
+                            : null}
+                    </span>
+                  </span>
+                ) : null}
+                <div>
+                  {catText ? (
+                    <span className="eyebrow">
+                      <CategoryIcon slug={r.category} />
+                      {catText}
+                    </span>
+                  ) : null}
+                  <h3>
+                    <a className="stretched-row" href={href(r)}>{r.title}</a>
+                  </h3>
+                  {r.intro ? <p className="card-intro">{r.intro}</p> : null}
+                  <div className="row-badges">
+                    {r.untested ? (
+                      <span className="status-label">{t.untestedBadge}</span>
+                    ) : (
+                      <span className="tested-badge">
+                        <FactIcon kind="check" />
+                        {t.testedBadge}
+                      </span>
+                    )}
+                    {r.lang !== lang ? <span className="fallback-language">{LANG_NAMES[r.lang]}</span> : null}
+                    {isCrossLocale ? <span className="provenance-badge">{localizedCountryName(r.country, lang)}</span> : null}
+                  </div>
+                </div>
+                <div className="row-end">
+                  {r.totalMinutes != null ? (
+                    <span className="icon-stat">
+                      <FactIcon />
+                      {time(r.totalMinutes)}
+                    </span>
+                  ) : null}
+                  <a href={href(r)} aria-label={r.title} tabIndex={-1}>
+                    <ArrowUpRightIcon />
+                  </a>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+        <div className="empty-note empty-search-card" data-search-empty data-nothing-matches={d.nothingMatches} hidden>
+          <EmptySkilletIllustration />
+          <p data-empty-msg>{d.empty}</p>
+          <div data-empty-suggestions hidden>
+            <p className="suggestions-heading">{d.didYouMean}</p>
+            <ul data-suggestions-list className="suggestions-list"></ul>
+          </div>
+          <div className="empty-actions">
+            <button type="button" className="btn-clear" data-clear-search>{d.clearSearch}</button>
+            <a className="empty-share-link" href={`/account/recipes/new${lq}`}>
+              <SocialIcon name="plus" />
+              {t.emptyShareCta}
+            </a>
+          </div>
+        </div>
+        {filtered.length === 0 ? <p className="empty-note">{d.empty}</p> : null}
+      </section>
+    </main>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -230,8 +575,8 @@ export interface CountryHomeProps {
 }
 
 export function CountryHome({ country, recipes, activeCategory = null }: CountryHomeProps) {
- const lang=defaultLocale(country)??'en';
- return <Home locales={[]} recipes={recipes} lang={lang} activeCategory={activeCategory} currentCountry={country} />;
+  const lang = defaultLocale(country) ?? 'en';
+  return <Home locales={[]} recipes={recipes} lang={lang} activeCategory={activeCategory} currentCountry={country} />;
 }
 
 // ---------------------------------------------------------------------------
@@ -252,7 +597,11 @@ export function shareLinks(url: string, title: string, imageUrl?: string | null)
     { key: 'email', label: '', href: `mailto:?subject=${t}&body=${t}%0A%0A${u}` },
   ];
   if (imageUrl) {
-    links.splice(1, 0, { key: 'pinterest', label: 'Pinterest', href: `https://www.pinterest.com/pin/create/button/?url=${u}&media=${encodeURIComponent(imageUrl)}&description=${t}` });
+    links.splice(1, 0, {
+      key: 'pinterest',
+      label: 'Pinterest',
+      href: `https://www.pinterest.com/pin/create/button/?url=${u}&media=${encodeURIComponent(imageUrl)}&description=${t}`,
+    });
   }
   return links;
 }
@@ -262,7 +611,6 @@ export function RecipeView({
   alternates = [],
   canonicalUrl,
   imageUrl,
-  countryName,
   related = [],
 }: {
   page: RecipePage;
@@ -288,12 +636,12 @@ export function RecipeView({
   const cat = categoryLabel(page.recipe.category, lang);
   const r = page.recipe;
   const fmtMin = (m: number) => (m >= 60 ? `${Math.floor(m / 60)} h ${m % 60 > 0 ? `${m % 60} min` : ''}`.trim() : `${m} min`);
-  const timeItems: { label: string; value: string }[] = [];
-  if (r.baseServings != null) timeItems.push({ label: t.servings, value: String(r.baseServings) });
-  if (r.prepMinutes != null) timeItems.push({ label: t.timePrep, value: fmtMin(r.prepMinutes) });
-  if (r.cookMinutes != null) timeItems.push({ label: t.timeCook, value: fmtMin(r.cookMinutes) });
-  if (r.restMinutes != null) timeItems.push({ label: t.timeRest, value: fmtMin(r.restMinutes) });
-  if (r.totalMinutes != null) timeItems.push({ label: t.timeTotal, value: fmtMin(r.totalMinutes) });
+  const timeItems: { kind: string; label: string; value: string }[] = [];
+  if (r.baseServings != null) timeItems.push({ kind: 'servings', label: t.servings, value: String(r.baseServings) });
+  if (r.prepMinutes != null) timeItems.push({ kind: 'prep', label: t.timePrep, value: fmtMin(r.prepMinutes) });
+  if (r.cookMinutes != null) timeItems.push({ kind: 'cook', label: t.timeCook, value: fmtMin(r.cookMinutes) });
+  if (r.restMinutes != null) timeItems.push({ kind: 'rest', label: t.timeRest, value: fmtMin(r.restMinutes) });
+  if (r.totalMinutes != null) timeItems.push({ kind: 'clock', label: t.timeTotal, value: fmtMin(r.totalMinutes) });
   const crumbItems: { href?: string; label: string }[] = [
     { href: `/?lang=${lang}`, label: t.home },
   ];
@@ -301,12 +649,14 @@ export function RecipeView({
     crumbItems.push({ href: `/?lang=${lang}&cat=${page.recipe.category}#recipes`, label: cat });
   }
   crumbItems.push({ label: page.locale.title });
+  const cardSvgPath = `${recipePathFor(page.locale.country, page.locale.lang, page.locale.slug)}/card.svg`;
   return (
     <main id="main" className="recipe-page">
       <Crumbs items={crumbItems} />
       <header className="recipe-header">
         {cat && page.recipe.category ? (
           <a className="recipe-eyebrow" href={`/?lang=${lang}&cat=${page.recipe.category}#recipes`}>
+            <CategoryIcon slug={page.recipe.category} />
             {cat}
           </a>
         ) : null}
@@ -322,7 +672,8 @@ export function RecipeView({
       {timeItems.length > 0 ? (
         <p className="time-meta">
           {timeItems.map((it, i) => (
-            <span key={i} className="time-item"><FactIcon kind={it.label===t.servings?'servings':it.label===t.timeCook?'cook':'clock'}/>
+            <span key={i} className="time-item">
+              <FactIcon kind={it.kind} />
               <span className="time-label">{it.label}</span> {it.value}
             </span>
           ))}
@@ -334,7 +685,8 @@ export function RecipeView({
         </a>
         {canonicalUrl ? (
           <a href="#share-bar" className="share-jump">
-            {t.share} &nearr;
+            <SocialIcon name="share" />
+            {t.share}
           </a>
         ) : null}
         <button type="button" className="print-open" data-print-open>
@@ -361,10 +713,15 @@ export function RecipeView({
       {isUntested(page.recipe) ? (
         <p className="untested" role="note">
           <span className="badge">{t.untestedBadge}</span> {t.untestedNote}{' '}
-          <a href="/how-we-test">{t.howWeTest}</a>{' '}
-          <a href={`/account/recipes/${page.recipe.id}/test-report${lang === 'en' ? '' : `?lang=${lang}`}`}>{t.testReportCta}</a>
+          <a href={`/how-we-test${langQuery(lang)}`}>{t.howWeTest}</a>{' '}
+          <a href={`/account/recipes/${page.recipe.id}/test-report${langQuery(lang)}`}>{t.testReportCta}</a>
         </p>
-      ) : null}
+      ) : (
+        <p className="tested-banner" role="note">
+          <span className="badge">{t.testedBadge}</span>{' '}
+          <a href={`/how-we-test${langQuery(lang)}`}>{t.howWeTest}</a>
+        </p>
+      )}
       {page.locale.translationOf && page.locale.translationMethod === 'machine' && page.locale.translationReviewerKind !== 'human' ? (
         <p className="machine-note" role="note">
           <span className="badge">{page.locale.lang === 'es' ? 'Traducci\u00f3n autom\u00e1tica' : page.locale.lang === 'fr' ? 'Traduction automatique' : 'Machine-translated'}</span> {t.machineNote}
@@ -377,7 +734,12 @@ export function RecipeView({
             <div className="ing-tools">
               <span className="ing-progress" data-ing-progress hidden />
               <button type="button" className="copy-ing-btn" data-copy-ingredients data-copied={t.ingredientsCopied}>
+                <SocialIcon name="copy" />
                 {t.copyIngredients}
+              </button>
+              <button type="button" className="copy-ing-btn" data-share-grocery data-copied={t.groceryListReady}>
+                <SocialIcon name="list" />
+                {t.shareGroceryList}
               </button>
             </div>
           </div>
@@ -434,11 +796,34 @@ export function RecipeView({
             <span className="share-sub">{t.shareSubhead}</span>
           </div>
           <div className="share-buttons">
-            <button type="button" className="share-native" data-share-native hidden>{t.share}</button>
-            <button type="button" className="share-copy" data-share-copy data-copied={t.linkCopied}>{t.copyLink}</button>
-            <button type="button" className="share-card-btn" data-share-card data-copied={t.recipeCardCopied}>{t.copyRecipeCard}</button>
+            <button type="button" className="share-native" data-share-native hidden>
+              <SocialIcon name="share" />
+              {t.share}
+            </button>
+            <button type="button" className="share-copy" data-share-copy data-copied={t.linkCopied}>
+              <SocialIcon name="copy" />
+              {t.copyLink}
+            </button>
+            <button
+              type="button"
+              className="share-story-btn"
+              data-story-card
+              data-card-svg={cardSvgPath}
+              data-recipe-slug={page.locale.slug}
+              data-copied={t.storyCardReady}
+            >
+              <SocialIcon name="story" />
+              {t.saveStoryCard}
+            </button>
+            <button type="button" className="share-card-btn" data-share-card data-copied={t.recipeCardCopied}>
+              <SocialIcon name="card" />
+              {t.copyRecipeCard}
+            </button>
             {shareLinks(canonicalUrl, page.locale.title, imageUrl).map((l) => (
-              <a key={l.key} className={`share-link share-${l.key}`} href={l.href} target="_blank" rel="noopener noreferrer">{l.label || t.shareEmail}</a>
+              <a key={l.key} className={`share-link share-${l.key}`} href={l.href} target="_blank" rel="noopener noreferrer">
+                <SocialIcon name={l.key} />
+                {l.label || t.shareEmail}
+              </a>
             ))}
           </div>
         </nav>
@@ -472,7 +857,9 @@ export function RecipeView({
                         {fmtMin(rel.totalMinutes)}
                       </span>
                     ) : null}
-                    <span className="related-arrow" aria-hidden="true">↗</span>
+                    <span className="related-arrow" aria-hidden="true">
+                      <ArrowUpRightIcon />
+                    </span>
                   </div>
                 </li>
               );
@@ -509,54 +896,113 @@ export function RecipeView({
 }
 
 // ---------------------------------------------------------------------------
-// Static pages (content unchanged; chrome comes from the shell)
+// Static pages (localized by active lang instead of stacking 3 languages)
 // ---------------------------------------------------------------------------
 
-export function PrivacyView() {
+export function PrivacyView({ lang = 'en' }: { lang?: string }) {
+  if (lang === 'es') {
+    return (
+      <main id="main">
+        <h1>Privacidad</h1>
+        <p>No necesitas iniciar sesi&oacute;n para leer recetas y leer no usa cookies. Si cambias entre unidades de EE. UU. y m&eacute;tricas o eliges tema claro/oscuro, tu preferencia se guarda en tu propio navegador (almacenamiento local, claves &quot;2y-units&quot; y &quot;2y-theme&quot;) para recordarla. Se queda en tu dispositivo y no se nos env&iacute;a.</p>
+        <p>Si creas una cuenta para enviar una receta, guardamos tu correo electr&oacute;nico, el nombre de autor que elijas y los borradores que guardes. Para iniciar sesi&oacute;n enviamos un c&oacute;digo de 6 d&iacute;gitos a tu correo mediante el servicio Resend; el c&oacute;digo se guarda solo como hash. Al iniciar sesi&oacute;n se usa una cookie de sesi&oacute;n (&quot;__Host-2y_sid&quot;, HttpOnly, hasta 30 d&iacute;as) que te mantiene conectado en ese navegador, y solo guardamos un hash de su valor. Los borradores son privados hasta que los env&iacute;es para revisi&oacute;n. Nada de lo que env&iacute;es se publica autom&aacute;ticamente.</p>
+        <p>Medimos visitas y velocidad de p&aacute;gina con Cloudflare Web Analytics. Seg&uacute;n Cloudflare, este servicio de anal&iacute;tica no usa cookies ni almacenamiento local, no identifica a los visitantes y no recopila datos personales para estad&iacute;sticas.</p>
+      </main>
+    );
+  }
+  if (lang === 'fr') {
+    return (
+      <main id="main">
+        <h1>Confidentialit&eacute;</h1>
+        <p>Vous n&apos;avez pas besoin de vous connecter pour lire les recettes, et la lecture ne d&eacute;pose aucun cookie. Si vous changez d&apos;unit&eacute;s ou de th&egrave;me clair/sombre, votre choix reste uniquement dans le stockage local de votre navigateur (&laquo; 2y-units &raquo;, &laquo; 2y-theme &raquo;).</p>
+        <p>Si vous cr&eacute;ez un compte pour proposer une recette, nous conservons votre adresse e-mail, le nom d&apos;auteur choisi et vos brouillons priv&eacute;s. La connexion utilise un code &agrave; 6 chiffres envoy&eacute; via Resend (stock&eacute; uniquement sous forme de hachage) et un cookie de session (&laquo; __Host-2y_sid &raquo;, HttpOnly, 30 jours maximum). Rien de ce que vous envoyez n&apos;est publi&eacute; automatiquement.</p>
+        <p>Nous mesurons les pages vues et la vitesse avec Cloudflare Web Analytics, un service sans cookies ni suivi individuel.</p>
+      </main>
+    );
+  }
   return (
     <main id="main">
       <h1>Privacy</h1>
-      <p>You do not need to sign in to read recipes, and reading sets no cookies. If you switch between US and metric units, your choice is saved in your own browser (local storage, key &quot;2y-units&quot;) so the page remembers it. It stays on your device and is not sent to us.</p>
-      <p>If you create an account to send in a recipe, we store your email address, the author name you choose, and the recipe drafts you save. Signing in uses a 6-digit code sent to your email through the email service Resend; the code is stored only as a hash. Signing in sets one session cookie ("__Host-2y_sid", HttpOnly, up to 30 days) that keeps you signed in on that browser, and we store only a hash of its value. Signing out ends that session. Drafts are private to you until you send one in for review. Nothing you send in is published automatically.</p>
+      <p>You do not need to sign in to read recipes, and reading sets no cookies. If you switch between US and metric units or choose a light/dark theme, your choice is saved in your own browser (local storage, keys &quot;2y-units&quot; and &quot;2y-theme&quot;) so the page remembers it. It stays on your device and is not sent to us.</p>
+      <p>If you create an account to send in a recipe, we store your email address, the author name you choose, and the recipe drafts you save. Signing in uses a 6-digit code sent to your email through the email service Resend; the code is stored only as a hash. Signing in sets one session cookie (&quot;__Host-2y_sid&quot;, HttpOnly, up to 30 days) that keeps you signed in on that browser, and we store only a hash of its value. Signing out ends that session. Drafts are private to you until you send one in for review. Nothing you send in is published automatically.</p>
       <p>We measure page views and page speed with Cloudflare Web Analytics. Per Cloudflare, this analytics service does not use cookies or local storage, does not fingerprint visitors, and does not collect personal data for analytics. We use the counts only to see which pages people read.</p>
-      <h2>Privacidad</h2>
-      <p>No necesitas iniciar sesi&oacute;n para leer recetas y leer no usa cookies. Si cambias entre unidades de EE. UU. y m&eacute;tricas, tu elecci&oacute;n se guarda en tu propio navegador (almacenamiento local, clave &quot;2y-units&quot;) para recordarla. Se queda en tu dispositivo y no se nos env&iacute;a.</p>
-      <p>Si creas una cuenta para enviar una receta, guardamos tu correo electr&oacute;nico, el nombre de autor que elijas y los borradores que guardes. Para iniciar sesi&oacute;n enviamos un c&oacute;digo de 6 d&iacute;gitos a tu correo mediante el servicio Resend; el c&oacute;digo se guarda solo como hash. Al iniciar sesi&oacute;n se usa una cookie de sesi&oacute;n (&quot;__Host-2y_sid&quot;, HttpOnly, hasta 30 d&iacute;as) que te mantiene conectado en ese navegador, y solo guardamos un hash de su valor. Cerrar sesi&oacute;n termina esa sesi&oacute;n. Los borradores son privados hasta que los env&iacute;es para revisi&oacute;n. Nada de lo que env&iacute;es se publica autom&aacute;ticamente.</p>
-      <p>Medimos visitas y velocidad de p&aacute;gina con Cloudflare Web Analytics. Seg&uacute;n Cloudflare, este servicio de anal&iacute;tica no usa cookies ni almacenamiento local, no identifica a los visitantes y no recopila datos personales para estad&iacute;sticas.</p>
     </main>
   );
 }
 
-export function AboutView() {
+export function AboutView({ lang = 'en' }: { lang?: string }) {
+  if (lang === 'es') {
+    return (
+      <main id="main">
+        <h1>Acerca de 2yolks</h1>
+        <p>2yolks es un sitio de recetas internacionales. Lee las mismas recetas en ingl&eacute;s, espa&ntilde;ol o franc&eacute;s: el idioma cambia la experiencia de lectura, no la cocina.</p>
+        <p>Escribimos las recetas con nuestras propias palabras a partir de t&eacute;cnicas culinarias documentadas, o las recibimos de cocineros que confirman sus derechos. Solo publicamos recetas cuya fuente ha sido verificada.</p>
+        <p>Cada receta indica con total honestidad si ya fue cocinada o si est&aacute; marcada como a&uacute;n no probada. <a href="/how-we-test?lang=es">C&oacute;mo probamos y etiquetamos las recetas</a>.</p>
+      </main>
+    );
+  }
+  if (lang === 'fr') {
+    return (
+      <main id="main">
+        <h1>&Agrave; propos de 2yolks</h1>
+        <p>2yolks est un site de recettes internationales. Lisez les m&ecirc;mes recettes en anglais, espagnol ou fran&ccedil;ais : la langue change l&apos;exp&eacute;rience de lecture, pas la cuisine.</p>
+        <p>Les recettes sont r&eacute;dig&eacute;es avec nos propres mots &agrave; partir de techniques document&eacute;es ou partag&eacute;es par des cuisiniers ayant confirm&eacute; leurs droits. Aucune recette n&apos;est publi&eacute;e sans v&eacute;rification.</p>
+        <p>Chaque recette indique honn&ecirc;tement son statut de test en cuisine. <a href="/how-we-test?lang=fr">Comment nous testons et &eacute;tiquetons les recettes</a>.</p>
+      </main>
+    );
+  }
   return (
     <main id="main">
       <h1>About 2yolks</h1>
       <p>2yolks is an international recipe site. Read the same recipes in English, Spanish or French. Language changes the reading experience, not the cuisine.</p>
-      <p>Recipes are written for 2yolks in our own words, from standard, widely documented techniques. We do not copy text or photos from other sites. A recipe is only shown when its source has been cleared for use.</p>
-      <p>Right now every recipe is labeled not yet tested. We will say so until a person cooks it and signs it off. <a href="/how-we-test">How we test and label recipes</a>.</p>
-      <h2>Acerca de 2yolks</h2>
-      <p>2yolks es un sitio de recetas internacionales. Lee las mismas recetas en ingl&eacute;s, espa&ntilde;ol o franc&eacute;s. El idioma no determina la cocina. Escribimos las recetas con nuestras propias palabras y las marcamos como "a&uacute;n no probada" hasta que alguien las cocine.</p>
+      <p>Recipes are written for 2yolks in our own words, from standard, widely documented techniques, or contributed by home cooks with verified rights. We do not copy text or photos from other sites. A recipe is only shown when its source has been cleared for use.</p>
+      <p>Every recipe carries an honest kitchen status label until a person cooks it and signs it off. <a href="/how-we-test">How we test and label recipes</a>.</p>
     </main>
   );
 }
 
-export function HowWeTestView() {
+export function HowWeTestView({ lang = 'en' }: { lang?: string }) {
+  if (lang === 'es') {
+    return (
+      <main id="main">
+        <h1>C&oacute;mo probamos y etiquetamos las recetas</h1>
+        <p>Cada receta en 2yolks lleva una de estas dos etiquetas:</p>
+        <ul>
+          <li><strong>A&uacute;n no probada.</strong> Escrita con t&eacute;cnicas est&aacute;ndar y revisada contra gu&iacute;as de seguridad alimentaria; tiempos y porciones son estimados hasta que alguien la cocine.</li>
+          <li><strong>Probada.</strong> Una persona la cocin&oacute; en su cocina, registr&oacute; el rendimiento y tiempo reales y anot&oacute; cualquier ajuste, con fecha visible.</li>
+        </ul>
+        <p>Nunca inventamos calificaciones, rese&ntilde;as ni pruebas.</p>
+        <h2>Probada por la comunidad</h2>
+        <p>Las personas con cuenta pueden reportar que cocinaron una receta (un reporte por persona y receta, nunca sobre sus propias recetas). Un moderador lee cada reporte y la receta solo se marca como probada tras una aprobaci&oacute;n.</p>
+      </main>
+    );
+  }
+  if (lang === 'fr') {
+    return (
+      <main id="main">
+        <h1>Comment nous testons et &eacute;tiquetons les recettes</h1>
+        <p>Chaque recette sur 2yolks porte l&apos;une de ces deux &eacute;tiquettes :</p>
+        <ul>
+          <li><strong>Pas encore test&eacute;e.</strong> &Eacute;crite &agrave; partir de techniques courantes et v&eacute;rifi&eacute;e selon les rep&egrave;res de s&eacute;curit&eacute; alimentaire ; les temps et portions restent indicatifs tant qu&apos;elle n&apos;a pas &eacute;t&eacute; cuisin&eacute;e.</li>
+          <li><strong>Test&eacute;e.</strong> Une personne l&apos;a cuisin&eacute;e, a not&eacute; le rendement et le temps r&eacute;els ainsi que la date.</li>
+        </ul>
+        <p>Nous n&apos;inventons jamais de notes, d&apos;avis ou de tests.</p>
+        <h2>Test communautaire</h2>
+        <p>Les cuisiniers connect&eacute;s peuvent signaler avoir cuisin&eacute; une recette (un signalement par cuisinier et par recette, jamais sur leurs propres recettes). Un mod&eacute;rateur lit chaque signalement et la recette n&apos;est marqu&eacute;e test&eacute;e qu&apos;apr&egrave;s approbation.</p>
+      </main>
+    );
+  }
   return (
     <main id="main">
       <h1>How we test and label recipes</h1>
       <p>Every recipe on 2yolks carries one of two labels.</p>
       <ul>
         <li><strong>Not yet tested.</strong> Written from standard techniques and checked against food-safety guidance (for example USDA safe minimum temperatures). Nobody has cooked it for 2yolks yet, so times and yields are estimates.</li>
-        <li><strong>Tested.</strong> A person cooked it, recorded the real yield and time, and noted changes. We show the date. No recipe has this label yet.</li>
+        <li><strong>Tested.</strong> A person cooked it, recorded the real yield and time, and noted changes. We show the date.</li>
       </ul>
       <p>We never invent ratings, reviews or testing. If a recipe has not been cooked, we say so.</p>
       <h2>Community-tested</h2>
       <p>Signed-in cooks can report that they cooked a recipe: one report per cook per recipe, never on their own submissions. A moderator reads every report, and a recipe is marked tested only after a report is approved. Reports we cannot stand behind are hidden, never published.</p>
-      <h2>C&oacute;mo probamos y etiquetamos las recetas</h2>
-      <p>Cada receta es <strong>&quot;A&uacute;n no probada&quot;</strong> (escrita con t&eacute;cnicas est&aacute;ndar y revisada contra gu&iacute;as de seguridad alimentaria; tiempos y rendimientos son estimados) o <strong>&quot;Probada&quot;</strong> (alguien la cocin&oacute; y registr&oacute; rendimiento, tiempo y cambios, con fecha). Hoy ninguna tiene la etiqueta &quot;Probada&quot;.</p>
-      <p>Probada por la comunidad: las personas con cuenta pueden reportar que cocinaron una receta (un reporte por persona y receta, nunca sobre sus propias recetas). Un moderador lee cada reporte y la receta solo se marca como probada tras una aprobaci&oacute;n.</p>
-      <h2>Test communautaire</h2>
-      <p>Les cuisiniers connect&eacute;s peuvent signaler avoir cuisin&eacute; une recette (un signalement par cuisinier et par recette, jamais sur leurs propres recettes). Un mod&eacute;rateur lit chaque signalement et la recette n&apos;est marqu&eacute;e test&eacute;e qu&apos;apr&egrave;s approbation.</p>
     </main>
   );
 }
