@@ -1,0 +1,569 @@
+{
+  "note": "Independent agent review record binding each translated locale SHA-256 content hash after @2yolks/contracts QA checks and side-by-side culinary audit.",
+  "reviewer": "AI agent review (independent culinary review subagent + automated QA gate, 2026-11-12); not a human or native-speaker review",
+  "reviewed_on": "2026-11-12",
+  "findings": [
+    {
+      "recipe_id": "2ba6d505",
+      "locale": "us/es",
+      "severity": "error",
+      "field": "steps[0]",
+      "resolution": "fixed",
+      "summary": "Replaced 'papel encerado o de hornear' (non-oven-safe wax paper) with 'papel para hornear (papel pergamino)' for 190 C / 375 F baking."
+    },
+    {
+      "recipe_id": "cb63f07e",
+      "locale": "us/es,us/fr",
+      "severity": "warning",
+      "field": "intro",
+      "resolution": "fixed",
+      "summary": "Restored omitted parenthetical clause 'named in the 2026 roundups of spicier Thanksgiving sides' in both Spanish and French intros."
+    },
+    {
+      "recipe_id": "ceca4a54",
+      "locale": "us/es,us/fr",
+      "severity": "warning",
+      "field": "intro",
+      "resolution": "fixed",
+      "summary": "Restored closing comparison clause in ES/FR intros and tightened 'grande poele' to 'poele lourde'."
+    },
+    {
+      "recipe_id": "423fabf5,b9e37a49,d9c38b20",
+      "locale": "us/es,us/fr",
+      "severity": "info",
+      "field": "ingredients/steps/intro",
+      "resolution": "fixed",
+      "summary": "Clarified ground coriander seed in ES, idiomatic patty phrasing in ES, and butter-under-skin phrasing in FR."
+    }
+  ],
+  "reviews": [
+    {
+      "recipe_id": "0a5a3e3c",
+      "country": "us",
+      "lang": "es",
+      "content_sha256": "72d42dba6688a2ac2d0a4c00eabb7b77ae7b82e6c661ed80da6b337dc98ada06",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "0a5a3e3c",
+      "country": "us",
+      "lang": "fr",
+      "content_sha256": "7ec73cf7206e1d36031ba7772203a544e2a3b5c13d6db3d38c4531a3f2e0d2fc",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "1c048512",
+      "country": "us",
+      "lang": "es",
+      "content_sha256": "ac4086c7d3a39e52e537218eb6b65899939dfef6241c49adffcf8c4840e5450f",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "1c048512",
+      "country": "us",
+      "lang": "fr",
+      "content_sha256": "f3a84c3b13705992be92842b857b551d9e1eb3fb611cf679640a63d5fbae1cf6",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "200abf28",
+      "country": "us",
+      "lang": "es",
+      "content_sha256": "b079dc48bbba108c8d2f87163dfcc078799ac835118fbe96bef64cf592ee245f",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "200abf28",
+      "country": "us",
+      "lang": "fr",
+      "content_sha256": "e587967449004457fe4e10f8cb76e31d2725bb00a676ecdcd4cfeeed4fbe6d5d",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "22d307a4",
+      "country": "us",
+      "lang": "es",
+      "content_sha256": "8cfb72ba9bc293ed4be64ca89e57e123f714a2f30370f025a324b7ee9e25445d",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "22d307a4",
+      "country": "us",
+      "lang": "fr",
+      "content_sha256": "bab90e970a9746b6c20c52c4e4c34b4b0d67a461cd1033d32fb5b0c8b5ebddbc",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "24558bf7",
+      "country": "us",
+      "lang": "es",
+      "content_sha256": "57e0b3d571547a61ac354f58d30cc502e7a31bb81d729b104153bc04f7ef31de",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "24558bf7",
+      "country": "us",
+      "lang": "fr",
+      "content_sha256": "1e86239d9aebfa79331c291d20351021752833285d6b1a1f1828c267d26411f3",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "2ba6d505",
+      "country": "us",
+      "lang": "es",
+      "content_sha256": "4f69811730e62d75088c8b00de8ce20c779d0d9bb7bd280aaa7223d1c50b0477",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "2ba6d505",
+      "country": "us",
+      "lang": "fr",
+      "content_sha256": "fce2bf1268bc9b4ef2639557aeaf0ece89aa09a912674c7d492060b4bdace82c",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "38051ce9",
+      "country": "us",
+      "lang": "es",
+      "content_sha256": "b4001707d8d181e1dc13450cce6d737079d8c016c41c89998997da4468241b56",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "38051ce9",
+      "country": "us",
+      "lang": "fr",
+      "content_sha256": "40e998c07c519f906d0cb1ccad4288bdae363ef6afdd26210b6840172e110c3f",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "3ab80574",
+      "country": "us",
+      "lang": "es",
+      "content_sha256": "b7e16a968dabbae4501eb1e2faced0efdf30d3a0e5090cf282a03006713849f4",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "3ab80574",
+      "country": "us",
+      "lang": "fr",
+      "content_sha256": "21c045524f2581d9b76db76266f50368e18910500ee13f565ed74cef2886d976",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "4108063b",
+      "country": "us",
+      "lang": "es",
+      "content_sha256": "f375a4b8819e43ffe6a7414ca64dc74a8bd42899d23212839f5fb8b246a3c483",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "4108063b",
+      "country": "us",
+      "lang": "fr",
+      "content_sha256": "28a48fc18bcb5c2533b5b3af77f5841a79e0c78efd53984727535c5b88965131",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "423fabf5",
+      "country": "us",
+      "lang": "es",
+      "content_sha256": "408bf7a87566f1c7fb084b8f19c5fee79bdb3aa7581263947cd72d22f06de703",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "423fabf5",
+      "country": "us",
+      "lang": "fr",
+      "content_sha256": "3b8a902ab5fa21588fbc5279df328120db83b125401ff76819dd63b8c9f86cfd",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "473afc87",
+      "country": "us",
+      "lang": "es",
+      "content_sha256": "aae6faffec170054cffe5b3561f8a286cbd4e1466fc0393f5c065a1e372a61b0",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "473afc87",
+      "country": "us",
+      "lang": "fr",
+      "content_sha256": "4655e7d0be3c78a24f29cc527af503376151e9677e30ed3f2f6b36a49f068765",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "4c8e143f",
+      "country": "us",
+      "lang": "es",
+      "content_sha256": "d607fd677f047fcf9d7bf5c3fa52b44bc6f67b24117dbd97814b6b4df0b8fcf4",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "4c8e143f",
+      "country": "us",
+      "lang": "fr",
+      "content_sha256": "7bd847445760fb56b4b4d68fef879ad527390ca3ef02ecd7de657846a6740eb7",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "4e23e226",
+      "country": "mx",
+      "lang": "en",
+      "content_sha256": "6d9876039bd874ef9df93720c6b853ab2c1ae3693320d54e454a41d8dfd9d2c0",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "4e23e226",
+      "country": "mx",
+      "lang": "fr",
+      "content_sha256": "2ab4c63faa2c479a1913a9a19d69dabbe4ef7291b346f2a16c6e4d12553df202",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "5c479942",
+      "country": "us",
+      "lang": "es",
+      "content_sha256": "1bd47cd4f9e87dbd998bc823b14e88e336dfed346c65a809e9406f1da48d12c2",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "5c479942",
+      "country": "us",
+      "lang": "fr",
+      "content_sha256": "43985d94ef7a3470bccbda1616441bdae54f26ecc89cde0b2eccaa2dd12e5d22",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "6919d48d",
+      "country": "us",
+      "lang": "es",
+      "content_sha256": "5f72ec0ea87318ab173d2aa28bf5b08065daf9f9e46af7fe67cbafb258278d70",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "6919d48d",
+      "country": "us",
+      "lang": "fr",
+      "content_sha256": "0d783210574ac7135e96b8e244552f03595a13b65b24dc908fc12fc5ecbbfd59",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "6e2a61f5",
+      "country": "us",
+      "lang": "es",
+      "content_sha256": "d7d639f0ae4c700807852e8bb4dfb933f30e08b08e596ebaceeb0b957844c132",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "6e2a61f5",
+      "country": "us",
+      "lang": "fr",
+      "content_sha256": "e6a8294219873fff6abd7ebe55512641fe218870c357f0d46f2d2db9d7f43878",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "6eb45a2b",
+      "country": "us",
+      "lang": "es",
+      "content_sha256": "2a259f5ccee62345f0f95a1fcaca3876dfb2805ee2f14d35bba993d3b0d56ded",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "6eb45a2b",
+      "country": "us",
+      "lang": "fr",
+      "content_sha256": "d91e7011ea77cc94ab9a4588ad5f4deedd556f09c27da5806dd52db78a5b6e8e",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "76c0da3f",
+      "country": "us",
+      "lang": "es",
+      "content_sha256": "f1d74881f640cbd5c5efc08597ed50e53151df5127f036ecf55803b74ec49c14",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "76c0da3f",
+      "country": "us",
+      "lang": "fr",
+      "content_sha256": "62efb1cf6ef40e8fb2fcb1797d652b9f296666af9db6c3378cae23f51716f069",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "7ebe3a91",
+      "country": "us",
+      "lang": "es",
+      "content_sha256": "4e08cdae8c692dc715430eb85708d0f6f6229a1658c76c948603474582f150e4",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "7ebe3a91",
+      "country": "us",
+      "lang": "fr",
+      "content_sha256": "6e328e39f051bfd224c0c59564865491712b4c35523da707ce241378a6b09340",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "8a8d1768",
+      "country": "us",
+      "lang": "es",
+      "content_sha256": "f21f9a70dc5e274d9102e00a15d7dedfdff2b158b56e85b721da29b8689485eb",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "8a8d1768",
+      "country": "us",
+      "lang": "fr",
+      "content_sha256": "8a335b306b28ef32929e2a162b41a32cafe4973644f63cdbdc8152abde9697ab",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "9214e255",
+      "country": "us",
+      "lang": "es",
+      "content_sha256": "69f3ed608b9a99743cd9caba88428a179030a0826d27794b7de65bbefbb15ac6",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "9214e255",
+      "country": "us",
+      "lang": "fr",
+      "content_sha256": "3dfc3ce6af98b69715932c1e8c29f4c4300ace591d99888892c22d811472b470",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "9fb16ca2",
+      "country": "us",
+      "lang": "es",
+      "content_sha256": "9c7f41c2990c63ac6113ad5f5361ede27da2122fe1e7c02a7b9454b629cd5fe5",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "9fb16ca2",
+      "country": "us",
+      "lang": "fr",
+      "content_sha256": "e971520e401c51827a2e809c165bdab983ae64eadc39156d22af3c524d0b8dd3",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "b9e37a49",
+      "country": "us",
+      "lang": "es",
+      "content_sha256": "5897e9d4386a2d1c8d6ef216b08e03ee1dc643c9784503c90d0cb626c97807c4",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "b9e37a49",
+      "country": "us",
+      "lang": "fr",
+      "content_sha256": "f3e35752ac8f3dc520163120abb91da9b806f9885e624d6e6d011b41fb2a6484",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "c1d9c3b4",
+      "country": "us",
+      "lang": "es",
+      "content_sha256": "5e0cfb16f072fdb1d9e2943215ecc54671fa8d8536e713b66f12b535c608d8ea",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "c1d9c3b4",
+      "country": "us",
+      "lang": "fr",
+      "content_sha256": "6dfb88429c15c223584eda5a463b62e9e94f77b51a291156bb219e51e9648857",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "cb63f07e",
+      "country": "us",
+      "lang": "es",
+      "content_sha256": "ce0ede2fdef7aee09b8877e2fbb1f2e4bbd976e8472a39bbfae08f5136ab934a",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "cb63f07e",
+      "country": "us",
+      "lang": "fr",
+      "content_sha256": "f435863c9bc3567f2283b343baae700fca56f3bf0e68cfd552d39eb98a8a1932",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "cd58d192",
+      "country": "us",
+      "lang": "es",
+      "content_sha256": "6f9285fc024f9881daa967349c0e8431541842212b6ff09878bc23539633ee5f",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "cd58d192",
+      "country": "us",
+      "lang": "fr",
+      "content_sha256": "6bf7c53a0ed2837809ea7c2bdb333ef69b92de1c3f2285f3eda9c44028b2ecb8",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "ceca4a54",
+      "country": "us",
+      "lang": "es",
+      "content_sha256": "1a0e0f9bbf9e99846ce730a0856604f015ca108f034291d2fd754e2df37e399b",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "ceca4a54",
+      "country": "us",
+      "lang": "fr",
+      "content_sha256": "568480fccf2dc65ba43f7910e0ea5097e3337588eb4d8576f62d4cbed16e0802",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "cf769ca1",
+      "country": "us",
+      "lang": "es",
+      "content_sha256": "2d269f1d01a2ec644f468459adf9dfcce0ff1afeb4ea94f72f764df6dcde166a",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "cf769ca1",
+      "country": "us",
+      "lang": "fr",
+      "content_sha256": "8ed2da40c67478c627376d1e51231a1b9a0b84d371502dd9717f35fddca1b57f",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "cff0c3a1",
+      "country": "us",
+      "lang": "es",
+      "content_sha256": "6f65f3c93bf6559efeb6e7cb052270906ba126d348e8ad134dde316c64405d22",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "cff0c3a1",
+      "country": "us",
+      "lang": "fr",
+      "content_sha256": "6a489c0f966da5f025ceacacad38ab505a2e8f545aac4b7d8e1830b6620f3a0d",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "d86e1582",
+      "country": "us",
+      "lang": "es",
+      "content_sha256": "c28467c1e8512f82b2b5076e1e4ecb5f9fbf6e6712ca4866a5a286d40dc7b12d",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "d86e1582",
+      "country": "us",
+      "lang": "fr",
+      "content_sha256": "52a1e42e1e15b405d073b1e00ff41b3e89931751844ae2cd1b3f15cdd9798ec0",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "d9c38b20",
+      "country": "us",
+      "lang": "es",
+      "content_sha256": "4dc6fff5a36197e94d323b0a8659a072192c7769b70fec9a9da0b1f178d24fd9",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "d9c38b20",
+      "country": "us",
+      "lang": "fr",
+      "content_sha256": "bd7a823b9050c67f0122824c8ce4d637062a0dc863f9f11c81292d01c499e43b",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "db1b6852",
+      "country": "us",
+      "lang": "es",
+      "content_sha256": "e9479be93a468842dbdbb16bc06c32cc0c62a57d7fc0e18eca9bb40d91a4d1b1",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "db1b6852",
+      "country": "us",
+      "lang": "fr",
+      "content_sha256": "530879a70595da6d21b39b37971b7b9dd465412d3c7b99a1c9232ae581d071f1",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "e9bc7550",
+      "country": "us",
+      "lang": "es",
+      "content_sha256": "55fad59e93ff186b374cc1aac791967a8a0663c0984b56862fa50541b54409c9",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    },
+    {
+      "recipe_id": "e9bc7550",
+      "country": "us",
+      "lang": "fr",
+      "content_sha256": "fc5d8f8b1ea343e730544eb5b1a323449498d2d2cd1f8ad8301c9b5d8c8da94d",
+      "reviewer_kind": "agent",
+      "result": "pass"
+    }
+  ]
+}

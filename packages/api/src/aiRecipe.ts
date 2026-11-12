@@ -1,6 +1,17 @@
 // Multimodal AI Kitchen Co-Editor (Gemini 3.8 Flash via official Interactions API)
 // + atomic D1 free-tier budget guard (ai_log) + zero-network deterministic fallback.
-import { isRecipeCategorySlug, RECIPE_CATEGORY_SLUGS, type RecipeCategorySlug } from '@2yolks/contracts';
+import {
+  isRecipeCategorySlug,
+  RECIPE_CATEGORY_SLUGS,
+  type RecipeCategorySlug,
+  type IngredientEntry,
+  type StructuredIngredient,
+  isStructured,
+  ingredientText,
+  checkTranslation,
+  checkStructuredTranslation,
+  checkAllergens,
+} from '@2yolks/contracts';
 import { parseRecipeText } from './parse';
 
 export const AI_MODEL = 'gemini-3.8-flash';
@@ -30,9 +41,10 @@ export interface AiDraftInput {
 }
 
 export interface AiAssistRequest {
-  mode: 'extract' | 'polish';
+  mode: 'extract' | 'polish' | 'translate';
   uiLang: 'en' | 'es' | 'fr';
   recipeLocale: string;
+  targetLocale?: string;
   notes?: string;
   image?: AiMediaPart | null;
   audio?: AiMediaPart | null;
@@ -71,7 +83,7 @@ const makeId = () => crypto.randomUUID().replace(/-/g, '').slice(0, 16);
 export async function reserveAiBudget(
   db: D1Database,
   userId: string,
-  kind: 'extract' | 'polish',
+  kind: 'extract' | 'polish' | 'translate',
   dailyCap = DEFAULT_AI_DAILY_CAP,
   perUserWindowCap = DEFAULT_AI_USER_10MIN_CAP,
 ): Promise<boolean> {
@@ -522,12 +534,243 @@ export function assistRecipeDeterministic(req: AiAssistRequest): AiAssistResult 
   };
 }
 
+export interface TranslateRecipeInput {
+  sourceLang: string;
+  targetLang: 'en' | 'es' | 'fr';
+  title: string;
+  intro: string | null;
+  ingredients: IngredientEntry[];
+  steps: string[];
+}
+
+export interface TranslateRecipeOutput {
+  title: string;
+  intro: string | null;
+  ingredients: IngredientEntry[];
+  steps: string[];
+}
+
+const LANG_FULL: Record<string, string> = {
+  en: 'English',
+  es: 'Spanish (Español)',
+  fr: 'French (Français)',
+};
+
+const TRANSLATION_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['title', 'intro', 'ingredients', 'steps'],
+  properties: {
+    title: { type: 'string' },
+    intro: { type: ['string', 'null'] },
+    ingredients: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['index', 'text', 'name', 'note'],
+        properties: {
+          index: { type: 'integer' },
+          text: { type: ['string', 'null'] },
+          name: { type: ['string', 'null'] },
+          note: { type: ['string', 'null'] },
+        },
+      },
+    },
+    steps: {
+      type: 'array',
+      items: { type: 'string' },
+    },
+  },
+};
+
+function qaIssuesForTranslation(src: TranslateRecipeInput, dst: TranslateRecipeOutput): string[] {
+  const ing = checkStructuredTranslation(src.ingredients, dst.ingredients);
+  const st = checkTranslation({ steps: src.steps }, { steps: dst.steps });
+  const al = checkAllergens(ingredientText(src.ingredients), ingredientText(dst.ingredients));
+  return [...ing.problems, ...st.problems, ...al.problems];
+}
+
+async function callGeminiInteraction(
+  body: Record<string, unknown>,
+  apiKey: string,
+  fetchImpl: typeof fetch,
+  retryDelaysMs: readonly number[],
+): Promise<unknown> {
+  let attempt = 0;
+  for (;;) {
+    const res = await fetchImpl(GEMINI_INTERACTIONS_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Api-Revision': GEMINI_API_REVISION,
+        'x-goog-api-key': apiKey,
+      },
+      body: JSON.stringify(body),
+    });
+    if ((res.status === 429 || res.status === 503) && attempt < retryDelaysMs.length) {
+      const wait = retryDelaysMs[attempt++]!;
+      if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+      continue;
+    }
+    if (!res.ok) {
+      throw new Error(`Gemini Interactions API status ${res.status}`);
+    }
+    return res.json();
+  }
+}
+
+export async function translateStructuredRecipeWithGemini(
+  input: TranslateRecipeInput,
+  apiKey: string,
+  fetchImpl: typeof fetch = fetch,
+  retryDelaysMs: readonly number[] = [1000, 2500],
+): Promise<TranslateRecipeOutput> {
+  const srcName = LANG_FULL[input.sourceLang] ?? input.sourceLang;
+  const dstName = LANG_FULL[input.targetLang] ?? input.targetLang;
+  const ingDescriptors = input.ingredients.map((entry, index) => {
+    if (isStructured(entry)) {
+      return { index, kind: 'structured', ref: entry.ref, qty: entry.qty, qtyEnd: entry.qtyEnd ?? null, unit: entry.unit ?? null, name: entry.name, note: entry.note ?? null };
+    }
+    const nums = entry.match(/\d+(?:[.,]\d+)?/g) ?? [];
+    return { index, kind: 'string', text: entry, requiredNumbers: nums };
+  });
+  const stepDescriptors = input.steps.map((s, index) => {
+    const tokens = s.match(/\{(?:[it]:[a-z0-9_]+|d:\d+[mh])\}/gi) ?? [];
+    const bare = s.replace(/\{[^}]+\}/g, ' ').match(/\d+(?:[.,]\d+)?/g) ?? [];
+    return { index, text: s, requiredTokens: tokens, requiredNumbersOutsideTokens: bare };
+  });
+
+  const systemInstruction = [
+    `You are a bilingual culinary editor translating a recipe from ${srcName} into natural, idiomatic ${dstName} for home cooks.`,
+    'CRITICAL QA INVARIANTS (must pass automated validation):',
+    '1. Preserve arrays length: output EXACTLY ingredients.length items (with matching index 0..N-1) and EXACTLY steps.length strings.',
+    '2. For kind="structured" ingredients: keep `text: null`, translate ONLY `name` (singular/plural culinary noun) and optional `note` (e.g. prep like "finely chopped"). Do NOT invent notes if source note is null.',
+    '3. For kind="string" ingredients: populate `text` with the translated ingredient string, keeping EVERY number in `requiredNumbers` verbatim in the SAME order (e.g. keep "1/2" as "1/2", never "media" or "0.5"). Set `name: null, note: null`.',
+    '4. Allergens: explicitly translate any allergen words so they match canonical allergen terms (egg->huevo/oeuf, milk/butter/cream/cheese->leche/mantequilla/crema/queso or lait/beurre/crème/fromage, wheat/flour->trigo/harina or blé/farine, peanut->cacahuate/cacahuète, soy->soya/soja, shrimp->camarón/crevette, sesame->sésamo/ajonjolí/sésame).',
+    '5. For every step: preserve EVERY `{i:...}`, `{t:...}`, and `{d:...}` token CHARACTER-FOR-CHARACTER inside the sentence, and preserve EVERY number in `requiredNumbersOutsideTokens` as matching Arabic digits (never spell numbers as words like "two" or change temperatures/counts).',
+    '6. Keep intro warm and concise (or null if source intro is null).',
+  ].join('\n');
+
+  const basePayload = {
+    sourceLang: input.sourceLang,
+    targetLang: input.targetLang,
+    title: input.title,
+    intro: input.intro,
+    ingredients: ingDescriptors,
+    steps: stepDescriptors,
+  };
+
+  const mapResponse = (parsed: unknown): TranslateRecipeOutput => {
+    const o = (parsed && typeof parsed === 'object' ? parsed : {}) as Record<string, unknown>;
+    const rawIngs = Array.isArray(o['ingredients']) ? (o['ingredients'] as Record<string, unknown>[]) : [];
+    const mappedIngs: IngredientEntry[] = input.ingredients.map((srcEntry, idx) => {
+      const item = rawIngs.find((x) => x && Number(x['index']) === idx) ?? rawIngs[idx] ?? {};
+      if (isStructured(srcEntry)) {
+        const name = cleanLine(item['name'], 120) || srcEntry.name;
+        const note = srcEntry.note != null ? (cleanLine(item['note'], 120) || srcEntry.note) : undefined;
+        const out: StructuredIngredient = {
+          ref: srcEntry.ref,
+          qty: srcEntry.qty,
+          ...(srcEntry.qtyEnd !== undefined ? { qtyEnd: srcEntry.qtyEnd } : {}),
+          ...(srcEntry.unit !== undefined ? { unit: srcEntry.unit } : {}),
+          name,
+          ...(note !== undefined ? { note } : {}),
+        };
+        return out;
+      }
+      return cleanLine(item['text'], 300) || srcEntry;
+    });
+    const rawSteps = Array.isArray(o['steps']) ? (o['steps'] as unknown[]) : [];
+    const mappedSteps = input.steps.map((srcStep, idx) => cleanLine(rawSteps[idx], 800) || srcStep);
+    return {
+      title: cleanLine(o['title'], 200) || input.title,
+      intro: input.intro === null ? null : (cleanLine(o['intro'], 1200) || input.intro),
+      ingredients: mappedIngs,
+      steps: mappedSteps,
+    };
+  };
+
+  let attemptPrompt = `Translate this recipe JSON into ${dstName}:\n${JSON.stringify(basePayload)}`;
+  for (let pass = 0; pass < 2; pass++) {
+    const payload = await callGeminiInteraction(
+      {
+        model: AI_MODEL,
+        store: false,
+        system_instruction: systemInstruction,
+        input: [{ type: 'text', text: attemptPrompt }],
+        response_format: { type: 'text', mime_type: 'application/json', schema: TRANSLATION_SCHEMA },
+      },
+      apiKey,
+      fetchImpl,
+      retryDelaysMs,
+    );
+    const text = extractInteractionText(payload);
+    if (!text) throw new Error('Empty model output from Gemini translation');
+    const out = mapResponse(JSON.parse(text));
+    const issues = qaIssuesForTranslation(input, out);
+    if (issues.length === 0) return out;
+    if (pass === 1) {
+      throw new Error(`Translation failed QA gate: ${issues.join('; ')}`);
+    }
+    attemptPrompt = `Your previous translation failed these exact automated QA checks:\n${issues.map((e) => `- ${e}`).join('\n')}\n\nFix those issues while keeping idiomatic ${dstName} phrasing.\nOriginal JSON:\n${JSON.stringify(basePayload)}\n\nPrevious translation output:\n${JSON.stringify(out)}`;
+  }
+  throw new Error('Unreachable translation failure');
+}
+
 export async function assistRecipe(
   req: AiAssistRequest,
   opts: { apiKey?: string; fetchImpl?: typeof fetch } = {},
 ): Promise<AiAssistResult> {
-  if (opts.apiKey && opts.apiKey.trim()) {
-    return assistRecipeWithGemini(req, opts.apiKey.trim(), opts.fetchImpl ?? fetch);
+  const apiKey = opts.apiKey?.trim();
+  const fetchImpl = opts.fetchImpl ?? fetch;
+  if (req.mode === 'translate') {
+    const targetRaw = req.targetLocale || req.recipeLocale || 'us:es';
+    const targetLang = (targetRaw.split(':')[1] || req.uiLang || 'es').slice(0, 2);
+    const dstLang = (targetLang === 'es' || targetLang === 'fr' ? targetLang : 'en') as 'en' | 'es' | 'fr';
+    const srcLang = (req.recipeLocale.split(':')[1] || req.uiLang || 'en').slice(0, 2);
+    const draft = req.draft ?? {};
+    const ings = (draft.ingredients ?? []).map((x) => cleanLine(x, 300)).filter(Boolean);
+    const stps = (draft.steps ?? []).map((x) => cleanLine(x, 800)).filter(Boolean);
+    if (apiKey && (draft.title || ings.length || stps.length)) {
+      const translated = await translateStructuredRecipeWithGemini(
+        {
+          sourceLang: srcLang,
+          targetLang: dstLang,
+          title: cleanLine(draft.title, 200) || 'Recipe',
+          intro: cleanLine(draft.intro, 1200) || null,
+          ingredients: ings,
+          steps: stps,
+        },
+        apiKey,
+        fetchImpl,
+      );
+      return {
+        provider: 'gemini',
+        recipe: {
+          title: translated.title,
+          category: isRecipeCategorySlug(draft.category ?? '') ? (draft.category as RecipeCategorySlug) : '',
+          intro: translated.intro ?? '',
+          ingredients: translated.ingredients.map((e) => (typeof e === 'string' ? e : e.name)),
+          steps: translated.steps,
+          prepMinutes: draft.prep && Number(draft.prep) > 0 ? Number(draft.prep) : null,
+          cookMinutes: draft.cook && Number(draft.cook) > 0 ? Number(draft.cook) : null,
+          servings: draft.servings && Number(draft.servings) > 0 ? Number(draft.servings) : null,
+        },
+        improvements: [
+          req.uiLang === 'es'
+            ? `Receta traducida al ${dstLang.toUpperCase()} superando las pruebas automáticas de cantidades, alérgenos y temporizadores.`
+            : req.uiLang === 'fr'
+              ? `Recette traduite en ${dstLang.toUpperCase()} avec vérification des quantités, allergènes et minuteurs.`
+              : `Translated recipe to ${dstLang.toUpperCase()} and verified numeric quantities, allergens, and timer tokens.`,
+        ],
+        followUpQuestions: [],
+      };
+    }
+    return assistRecipeDeterministic({ ...req, mode: 'polish', uiLang: dstLang });
+  }
+  if (apiKey) {
+    return assistRecipeWithGemini(req, apiKey, fetchImpl);
   }
   return assistRecipeDeterministic(req);
 }

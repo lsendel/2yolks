@@ -171,6 +171,13 @@ export function SocialIcon({ name, className = 'social-icon' }: { name: string; 
           <circle cx="8.8" cy="7.5" r="1.4" />
           <path d="M5.5 14l3-2.8 2.2 2 1.8-1.6 2 2.4" />
         </>
+      ) : name === 'og' ? (
+        <>
+          <rect x="2.2" y="4.2" width="15.6" height="11.6" rx="1.6" />
+          <circle cx="6.2" cy="8.2" r="1.3" />
+          <circle cx="8.8" cy="8.2" r="1.1" />
+          <path d="M4.5 12.6h6M12.5 7.5v5.1M12.5 7.5h3M12.5 10.1h3M12.5 12.6h3" />
+        </>
       ) : name === 'card' || name === 'copy' ? (
         <>
           <rect x="6.5" y="6.5" width="10" height="10" rx="1.6" />

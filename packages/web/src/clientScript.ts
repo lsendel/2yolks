@@ -436,13 +436,13 @@ export const RECIPE_CLIENT_SCRIPT = `(function () {
         copyText(card, cardBtn);
       });
     }
-    var storyBtn = shareNav.querySelector('[data-story-card]');
-    if (storyBtn) {
-      storyBtn.addEventListener('click', function () {
-        var svgUrl = storyBtn.getAttribute('data-card-svg');
-        var slug = storyBtn.getAttribute('data-recipe-slug') || 'recipe';
+    function bindSvgCardExport(btn, width, height, suffix) {
+      if (!btn) return;
+      btn.addEventListener('click', function () {
+        var svgUrl = btn.getAttribute('data-card-svg');
+        var slug = btn.getAttribute('data-recipe-slug') || 'recipe';
         if (!svgUrl) return;
-        storyBtn.disabled = true;
+        btn.disabled = true;
         fetch(svgUrl)
           .then(function (r) { if (!r.ok) throw new Error('card'); return r.text(); })
           .then(function (svgText) {
@@ -453,10 +453,10 @@ export const RECIPE_CLIENT_SCRIPT = `(function () {
               img.onload = function () {
                 try {
                   var canvas = document.createElement('canvas');
-                  canvas.width = 1080;
-                  canvas.height = 1920;
+                  canvas.width = width;
+                  canvas.height = height;
                   var ctx = canvas.getContext('2d');
-                  ctx.drawImage(img, 0, 0, 1080, 1920);
+                  ctx.drawImage(img, 0, 0, width, height);
                   URL.revokeObjectURL(objUrl);
                   canvas.toBlob(function (pngBlob) {
                     if (!pngBlob) return reject(new Error('png'));
@@ -472,7 +472,7 @@ export const RECIPE_CLIENT_SCRIPT = `(function () {
             });
           })
           .then(function (pngBlob) {
-            var fname = slug + '-2yolks-story.png';
+            var fname = slug + suffix;
             var file = typeof File === 'function' ? new File([pngBlob], fname, { type: 'image/png' }) : null;
             if (file && navigator.canShare && navigator.canShare({ files: [file] }) && navigator.share) {
               return navigator.share({ files: [file], title: sTitle, url: sUrl }).catch(function () {});
@@ -485,16 +485,18 @@ export const RECIPE_CLIENT_SCRIPT = `(function () {
             a.click();
             document.body.removeChild(a);
             setTimeout(function () { URL.revokeObjectURL(dlUrl); }, 2000);
-            flashBtn(storyBtn);
+            flashBtn(btn);
           })
           .catch(function () {
             window.open(svgUrl, '_blank', 'noopener');
           })
           .then(function () {
-            storyBtn.disabled = false;
+            btn.disabled = false;
           });
       });
     }
+    bindSvgCardExport(shareNav.querySelector('[data-story-card]'), 1080, 1920, '-2yolks-story.png');
+    bindSvgCardExport(shareNav.querySelector('[data-og-card]'), 1200, 630, '-2yolks-card.png');
   }
   var printBtn = document.querySelector('[data-print-open]');
   if (printBtn) printBtn.addEventListener('click', function () { window.print(); });
@@ -679,6 +681,8 @@ export const CAPTURE_CLIENT_SCRIPT = `(function () {
     var notesInput = aiPanel.querySelector('[data-ai-notes]');
     var extractBtn = aiPanel.querySelector('[data-ai-extract]');
     var polishBtn = aiPanel.querySelector('[data-ai-polish]');
+    var targetLangSel = aiPanel.querySelector('[data-ai-target-lang]');
+    var translateBtn = aiPanel.querySelector('[data-ai-translate]');
     var undoBtn = aiPanel.querySelector('[data-ai-undo]');
     var statusEl = aiPanel.querySelector('[data-ai-status]');
     var improvementsWrap = aiPanel.querySelector('[data-ai-improvements-wrap]');
@@ -693,7 +697,7 @@ export const CAPTURE_CLIENT_SCRIPT = `(function () {
     var audioChunks = [];
 
     function snapshotForm() {
-      var names = ['category', 'title', 'intro', 'ingredients', 'steps', 'prep', 'cook', 'servings'];
+      var names = ['category', 'title', 'locale', 'intro', 'ingredients', 'steps', 'prep', 'cook', 'servings'];
       var snap = {};
       names.forEach(function (n) {
         var el = field(n);
@@ -869,7 +873,10 @@ export const CAPTURE_CLIENT_SCRIPT = `(function () {
       var workingMsg = aiPanel.getAttribute('data-msg-working') || 'Working…';
       var doneMsg = mode === 'polish'
         ? (aiPanel.getAttribute('data-msg-done-polish') || 'Draft polished.')
-        : (aiPanel.getAttribute('data-msg-done-extract') || 'Draft structured.');
+        : mode === 'translate'
+          ? (aiPanel.getAttribute('data-msg-done-translate') || 'Draft translated.')
+          : (aiPanel.getAttribute('data-msg-done-extract') || 'Draft structured.');
+      var targetLocale = targetLangSel ? targetLangSel.value : '';
       var notes = notesInput ? notesInput.value.trim() : '';
       var draft = {
         title: field('title') ? field('title').value.trim() : '',
@@ -891,6 +898,7 @@ export const CAPTURE_CLIENT_SCRIPT = `(function () {
       }
       if (extractBtn) extractBtn.disabled = true;
       if (polishBtn) polishBtn.disabled = true;
+      if (translateBtn) translateBtn.disabled = true;
       if (statusEl) {
         statusEl.className = 'ok';
         statusEl.textContent = workingMsg;
@@ -903,6 +911,7 @@ export const CAPTURE_CLIENT_SCRIPT = `(function () {
           mode: mode,
           uiLang: lang(),
           recipeLocale: field('locale') ? field('locale').value : 'us:en',
+          targetLocale: mode === 'translate' ? targetLocale : undefined,
           notes: notes,
           image: attachedImage,
           audio: attachedAudio,
@@ -929,6 +938,7 @@ export const CAPTURE_CLIENT_SCRIPT = `(function () {
           if (d.prepMinutes != null && d.prepMinutes > 0 && field('prep')) field('prep').value = String(d.prepMinutes);
           if (d.cookMinutes != null && d.cookMinutes > 0 && field('cook')) field('cook').value = String(d.cookMinutes);
           if (d.servings != null && d.servings > 0 && field('servings')) field('servings').value = String(d.servings);
+          if (mode === 'translate' && targetLocale && field('locale')) field('locale').value = targetLocale;
           run();
           renderFeedback(res.body);
           if (statusEl) {
@@ -947,10 +957,12 @@ export const CAPTURE_CLIENT_SCRIPT = `(function () {
         .then(function () {
           if (extractBtn) extractBtn.disabled = false;
           if (polishBtn) polishBtn.disabled = false;
+          if (translateBtn) translateBtn.disabled = false;
         });
     }
 
     if (extractBtn) extractBtn.addEventListener('click', function () { callAi('extract'); });
     if (polishBtn) polishBtn.addEventListener('click', function () { callAi('polish'); });
+    if (translateBtn) translateBtn.addEventListener('click', function () { callAi('translate'); });
   }
 })();`;

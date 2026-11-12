@@ -14,7 +14,7 @@ import {
   validateRecipeSubmission,
   isRecipeCategorySlug,
   type RecipePage, asImageStyle } from '@2yolks/contracts';
-import { renderHome, renderRecipeIndex, renderCountryHome, renderRecipe, renderRecipeCardSvg, renderAbout, renderPrivacy, renderHowWeTest, renderNotFound, type SiteNavItem } from '@2yolks/web/server';
+import { renderHome, renderRecipeIndex, renderCountryHome, renderRecipe, renderRecipeCardSvg, renderRecipeOgSvg, renderAbout, renderPrivacy, renderHowWeTest, renderNotFound, type SiteNavItem } from '@2yolks/web/server';
 import { isUntested, localizedCountryName } from '@2yolks/contracts';
 import type { ImageStyle } from '@2yolks/contracts';
 import { recipeSlugAliases,  createDb, recipes, recipeLocales, recipeImages, sources, published, imageCleared, searchGapLogs } from './db';
@@ -696,74 +696,80 @@ const recipeRoute = async (c: Context<{ Bindings: Bindings }>) => {
     }));
   return c.html(renderRecipe(page, alternates, { nav, countryName: localizedCountryName(parsed.country, page.locale.lang), related }));
 };
-const recipeCardSvgRoute = async (c: Context<{ Bindings: Bindings }>) => {
-  const basePath = c.req.path.replace(/\/card\.svg$/, '');
-  const parsed = parsePath(basePath);
-  if (!parsed?.slug) return c.text('not found', 404, { 'cache-control': 'no-store' });
-  const db = createDb(c.env.DB);
-  const lang = parsed.lang ?? defaultLocale(parsed.country) ?? '';
-  const rows = await db
-    .select()
-    .from(recipeLocales)
-    .innerJoin(recipes, eq(recipeLocales.recipeId, recipes.id))
-    .innerJoin(sources, eq(recipes.sourceId, sources.id))
-    .where(
-      and(
-        eq(recipeLocales.country, parsed.country),
-        eq(recipeLocales.slug, parsed.slug),
-        eq(recipeLocales.lang, lang),
-        published(db, demoAllowed(c)),
-      ),
-    )
-    .limit(1);
-  const canonical = rows[0];
-  if (!canonical) return c.text('not found', 404, { 'cache-control': 'no-store' });
-  const origin = c.env.CANONICAL_ORIGIN ?? new URL(c.req.url).origin;
-  const page: RecipePage = {
-    recipe: {
-      id: canonical.recipes.id,
-      sourceId: canonical.recipes.sourceId,
-      originCountry: canonical.recipes.originCountry,
-      imageKey: canonical.recipes.imageKey,
-      createdAt: canonical.recipes.createdAt,
-      testedAt: canonical.recipes.testedAt,
-      testedBy: canonical.recipes.testedBy,
-      prepMinutes: canonical.recipes.prepMinutes,
-      cookMinutes: canonical.recipes.cookMinutes,
-      restMinutes: canonical.recipes.restMinutes,
-      totalMinutes: canonical.recipes.totalMinutes,
-      baseServings: canonical.recipes.baseServings,
-      category: (canonical.recipes.category ?? null) as RecipePage['recipe']['category'],
-    },
-    locale: {
-      recipeId: canonical.recipe_locales.recipeId,
-      country: canonical.recipe_locales.country,
-      lang: canonical.recipe_locales.lang,
-      title: canonical.recipe_locales.title,
-      slug: canonical.recipe_locales.slug,
-      intro: canonical.recipe_locales.intro,
-      ingredientsJson: canonical.recipe_locales.ingredientsJson,
-      stepsJson: canonical.recipe_locales.stepsJson,
-      status: canonical.recipe_locales.status,
-    },
-    source: {
-      id: canonical.sources.id,
-      name: canonical.sources.name,
-      url: canonical.sources.url,
-      license: canonical.sources.license,
-      clearedAt: canonical.sources.clearedAt,
-      notes: canonical.sources.notes,
-    },
+const makeRecipeSvgRoute =
+  (suffixRe: RegExp, renderer: (page: RecipePage, origin: string) => string) =>
+  async (c: Context<{ Bindings: Bindings }>) => {
+    const basePath = c.req.path.replace(suffixRe, '');
+    const parsed = parsePath(basePath);
+    if (!parsed?.slug) return c.text('not found', 404, { 'cache-control': 'no-store' });
+    const db = createDb(c.env.DB);
+    const lang = parsed.lang ?? defaultLocale(parsed.country) ?? '';
+    const rows = await db
+      .select()
+      .from(recipeLocales)
+      .innerJoin(recipes, eq(recipeLocales.recipeId, recipes.id))
+      .innerJoin(sources, eq(recipes.sourceId, sources.id))
+      .where(
+        and(
+          eq(recipeLocales.country, parsed.country),
+          eq(recipeLocales.slug, parsed.slug),
+          eq(recipeLocales.lang, lang),
+          published(db, demoAllowed(c)),
+        ),
+      )
+      .limit(1);
+    const canonical = rows[0];
+    if (!canonical) return c.text('not found', 404, { 'cache-control': 'no-store' });
+    const origin = c.env.CANONICAL_ORIGIN ?? new URL(c.req.url).origin;
+    const page: RecipePage = {
+      recipe: {
+        id: canonical.recipes.id,
+        sourceId: canonical.recipes.sourceId,
+        originCountry: canonical.recipes.originCountry,
+        imageKey: canonical.recipes.imageKey,
+        createdAt: canonical.recipes.createdAt,
+        testedAt: canonical.recipes.testedAt,
+        testedBy: canonical.recipes.testedBy,
+        prepMinutes: canonical.recipes.prepMinutes,
+        cookMinutes: canonical.recipes.cookMinutes,
+        restMinutes: canonical.recipes.restMinutes,
+        totalMinutes: canonical.recipes.totalMinutes,
+        baseServings: canonical.recipes.baseServings,
+        category: (canonical.recipes.category ?? null) as RecipePage['recipe']['category'],
+      },
+      locale: {
+        recipeId: canonical.recipe_locales.recipeId,
+        country: canonical.recipe_locales.country,
+        lang: canonical.recipe_locales.lang,
+        title: canonical.recipe_locales.title,
+        slug: canonical.recipe_locales.slug,
+        intro: canonical.recipe_locales.intro,
+        ingredientsJson: canonical.recipe_locales.ingredientsJson,
+        stepsJson: canonical.recipe_locales.stepsJson,
+        status: canonical.recipe_locales.status,
+      },
+      source: {
+        id: canonical.sources.id,
+        name: canonical.sources.name,
+        url: canonical.sources.url,
+        license: canonical.sources.license,
+        clearedAt: canonical.sources.clearedAt,
+        notes: canonical.sources.notes,
+      },
+    };
+    const svg = renderer(page, origin);
+    return c.body(svg, 200, {
+      'content-type': 'image/svg+xml; charset=utf-8',
+      'cache-control': canonical.sources.license === 'internal-demo' ? 'no-store' : 'public, max-age=300',
+      'x-content-type-options': 'nosniff',
+    });
   };
-  const svg = renderRecipeCardSvg(page, origin);
-  return c.body(svg, 200, {
-    'content-type': 'image/svg+xml; charset=utf-8',
-    'cache-control': canonical.sources.license === 'internal-demo' ? 'no-store' : 'public, max-age=300',
-    'x-content-type-options': 'nosniff',
-  });
-};
+const recipeCardSvgRoute = makeRecipeSvgRoute(/\/card\.svg$/, renderRecipeCardSvg);
+const recipeOgSvgRoute = makeRecipeSvgRoute(/\/og\.svg$/, renderRecipeOgSvg);
 app.get('/:country/recipes/:idSlug/card.svg', recipeCardSvgRoute);
 app.get('/:country/:lang/recipes/:idSlug/card.svg', recipeCardSvgRoute);
+app.get('/:country/recipes/:idSlug/og.svg', recipeOgSvgRoute);
+app.get('/:country/:lang/recipes/:idSlug/og.svg', recipeOgSvgRoute);
 app.get('/:country/recipes/:idSlug', recipeRoute);
 app.get('/:country/:lang/recipes/:idSlug', recipeRoute);
 

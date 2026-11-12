@@ -14,10 +14,12 @@ import { sendMail, type MailEnv } from './email';
 import { parseRecipeText, parseJsonLdRecipe, type ParsedRecipe } from './parse';
 import { safeFetchText, SsrfError } from './ssrf';
 import { assistRecipe, reserveAiBudget, sanitizeMediaPart, DEFAULT_AI_DAILY_CAP, type AiAssistRequest } from './aiRecipe';
+import { validateImage } from './imageValidation';
 
 type RateLimiter = { limit(opts: { key: string }): Promise<{ success: boolean }> };
 export type AccountBindings = MailEnv & {
   DB: D1Database;
+  IMAGES?: R2Bucket;
   CANONICAL_ORIGIN?: string;
   /** Where "submitted for review" notices go (secret, never committed). */
   REVIEW_NOTIFY_TO?: string;
@@ -124,8 +126,17 @@ const aiBodyLimit = bodyLimit({
     return c.json({ ok: false, error: accountStrings(lang).errTooLarge }, 413);
   },
 });
+const reportBodyLimit = bodyLimit({
+  maxSize: 2 * 1024 * 1024,
+  onError: (c) => {
+    const lang = langOf(c as Ctx);
+    const t = accountStrings(lang);
+    return c.html(renderAccountPage(t.titleTooLarge, `<div class="err" role="alert">${t.errTooLarge}</div>`, lang, new URL(c.req.url).pathname), 413);
+  },
+});
 accountApp.use('*', async (c, next) => {
   if (c.req.path.endsWith('/recipes/ai-assist')) return aiBodyLimit(c, next);
+  if (c.req.path.endsWith('/test-report')) return reportBodyLimit(c, next);
   return standardBodyLimit(c, next);
 });
 
@@ -318,7 +329,7 @@ function captureDataIslands(): string {
 
 function renderForm(s: FormState, t: AccountStrings, acctLang: string, errors: string[] = [], note = '', importOn = false): string {
   const errBox = errors.length ? banner('err', `<strong>${t.fixThese}</strong><ul>${errors.map((e) => `<li>${esc(e)}</li>`).join('')}</ul>`) : '';
-  const aiPanel = `<div class="panel ai-panel" data-ai-panel data-ai-endpoint="/account/recipes/ai-assist${qs(acctLang)}" data-msg-working="${esc(t.aiWorking)}" data-msg-done-extract="${esc(t.aiDoneExtract)}" data-msg-done-polish="${esc(t.aiDonePolish)}" data-msg-err-input="${esc(t.aiErrInput)}">
+  const aiPanel = `<div class="panel ai-panel" data-ai-panel data-ai-endpoint="/account/recipes/ai-assist${qs(acctLang)}" data-msg-working="${esc(t.aiWorking)}" data-msg-done-extract="${esc(t.aiDoneExtract)}" data-msg-done-polish="${esc(t.aiDonePolish)}" data-msg-done-translate="${esc(t.aiDoneTranslate)}" data-msg-err-input="${esc(t.aiErrInput)}">
 <h2>${t.aiPanelTitle}</h2>
 <p class="hint">${t.aiPanelLead}</p>
 <div class="ai-grid">
@@ -332,6 +343,8 @@ function renderForm(s: FormState, t: AccountStrings, acctLang: string, errors: s
   <div class="ai-actions">
     <button type="button" data-ai-extract>${t.aiExtractBtn}</button>
     <button type="button" class="quiet" data-ai-polish>${t.aiPolishBtn}</button>
+    <select data-ai-target-lang aria-label="${esc(t.aiTargetLangLabel)}" style="width:auto">${localeOptions(s.locale)}</select>
+    <button type="button" class="quiet" data-ai-translate>${t.aiTranslateBtn}</button>
     <button type="button" class="quiet" data-ai-undo hidden>${t.aiUndoBtn}</button>
   </div>
   <div data-ai-status hidden></div>
@@ -435,9 +448,11 @@ accountApp.post('/recipes/ai-assist', async (c) => {
   } catch {
     return c.json({ ok: false, error: t.errGeneric }, 400, { 'cache-control': 'no-store' });
   }
-  const mode: 'extract' | 'polish' = raw['mode'] === 'polish' ? 'polish' : 'extract';
+  const mode: 'extract' | 'polish' | 'translate' =
+    raw['mode'] === 'polish' ? 'polish' : raw['mode'] === 'translate' ? 'translate' : 'extract';
   const uiLang = isAccountLang(raw['uiLang']) ? raw['uiLang'] : (lang as 'en' | 'es' | 'fr');
   const recipeLocale = typeof raw['recipeLocale'] === 'string' && raw['recipeLocale'].includes(':') ? raw['recipeLocale'].slice(0, 12) : 'us:en';
+  const targetLocale = typeof raw['targetLocale'] === 'string' && raw['targetLocale'].includes(':') ? raw['targetLocale'].slice(0, 12) : undefined;
   const notes = str(raw['notes'], 12_000).trim();
   const image = sanitizeMediaPart(raw['image'], 'image');
   const audio = sanitizeMediaPart(raw['audio'], 'audio');
@@ -462,7 +477,7 @@ accountApp.post('/recipes/ai-assist', async (c) => {
     return c.json({ ok: false, error: t.aiErrBusy }, 429, { 'cache-control': 'no-store' });
   }
 
-  const req: AiAssistRequest = { mode, uiLang, recipeLocale, notes, image, audio, draft };
+  const req: AiAssistRequest = { mode, uiLang, recipeLocale, targetLocale, notes, image, audio, draft };
   try {
     const out = await assistRecipe(req, { apiKey: c.env.GEMINI_API_KEY });
     return c.json({ ok: true, ...out }, 200, { 'cache-control': 'no-store' });
@@ -612,6 +627,7 @@ accountApp.post('/recipes/:id/submit', async (c) => {
 // recipes are excluded (their tested label comes from the submission itself).
 
 const REPORT_NOTE_MAX = 280;
+const MAX_REPORT_PHOTO_BYTES = 1_572_864; // 1.5 MB
 
 async function loadReportTarget(c: Ctx, id: string) {
   return c.env.DB.prepare(
@@ -634,10 +650,12 @@ accountApp.get('/recipes/:id/test-report', async (c) => {
   const existing = await c.env.DB.prepare('SELECT status FROM recipe_test_reports WHERE recipe_id = ? AND user_id = ?').bind(row.id, user.id).first<{ status: string }>();
   if (existing) return page(c, t.reportPageTitle, `<h1>${t.reportTitle}</h1><p class="lead">${fill(t.reportAlreadyLead, { status: reportStatusLabel(t, existing.status) })}</p>`, 409);
   return page(c, t.reportPageTitle, `<h1>${t.reportTitle}</h1><p class="lead">${fill(t.reportLead, { title: esc(row.title) })}</p>
-<form method="post" action="/account/recipes/${esc(row.id)}/test-report${qs(lang)}">
+<form method="post" enctype="multipart/form-data" action="/account/recipes/${esc(row.id)}/test-report${qs(lang)}">
 <label>${t.reportNoteLabel}<textarea name="note" rows="3" maxlength="${REPORT_NOTE_MAX}"></textarea></label>
 <p class="hint">${t.reportNoteHint}</p>
-<label class="check"><input type="checkbox" name="attest" value="1" required> ${t.reportAttestText}</label>
+<label>${t.reportPhotoLabel}<small>${t.reportPhotoHint}</small><input type="file" name="photo" accept="image/jpeg,image/png,image/webp"></label>
+<label class="check"><input type="checkbox" name="photo_attest" value="1"> <span>${t.reportPhotoAttestText}</span></label>
+<label class="check"><input type="checkbox" name="attest" value="1" required> <span>${t.reportAttestText}</span></label>
 <button type="submit">${t.reportButton}</button></form>`);
 });
 
@@ -652,14 +670,46 @@ accountApp.post('/recipes/:id/test-report', async (c) => {
   const form = await c.req.parseBody();
   if (form['attest'] !== '1') return page(c, t.reportPageTitle, banner('err', t.errReportAttest), 400);
   const note = str(form['note'], REPORT_NOTE_MAX).trim() || null;
+
+  const existingBefore = await c.env.DB.prepare('SELECT status FROM recipe_test_reports WHERE recipe_id = ? AND user_id = ?').bind(row.id, user.id).first<{ status: string }>();
+  if (existingBefore) {
+    return page(c, t.reportPageTitle, `<h1>${t.reportTitle}</h1><p class="lead">${fill(t.reportAlreadyLead, { status: reportStatusLabel(t, existingBefore.status) })}</p>`, 409);
+  }
+
+  const reportId = newId();
+  let imageR2Key: string | null = null;
+  let imageMime: string | null = null;
+  let imageBytes: number | null = null;
+  let imageWidth: number | null = null;
+  let imageHeight: number | null = null;
+  const rawPhoto = form['photo'];
+  const hasPhoto = Boolean(rawPhoto && typeof rawPhoto === 'object' && 'arrayBuffer' in rawPhoto && Number((rawPhoto as { size?: number }).size) > 0);
+  if (hasPhoto) {
+    if (form['photo_attest'] !== '1') return page(c, t.reportPageTitle, banner('err', t.errReportPhotoAttest), 400);
+    if (!c.env.IMAGES) return page(c, t.reportPageTitle, banner('err', t.errGeneric), 503);
+    const photoFile = rawPhoto as File;
+    if (photoFile.size > MAX_REPORT_PHOTO_BYTES) return page(c, t.reportPageTitle, banner('err', t.errReportPhotoInvalid), 400);
+    const bytes = new Uint8Array(await photoFile.arrayBuffer());
+    const info = bytes.length <= MAX_REPORT_PHOTO_BYTES ? await validateImage(bytes) : null;
+    if (!info) return page(c, t.reportPageTitle, banner('err', t.errReportPhotoInvalid), 400);
+    imageR2Key = `reports/${row.id}/${reportId}.${info.ext}`;
+    imageMime = info.mime;
+    imageBytes = bytes.length;
+    imageWidth = info.width;
+    imageHeight = info.height;
+    // Pending/rejected photos live only under reports/ in R2 and are NEVER in recipe_images,
+    // so /img/recipe/* cannot serve them unless a moderator approves via MCP.
+    await c.env.IMAGES.put(imageR2Key, bytes, { httpMetadata: { contentType: info.mime } });
+  }
+
   const now = new Date().toISOString();
   // The duplicate guard lives inside the INSERT (single statement) so two
   // concurrent posts cannot both land; the unique index is the backstop.
   const ins = await c.env.DB.prepare(
-    `INSERT INTO recipe_test_reports (id, recipe_id, user_id, note, status, created_at)
-     SELECT ?, ?, ?, ?, 'pending', ?
+    `INSERT INTO recipe_test_reports (id, recipe_id, user_id, note, status, created_at, image_r2_key, image_mime, image_bytes, image_width, image_height)
+     SELECT ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?
      WHERE NOT EXISTS (SELECT 1 FROM recipe_test_reports WHERE recipe_id = ? AND user_id = ?)`,
-  ).bind(newId(), row.id, user.id, note, now, row.id, user.id).run();
+  ).bind(reportId, row.id, user.id, note, now, imageR2Key, imageMime, imageBytes, imageWidth, imageHeight, row.id, user.id).run();
   if (ins.meta.changes !== 1) {
     const existing = await c.env.DB.prepare('SELECT status FROM recipe_test_reports WHERE recipe_id = ? AND user_id = ?').bind(row.id, user.id).first<{ status: string }>();
     return page(c, t.reportPageTitle, `<h1>${t.reportTitle}</h1><p class="lead">${fill(t.reportAlreadyLead, { status: reportStatusLabel(t, existing?.status ?? 'pending') })}</p>`, 409);
@@ -670,7 +720,7 @@ accountApp.post('/recipes/:id/test-report', async (c) => {
     await sendMail(c.env, {
       to: c.env.REVIEW_NOTIFY_TO,
       subject: `2yolks kitchen-test report: ${row.title}`.slice(0, 180),
-      text: `A cook reports testing a recipe in their kitchen.\n\nTitle: ${row.title}\nRecipe id: ${row.id}\nCook: ${user.displayName ?? ''} <${user.email}>\nNote: ${note ?? '(none)'}\n\nThe tested label changes only if you approve the report. Queue: MCP recipes.list_test_reports with status pending.\n`,
+      text: `A cook reports testing a recipe in their kitchen.\n\nTitle: ${row.title}\nRecipe id: ${row.id}\nCook: ${user.displayName ?? ''} <${user.email}>\nNote: ${note ?? '(none)'}\nPhoto attached: ${imageR2Key ? `yes (${imageMime}, ${imageWidth}x${imageHeight})` : 'no'}\n\nThe tested label changes only if you approve the report. Queue: MCP recipes.list_test_reports with status pending.\n`,
     }).catch(() => false);
   }
   return page(c, t.reportSentPageTitle, `<h1>${t.reportSentTitle}</h1><p class="lead">${fill(t.reportSentLead, { title: esc(row.title) })}</p><p><a class="btn" href="/account${qs(lang)}">${t.backToRecipes}</a></p>`);

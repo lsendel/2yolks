@@ -33,6 +33,8 @@ import {
   unknownRefs,
 } from '@2yolks/contracts';
 import type { IngredientEntry, StructuredIngredient } from '@2yolks/contracts';
+import { MAX_IMAGE_BASE64, MAX_IMAGE_BYTES, decodeBase64, validateImage } from './imageValidation';
+import { translateStructuredRecipeWithGemini } from './aiRecipe';
 
 export type McpBindings = {
   DB: D1Database;
@@ -42,6 +44,7 @@ export type McpBindings = {
   ADMIN_MCP_API_KEY?: string;
   MCP_READ_KEY?: string;
   MCP_NAMED_KEYS?: string;
+  GEMINI_API_KEY?: string;
   // Fail-closed gate for translations.mark_reviewed. The human-vs-agent
   // translation publication policy is unresolved, so review stays disabled
   // until that policy decision enables it explicitly.
@@ -266,6 +269,17 @@ const TOOLS: ToolDef[] = [
     },
   },
   {
+    name: 'recipes.translate_locale',
+    description:
+      "Translate a recipe's original locale into a target country/lang draft using Gemini 3.8 Flash + deterministic QA gate (numbers, structured ingredient refs/quantities, tokens, allergens). Args: id, country, lang, slug? (optional). Dry-runs unless confirmed: true.",
+    role: 'editor',
+    inputSchema: {
+      type: 'object',
+      properties: { id: { type: 'string' }, country: { type: 'string' }, lang: { type: 'string' }, slug: { type: 'string' } },
+      required: ['id', 'country', 'lang'],
+    },
+  },
+  {
     name: 'translations.mark_reviewed',
     description:
       'Stamp a translated draft locale as reviewed after re-running the QA gate against its stored source row (source must be published). Requires confirmed: true and a note; the server stamps time + authenticated reviewer, never caller content. Disabled unless the deployment enables translation review.',
@@ -316,11 +330,16 @@ const TOOLS: ToolDef[] = [
   {
     name: 'recipes.moderate_test_report',
     description:
-      'Approve or reject a community kitchen-test report. Args: id (report id), decision (approve|reject). Executes only with confirmed: true; otherwise validates as a dry run. On approve the recipe is stamped tested_at = the report creation time and tested_by = the cook\'s display name, only while tested_at is still empty - the first approved report wins, later approvals only corroborate. Rejection hides the report; nothing is deleted.',
+      'Approve or reject a community kitchen-test report. Args: id (report id), decision (approve|reject), publishPhoto? (boolean, default true when report has photo), promoteAsHero? (boolean, default true when recipe lacks a cleared hero). Executes only with confirmed: true; otherwise validates as a dry run. On approve the recipe is stamped tested_at = the report creation time and tested_by = the cook\'s display name, only while tested_at is still empty - the first approved report wins, later approvals only corroborate. Rejection hides the report and never promotes any photo; nothing is deleted.',
     role: 'admin',
     inputSchema: {
       type: 'object',
-      properties: { id: { type: 'string' }, decision: { type: 'string' } },
+      properties: {
+        id: { type: 'string' },
+        decision: { type: 'string' },
+        publishPhoto: { type: 'boolean' },
+        promoteAsHero: { type: 'boolean' },
+      },
       required: ['id', 'decision'],
     },
   },
@@ -552,330 +571,8 @@ function readProvenance(l: Record<string, unknown>): { of?: string; method?: str
   };
 }
 
-// --- Image validation (recipes.set_image) -------------------------------------
-// Bytes arrive base64 inside the JSON-RPC call; there is deliberately no
-// URL-fetch mode, so the worker never makes a server-side request to a
-// caller-supplied address (no SSRF). Validation is structural, not a
-// magic-byte sniff: an accepted file must parse END-TO-END as its detected
-// type - JPEG markers walked to a terminal EOI, PNG chunks walked with CRC32
-// verification to a final IEND with the IDAT stream inflated and verified
-// scanline-by-scanline (exact size, filter types 0-4, Adam7 passes handled;
-// decompression bombs fail here), WebP RIFF length reconciled exactly.
-// Truncated, malformed, dimension-capped, or trailing-byte (polyglot) files
-// are rejected, as are types we cannot verify (SVG, avif, gif, ...).
-// Known bound: JPEG/WebP COMPRESSED-BITSTREAM corruption that preserves
-// container structure is not detected (no pixel decode in this runtime);
-// nosniff serving is the backstop there.
-const MAX_IMAGE_BASE64 = 4_200_000; // ~3.1 MB decoded
-const MAX_IMAGE_BYTES = 3 * 1024 * 1024;
-const MAX_IMAGE_DIM = 4096;
-const MAX_IMAGE_PIXELS = 16_777_216; // bounds any decoder to ~64 MB RGBA
+// --- Image validation (shared in ./imageValidation) --------------------------
 const IMAGE_STYLES = new Set(['photo', 'illustration', 'graphic']);
-
-function decodeBase64(b64: string): Uint8Array | null {
-  const clean = b64.replace(/\s+/g, '');
-  if (clean.length === 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(clean) || clean.length % 4 !== 0) return null;
-  try {
-    const bin = atob(clean);
-    const out = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-    return out;
-  } catch {
-    return null;
-  }
-}
-
-type ImageInfo = { mime: string; ext: string; width: number; height: number };
-
-function dimsOk(width: number, height: number): boolean {
-  return (
-    Number.isInteger(width) &&
-    Number.isInteger(height) &&
-    width > 0 &&
-    height > 0 &&
-    width <= MAX_IMAGE_DIM &&
-    height <= MAX_IMAGE_DIM &&
-    width * height <= MAX_IMAGE_PIXELS
-  );
-}
-
-// PNG CRC-32 (ISO-HDLC), table-driven.
-const CRC_TABLE = (() => {
-  const t = new Uint32Array(256);
-  for (let n = 0; n < 256; n++) {
-    let c = n;
-    for (let k = 0; k < 8; k++) c = c & 1 ? (0xedb88320 ^ (c >>> 1)) >>> 0 : c >>> 1;
-    t[n] = c >>> 0;
-  }
-  return t;
-})();
-
-function crc32(b: Uint8Array): number {
-  let c = 0xffffffff;
-  for (let i = 0; i < b.length; i++) c = (CRC_TABLE[(c ^ b[i]!) & 0xff]! ^ (c >>> 8)) >>> 0;
-  return (c ^ 0xffffffff) >>> 0;
-}
-
-// Inflate a zlib stream fully, answering null on any stream error or the
-// moment the decoded size passes cap - a bomb never gets to expand fully.
-async function inflateMax(deflated: Uint8Array, cap: number): Promise<Uint8Array | null> {
-  try {
-    const ds = new DecompressionStream('deflate');
-    const stream = new Blob([deflated as BlobPart]).stream().pipeThrough(ds);
-    const reader = stream.getReader();
-    const parts: Uint8Array[] = [];
-    let total = 0;
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      const v = value as Uint8Array;
-      total += v.byteLength;
-      if (total > cap) {
-        await reader.cancel('decompressed size cap exceeded');
-        return null;
-      }
-      parts.push(v);
-    }
-    const out = new Uint8Array(total);
-    let off = 0;
-    for (const p of parts) {
-      out.set(p, off);
-      off += p.length;
-    }
-    return out;
-  } catch {
-    return null;
-  }
-}
-
-const ADAM7: readonly (readonly [number, number, number, number])[] = [
-  [0, 0, 8, 8],
-  [4, 0, 8, 8],
-  [0, 4, 4, 8],
-  [2, 0, 4, 4],
-  [0, 2, 2, 4],
-  [1, 0, 2, 2],
-  [0, 1, 1, 2],
-];
-
-// Exact inflated size: per pass, ph rows of (1 filter byte + rowBytes).
-function pngExpectedScanlineBytes(width: number, height: number, bppBits: number, interlace: number): number {
-  let total = 0;
-  const pass = (pw: number, ph: number) => {
-    total += ph * (1 + Math.ceil((pw * bppBits) / 8));
-  };
-  if (interlace === 0) {
-    pass(width, height);
-  } else {
-    for (const [x0, y0, dx, dy] of ADAM7) {
-      const pw = width > x0 ? Math.ceil((width - x0) / dx) : 0;
-      const ph = height > y0 ? Math.ceil((height - y0) / dy) : 0;
-      if (pw > 0 && ph > 0) pass(pw, ph);
-    }
-  }
-  return total;
-}
-
-// Pixel-structure check without unfiltering: every scanline must start with
-// a valid filter type (0-4) and the walk must consume the inflated data
-// exactly - neither truncated nor overlong streams pass.
-function pngScanlinesOk(raw: Uint8Array, width: number, height: number, bppBits: number, interlace: number): boolean {
-  const rows: [number, number][] = [];
-  if (interlace === 0) {
-    rows.push([width, height]);
-  } else {
-    for (const [x0, y0, dx, dy] of ADAM7) {
-      const pw = width > x0 ? Math.ceil((width - x0) / dx) : 0;
-      const ph = height > y0 ? Math.ceil((height - y0) / dy) : 0;
-      if (pw > 0 && ph > 0) rows.push([pw, ph]);
-    }
-  }
-  let off = 0;
-  for (const [pw, ph] of rows) {
-    const rowBytes = Math.ceil((pw * bppBits) / 8);
-    for (let r = 0; r < ph; r++) {
-      if (off + 1 + rowBytes > raw.length) return false;
-      if (raw[off]! > 4) return false;
-      off += 1 + rowBytes;
-    }
-  }
-  return off === raw.length;
-}
-
-// JPEG: SOI, marker segments (in any order), SOS entropy scans, terminal
-// EOI with zero trailing bytes. One frame (SOF) only.
-function validateJpeg(b: Uint8Array): ImageInfo | null {
-  if (b.length < 4 || b[0] !== 0xff || b[1] !== 0xd8) return null;
-  let i = 2;
-  let info: ImageInfo | null = null;
-  let markers = 0;
-  while (i < b.length) {
-    if (++markers > 10000) return null;
-    if (b[i] !== 0xff) return null;
-    while (i < b.length && b[i] === 0xff) i++; // fill bytes before a marker
-    if (i >= b.length) return null;
-    const marker = b[i]!;
-    i++;
-    if (marker === 0x00) return null; // stuffed byte outside entropy data
-    if (marker === 0xd9) return i === b.length ? info : null; // EOI: terminal only
-    if (marker === 0xd8 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) continue; // standalone
-    if (i + 2 > b.length) return null;
-    const len = (b[i]! << 8) | b[i + 1]!;
-    if (len < 2 || i + len > b.length) return null;
-    if (marker === 0xda) {
-      // SOS: header, then entropy-coded data until the next real marker.
-      i += len;
-      for (;;) {
-        if (i >= b.length) return null; // truncated entropy data
-        if (b[i] !== 0xff) {
-          i++;
-          continue;
-        }
-        let j = i + 1;
-        while (j < b.length && b[j] === 0xff) j++;
-        if (j >= b.length) return null;
-        const m = b[j]!;
-        if (m === 0x00 || (m >= 0xd0 && m <= 0xd7)) {
-          i = j + 1; // stuffed 0xFF00 or restart marker: still entropy data
-          continue;
-        }
-        i = j - 1; // real marker: resume marker parsing at its 0xFF prefix
-        break;
-      }
-      continue;
-    }
-    const isSof = marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc;
-    if (isSof) {
-      if (info) return null; // exactly one frame
-      if (len < 8) return null;
-      const height = (b[i + 3]! << 8) | b[i + 4]!;
-      const width = (b[i + 5]! << 8) | b[i + 6]!;
-      if (!dimsOk(width, height)) return null;
-      info = { mime: 'image/jpeg', ext: 'jpg', width, height };
-    }
-    i += len;
-  }
-  return null; // end of data without EOI
-}
-
-const PNG_SIG = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
-const PNG_CHANNELS: Record<number, number> = { 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 };
-const PNG_DEPTHS: Record<number, number[]> = { 0: [1, 2, 4, 8, 16], 2: [8, 16], 3: [1, 2, 4, 8], 4: [8, 16], 6: [8, 16] };
-
-// PNG: signature, chunk walk with per-chunk CRC32, IHDR first and exactly
-// once, at least one IDAT, IEND last with zero trailing bytes, and the
-// concatenated IDAT zlib stream must inflate within the computed bound.
-async function validatePng(b: Uint8Array): Promise<ImageInfo | null> {
-  if (b.length < 8 || !PNG_SIG.every((v, k) => b[k] === v)) return null;
-  let pos = 8;
-  let info: ImageInfo | null = null;
-  let idatCap = 0;
-  let bppBits = 0;
-  let interlace = 0;
-  let sawIdat = false;
-  const idatParts: Uint8Array[] = [];
-  let chunks = 0;
-  for (;;) {
-    if (++chunks > 10000) return null;
-    if (pos + 12 > b.length) return null; // truncated chunk
-    const len = ((b[pos]! << 24) | (b[pos + 1]! << 16) | (b[pos + 2]! << 8) | b[pos + 3]!) >>> 0;
-    if (len > b.length - pos - 12) return null;
-    const type = String.fromCharCode(b[pos + 4]!, b[pos + 5]!, b[pos + 6]!, b[pos + 7]!);
-    if (!/^[A-Za-z]{4}$/.test(type)) return null;
-    const crc = ((b[pos + 8 + len]! << 24) | (b[pos + 9 + len]! << 16) | (b[pos + 10 + len]! << 8) | b[pos + 11 + len]!) >>> 0;
-    if (crc32(b.subarray(pos + 4, pos + 8 + len)) !== crc) return null; // CRC covers type + data
-    if (type === 'IHDR') {
-      if (info !== null || pos !== 8 || len !== 13) return null; // first chunk, exactly once
-      const width = ((b[pos + 8]! << 24) | (b[pos + 9]! << 16) | (b[pos + 10]! << 8) | b[pos + 11]!) >>> 0;
-      const height = ((b[pos + 12]! << 24) | (b[pos + 13]! << 16) | (b[pos + 14]! << 8) | b[pos + 15]!) >>> 0;
-      const depth = b[pos + 16]!;
-      const color = b[pos + 17]!;
-      if (b[pos + 18]! !== 0 || b[pos + 19]! !== 0 || b[pos + 20]! > 1) return null; // compression/filter/interlace
-      const channels = PNG_CHANNELS[color];
-      const depths = PNG_DEPTHS[color];
-      if (!channels || !depths?.includes(depth)) return null;
-      if (!dimsOk(width, height)) return null;
-      // The inflated stream must be EXACTLY the scanlines the header
-      // declares (per-pass for Adam7): a byte more is a bomb, a byte less is
-      // truncated, and every scanline filter byte is verified at IEND.
-      bppBits = channels * depth;
-      interlace = b[pos + 20]!;
-      idatCap = pngExpectedScanlineBytes(width, height, bppBits, interlace);
-      info = { mime: 'image/png', ext: 'png', width, height };
-    } else if (type === 'IDAT') {
-      if (!info) return null;
-      sawIdat = true;
-      idatParts.push(b.subarray(pos + 8, pos + 8 + len));
-    } else if (type === 'IEND') {
-      if (!info || !sawIdat || len !== 0) return null;
-      if (pos + 12 !== b.length) return null; // trailing bytes: polyglot
-      let total = 0;
-      for (const p of idatParts) total += p.length;
-      const idat = new Uint8Array(total);
-      let off = 0;
-      for (const p of idatParts) {
-        idat.set(p, off);
-        off += p.length;
-      }
-      const raw = await inflateMax(idat, idatCap);
-      return raw !== null && pngScanlinesOk(raw, info.width, info.height, bppBits, interlace) ? info : null;
-    }
-    pos += 12 + len;
-  }
-}
-
-// WebP: RIFF size must equal the file size exactly, chunks walk with
-// even-byte padding, exactly one still-image stream (VP8/VP8L) or a VP8X
-// canvas; animated files (ANIM/ANMF) are not stills and are rejected.
-function validateWebp(b: Uint8Array): ImageInfo | null {
-  if (b.length < 20 || b[0] !== 0x52 || b[1] !== 0x49 || b[2] !== 0x46 || b[3] !== 0x46) return null;
-  const riffLen = (b[4]! | (b[5]! << 8) | (b[6]! << 16) | (b[7]! << 24)) >>> 0;
-  if (riffLen !== b.length - 8) return null; // exact size: no trailing/polyglot
-  if (b[8] !== 0x57 || b[9] !== 0x45 || b[10] !== 0x42 || b[11] !== 0x50) return null;
-  let pos = 12;
-  let info: ImageInfo | null = null;
-  let chunks = 0;
-  while (pos < b.length) {
-    if (++chunks > 1000) return null;
-    if (pos + 8 > b.length) return null;
-    const fourcc = String.fromCharCode(b[pos]!, b[pos + 1]!, b[pos + 2]!, b[pos + 3]!);
-    const size = (b[pos + 4]! | (b[pos + 5]! << 8) | (b[pos + 6]! << 16) | (b[pos + 7]! << 24)) >>> 0;
-    if (pos + 8 + size > b.length) return null;
-    const d = pos + 8;
-    if (fourcc === 'VP8 ') {
-      if (info || size < 10) return null;
-      if (b[d + 3] !== 0x9d || b[d + 4] !== 0x01 || b[d + 5] !== 0x2a) return null; // frame start code
-      const width = (b[d + 6]! | (b[d + 7]! << 8)) & 0x3fff;
-      const height = (b[d + 8]! | (b[d + 9]! << 8)) & 0x3fff;
-      if (!dimsOk(width, height)) return null;
-      info = { mime: 'image/webp', ext: 'webp', width, height };
-    } else if (fourcc === 'VP8L') {
-      if (info || size < 5 || b[d] !== 0x2f) return null; // signature byte
-      const bits = (b[d + 1]! | (b[d + 2]! << 8) | (b[d + 3]! << 16) | (b[d + 4]! << 24)) >>> 0;
-      const width = (bits & 0x3fff) + 1;
-      const height = ((bits >>> 14) & 0x3fff) + 1;
-      if (!dimsOk(width, height)) return null;
-      info = { mime: 'image/webp', ext: 'webp', width, height };
-    } else if (fourcc === 'VP8X') {
-      if (info || size < 10) return null;
-      const width = (b[d + 4]! | (b[d + 5]! << 8) | (b[d + 6]! << 16)) + 1;
-      const height = (b[d + 7]! | (b[d + 8]! << 8) | (b[d + 9]! << 16)) + 1;
-      if (!dimsOk(width, height)) return null;
-      info = { mime: 'image/webp', ext: 'webp', width, height };
-    } else if (fourcc === 'ANIM' || fourcc === 'ANMF') {
-      return null;
-    }
-    pos = d + size + (size % 2);
-  }
-  return info;
-}
-
-async function validateImage(b: Uint8Array): Promise<ImageInfo | null> {
-  if (b.length > 2 && b[0] === 0xff && b[1] === 0xd8) return validateJpeg(b);
-  if (b.length > 8 && b[0] === 0x89 && b[1] === 0x50) return validatePng(b);
-  if (b.length > 12 && b[0] === 0x52 && b[1] === 0x49) return validateWebp(b);
-  return null;
-}
 
 async function callRecipesSetImage(ctx: CallCtx, args: Record<string, unknown>): Promise<CallResult> {
   const id = str(args['id'], 64);
@@ -1048,7 +745,16 @@ function limitArg(v: unknown): number {
 // --- Tool handlers ------------------------------------------------------------
 // Each returns { status, data }; data is an error body when status >= 400.
 
-type CallCtx = { db: D1Database; role: Role; actor: string; declaredCaller?: string | null; dryRun?: boolean; translationReviewEnabled?: boolean; images?: R2Bucket };
+type CallCtx = {
+  db: D1Database;
+  role: Role;
+  actor: string;
+  declaredCaller?: string | null;
+  dryRun?: boolean;
+  translationReviewEnabled?: boolean;
+  images?: R2Bucket;
+  geminiApiKey?: string;
+};
 type CallResult = { status: number; data: unknown };
 
 
@@ -1062,7 +768,16 @@ function privateRecipeSql(alias: string, role: Role): string {
   return `(${alias}.owner_user_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM recipe_locales pq WHERE pq.recipe_id = ${alias}.id AND pq.status = 'published') AND (${role === 'admin' ? '0' : '1'} = 1 OR ${alias}.submitted_at IS NULL))`;
 }
 
-const RECIPE_ID_TOOLS = new Set(['recipes.get', 'recipes.update_draft', 'recipes.add_locale', 'translations.mark_reviewed', 'recipes.publish', 'recipes.unpublish', 'recipes.set_image']);
+const RECIPE_ID_TOOLS = new Set([
+  'recipes.get',
+  'recipes.update_draft',
+  'recipes.add_locale',
+  'recipes.translate_locale',
+  'translations.mark_reviewed',
+  'recipes.publish',
+  'recipes.unpublish',
+  'recipes.set_image',
+]);
 const SOURCE_ID_TOOLS = new Set(['sources.update', 'sources.clear_rights']);
 
 /** True when the call targets a private user recipe/source the caller may not touch. Answered as plain not-found. */
@@ -1517,6 +1232,156 @@ async function callRecipesAddLocale(ctx: CallCtx, args: Record<string, unknown>)
   return { status: 201, data: { id, locale: `${country}/${lang}`, status: 'draft', translation_of: prov.of } };
 }
 
+async function callRecipesTranslateLocale(ctx: CallCtx, args: Record<string, unknown>): Promise<CallResult> {
+  const id = str(args['id'], 64);
+  const country = str(args['country'], 8);
+  const lang = str(args['lang'], 8);
+  if (!id || !country || !lang) {
+    return { status: 400, data: { error: 'id, country, and lang are required' } };
+  }
+  if (!getCountry(country)) return { status: 400, data: { error: 'unknown country', country } };
+  if (!localesFor(country).includes(lang)) {
+    return { status: 400, data: { error: 'locale not enabled for this country', country, lang } };
+  }
+  if (lang !== 'en' && lang !== 'es' && lang !== 'fr') {
+    return { status: 400, data: { error: 'target lang must be en, es, or fr', lang } };
+  }
+  const apiKey = ctx.geminiApiKey?.trim();
+  if (!apiKey) {
+    return { status: 503, data: { error: 'GEMINI_API_KEY is not configured on this worker' } };
+  }
+  const recipe = await ctx.db.prepare('SELECT id FROM recipes WHERE id = ?').bind(id).first();
+  if (!recipe) return { status: 404, data: { error: 'recipe not found', id } };
+
+  const existingRows = await ctx.db
+    .prepare('SELECT country, lang, title, intro, ingredients_json, steps_json, translation_of FROM recipe_locales WHERE recipe_id = ?')
+    .bind(id)
+    .all<{
+      country: string;
+      lang: string;
+      title: string;
+      intro: string | null;
+      ingredients_json: string;
+      steps_json: string;
+      translation_of: string | null;
+    }>();
+  if (existingRows.results.some((r) => r.country === country && r.lang === lang)) {
+    return { status: 409, data: { error: 'locale already exists', id, country, lang } };
+  }
+  const source = existingRows.results.find((r) => r.translation_of === null);
+  if (!source) return { status: 409, data: { error: 'no original source locale found on this recipe', id } };
+  const sourceKey = `${source.country}/${source.lang}`;
+  if (sourceKey === `${country}/${lang}`) {
+    return { status: 409, data: { error: 'target matches source locale', id, locale: sourceKey } };
+  }
+
+  let srcIngredients: IngredientEntry[];
+  let srcSteps: string[];
+  try {
+    srcIngredients = JSON.parse(source.ingredients_json) as IngredientEntry[];
+    srcSteps = JSON.parse(source.steps_json) as string[];
+  } catch {
+    return { status: 409, data: { error: 'stored source locale content is not parseable' } };
+  }
+
+  const requestedSlug = args['slug'] !== undefined ? str(args['slug'], 200) : null;
+  if (requestedSlug !== null) {
+    if (!SLUG_PATTERN.test(requestedSlug)) return { status: 400, data: { error: 'invalid slug' } };
+    const aliasHolder = await slugReservedByOther(ctx, country, lang, requestedSlug, id);
+    if (aliasHolder) {
+      return {
+        status: 409,
+        data: { error: 'slug is reserved by an earlier public URL of another recipe', country, lang, slug: requestedSlug },
+      };
+    }
+  }
+
+  if (ctx.dryRun) {
+    return { status: 200, data: { dry_run: true, ok: true, id, locale: `${country}/${lang}`, translation_of: sourceKey } };
+  }
+
+  let translated;
+  try {
+    translated = await translateStructuredRecipeWithGemini(
+      {
+        sourceLang: source.lang,
+        targetLang: lang,
+        title: source.title,
+        intro: source.intro,
+        ingredients: srcIngredients,
+        steps: srcSteps,
+      },
+      apiKey,
+    );
+  } catch (e) {
+    return { status: 422, data: { error: e instanceof Error ? e.message : 'translation failed' } };
+  }
+
+  const canon = canonicalizeIngredients(translated.ingredients);
+  if (!canon.ok) return { status: 422, data: { error: canon.error } };
+  const steps = validateStepsArray(translated.steps);
+  if (!steps.ok) return { status: 422, data: { error: steps.error } };
+  const problems = translationGateProblems(
+    { ingredients: srcIngredients, steps: srcSteps },
+    { ingredients: canon.entries, steps: steps.steps },
+  );
+  if (problems.length) {
+    return { status: 422, data: { error: 'translation QA gate failed', problems } };
+  }
+
+  let slug = requestedSlug ?? (slugify(translated.title) || `recipe-${id.slice(0, 6)}`);
+  const checkTaken = async (candidate: string) => {
+    const alias = await slugReservedByOther(ctx, country, lang, candidate, id);
+    if (alias) return true;
+    const row = await ctx.db
+      .prepare('SELECT 1 AS x FROM recipe_locales WHERE country = ? AND lang = ? AND slug = ? LIMIT 1')
+      .bind(country, lang, candidate)
+      .first();
+    return Boolean(row);
+  };
+  if (await checkTaken(slug)) {
+    if (requestedSlug !== null) {
+      return { status: 409, data: { error: 'slug already in use', country, lang, slug } };
+    }
+    slug = `${slug.slice(0, 180)}-${id.slice(0, 6)}`;
+    if (!SLUG_PATTERN.test(slug) || (await checkTaken(slug))) {
+      return { status: 409, data: { error: 'could not allocate unique slug', country, lang, slug } };
+    }
+  }
+
+  try {
+    await ctx.db.batch([
+      ctx.db
+        .prepare(
+          'INSERT INTO recipe_locales (recipe_id, country, lang, title, slug, intro, ingredients_json, steps_json, status, translation_of, translation_method) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        )
+        .bind(
+          id,
+          country,
+          lang,
+          translated.title,
+          slug,
+          translated.intro,
+          JSON.stringify(canon.entries),
+          JSON.stringify(steps.steps),
+          'draft',
+          sourceKey,
+          'machine',
+        ),
+      auditStmt(ctx, 'recipes.translate_locale', id, { locale: `${country}/${lang}`, translation_of: sourceKey, slug }),
+    ]);
+  } catch (e) {
+    if (String(e).includes('UNIQUE constraint')) {
+      return { status: 409, data: { error: 'a locale with this country/lang/slug already exists', slug } };
+    }
+    throw e;
+  }
+  return {
+    status: 201,
+    data: { id, locale: `${country}/${lang}`, slug, title: translated.title, status: 'draft', translation_of: sourceKey },
+  };
+}
+
 async function callMarkReviewed(ctx: CallCtx, args: Record<string, unknown>): Promise<CallResult> {
   // Fail closed while the human-vs-agent translation publication policy is
   // unresolved: the tool exists only when the deployment opts in.
@@ -1959,6 +1824,7 @@ async function callListTestReports(db: D1Database, args: Record<string, unknown>
   const rows = await db
     .prepare(
       `SELECT tr.id, tr.recipe_id, tr.note, tr.status, tr.created_at, tr.moderated_at, tr.moderated_by,
+              tr.image_r2_key IS NOT NULL AS has_photo, tr.image_mime, tr.image_bytes, tr.image_width, tr.image_height, tr.image_id,
               u.display_name AS cook_name, MIN(l.title) AS recipe_title
        FROM recipe_test_reports tr
        JOIN users u ON u.id = tr.user_id
@@ -1986,25 +1852,102 @@ async function callModerateTestReport(ctx: CallCtx, args: Record<string, unknown
   }
   const now = new Date().toISOString();
   if (decision === 'approve') {
-    // Status flip and recipe stamp commit in one batch: a failure writes
-    // nothing, so the call is safe to retry.
+    const report = await ctx.db
+      .prepare(
+        `SELECT tr.id, tr.recipe_id, tr.image_r2_key, tr.image_mime, tr.image_bytes, tr.image_width, tr.image_height,
+                COALESCE(u.display_name, 'A 2yolks cook') AS cook_name
+         FROM recipe_test_reports tr
+         JOIN users u ON u.id = tr.user_id
+         WHERE tr.id = ? AND tr.status = 'pending'`,
+      )
+      .bind(id)
+      .first<{
+        id: string;
+        recipe_id: string;
+        image_r2_key: string | null;
+        image_mime: string | null;
+        image_bytes: number | null;
+        image_width: number | null;
+        image_height: number | null;
+        cook_name: string;
+      }>();
+    if (!report) return { status: 409, data: { error: 'report not found or already moderated', id } };
+
+    const publishPhoto = args['publishPhoto'] !== false && Boolean(report.image_r2_key);
+    let imageId: string | null = null;
+    let asHero = false;
+    let destKey: string | null = null;
+    if (publishPhoto) {
+      if (!ctx.images) return { status: 503, data: { error: 'image storage is not configured on this worker' } };
+      const obj = await ctx.images.get(report.image_r2_key!);
+      if (!obj || !obj.body) return { status: 409, data: { error: 'report photo bytes missing from storage', id } };
+      const photoBytes = new Uint8Array(await new Response(obj.body).arrayBuffer());
+      const ext = report.image_mime === 'image/png' ? 'png' : report.image_mime === 'image/webp' ? 'webp' : 'jpg';
+      imageId = newId();
+      destKey = `recipes/${report.recipe_id}/${imageId}.${ext}`;
+      const existingHero = await ctx.db
+        .prepare("SELECT id FROM recipe_images WHERE recipe_id = ? AND kind = 'hero' AND cleared_at IS NOT NULL LIMIT 1")
+        .bind(report.recipe_id)
+        .first();
+      asHero = args['promoteAsHero'] === true || !existingHero;
+      await ctx.images.put(destKey, photoBytes, { httpMetadata: { contentType: report.image_mime ?? 'image/jpeg' } });
+    }
+
+    // Status flip, recipe tested stamp, optional photo promotion and audit commit
+    // in one batch: a failure writes nothing, so the call is safe to retry.
     const res = await ctx.db.batch([
-      ctx.db.prepare("UPDATE recipe_test_reports SET status = 'approved', moderated_at = ?, moderated_by = ? WHERE id = ? AND status = 'pending'").bind(now, ctx.actor, id),
+      ctx.db
+        .prepare("UPDATE recipe_test_reports SET status = 'approved', moderated_at = ?, moderated_by = ?, image_id = ? WHERE id = ? AND status = 'pending'")
+        .bind(now, ctx.actor, imageId, id),
       // The first approved report stamps the recipe; later approvals corroborate only.
       // The stamp re-reads the report's status inside the same transaction, so an
       // approve on a report the flip did not move (already rejected/approved)
       // cannot mark the recipe tested.
-      ctx.db.prepare(
-        `UPDATE recipes SET
-           tested_at = (SELECT tr.created_at FROM recipe_test_reports tr WHERE tr.id = ?),
-           tested_by = (SELECT COALESCE(u.display_name, 'A 2yolks cook') FROM recipe_test_reports tr JOIN users u ON u.id = tr.user_id WHERE tr.id = ?)
-         WHERE id = (SELECT tr.recipe_id FROM recipe_test_reports tr WHERE tr.id = ?) AND tested_at IS NULL
-           AND (SELECT tr.status FROM recipe_test_reports tr WHERE tr.id = ?) = 'approved'`,
-      ).bind(id, id, id, id),
-      auditStmt(ctx, 'recipes.moderate_test_report', id, { decision: 'approve' }),
+      ctx.db
+        .prepare(
+          `UPDATE recipes SET
+             tested_at = (SELECT tr.created_at FROM recipe_test_reports tr WHERE tr.id = ?),
+             tested_by = (SELECT COALESCE(u.display_name, 'A 2yolks cook') FROM recipe_test_reports tr JOIN users u ON u.id = tr.user_id WHERE tr.id = ?)
+           WHERE id = (SELECT tr.recipe_id FROM recipe_test_reports tr WHERE tr.id = ?) AND tested_at IS NULL
+             AND (SELECT tr.status FROM recipe_test_reports tr WHERE tr.id = ?) = 'approved'`,
+        )
+        .bind(id, id, id, id),
+      ...(publishPhoto && imageId && destKey
+        ? [
+            ctx.db
+              .prepare(
+                `INSERT INTO recipe_images (id, recipe_id, kind, step_index, r2_key, mime, bytes, width, height, style, source_name, source_url, license, cleared_at)
+                 SELECT ?, ?, ?, NULL, ?, ?, ?, ?, ?, 'photo', ?, 'https://2yolks.com/how-we-test', 'user-original', datetime('now')
+                 WHERE (SELECT status FROM recipe_test_reports WHERE id = ?) = 'approved'`,
+              )
+              .bind(
+                imageId,
+                report.recipe_id,
+                asHero ? 'hero' : 'step',
+                destKey,
+                report.image_mime ?? 'image/jpeg',
+                report.image_bytes ?? 0,
+                report.image_width,
+                report.image_height,
+                report.cook_name,
+                id,
+              ),
+            ...(asHero
+              ? [
+                  ctx.db
+                    .prepare("UPDATE recipes SET image_key = ? WHERE id = ? AND EXISTS (SELECT 1 FROM recipe_test_reports WHERE id = ? AND status = 'approved')")
+                    .bind(destKey, report.recipe_id, id),
+                ]
+              : []),
+          ]
+        : []),
+      auditStmt(ctx, 'recipes.moderate_test_report', id, {
+        decision: 'approve',
+        ...(imageId ? { image_id: imageId, promoted_hero: asHero } : {}),
+      }),
     ]);
     if (res[0]!.meta.changes !== 1) return { status: 409, data: { error: 'report not found or already moderated', id } };
-    return { status: 200, data: { id, status: 'approved' } };
+    return { status: 200, data: { id, status: 'approved', ...(imageId ? { image_id: imageId, promoted_hero: asHero } : {}) } };
   }
   const res = await ctx.db.batch([
     ctx.db.prepare("UPDATE recipe_test_reports SET status = 'rejected', moderated_at = ?, moderated_by = ? WHERE id = ? AND status = 'pending'").bind(now, ctx.actor, id),
@@ -2030,6 +1973,8 @@ async function dispatch(ctx: CallCtx, name: string, args: Record<string, unknown
       return callRecipesUpdateDraft(ctx, args);
     case 'recipes.add_locale':
       return callRecipesAddLocale(ctx, args);
+    case 'recipes.translate_locale':
+      return callRecipesTranslateLocale(ctx, args);
     case 'translations.mark_reviewed':
       return callMarkReviewed(ctx, args);
     case 'recipes.publish':
@@ -2101,6 +2046,7 @@ async function handleRpc(c: Context<{ Bindings: McpBindings }>) {
     declaredCaller: auth.declared,
     translationReviewEnabled: Boolean(c.env.MCP_TRANSLATION_REVIEW),
     images: c.env.IMAGES,
+    geminiApiKey: c.env.GEMINI_API_KEY,
   };
 
   // Write semantics are identical on both wire shapes: an explicit

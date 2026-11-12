@@ -771,4 +771,95 @@ describe('community kitchen-test reports', () => {
     const n = await DB.prepare('SELECT count(*) AS n FROM recipe_test_reports').first<{ n: number }>();
     expect(n?.n).toBe(0);
   });
+
+  function makeR2() {
+    const objects = new Map<string, { bytes: Uint8Array; contentType?: string }>();
+    return {
+      objects,
+      async put(key: string, value: Uint8Array, opts?: { httpMetadata?: { contentType?: string } }) {
+        objects.set(key, { bytes: value, contentType: opts?.httpMetadata?.contentType });
+        return { key };
+      },
+      async get(key: string) {
+        const o = objects.get(key);
+        if (!o) return null;
+        return { body: new Response(o.bytes.slice().buffer as ArrayBuffer).body, httpMetadata: { contentType: o.contentType } };
+      },
+    };
+  }
+
+  function png1x1Bytes(): Uint8Array<ArrayBuffer> {
+    const b64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+    const bin = atob(b64);
+    const out = new Uint8Array(new ArrayBuffer(bin.length));
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+
+  it('accepts an optional validated photo stored only under reports/ (never in recipe_images)', async () => {
+    await seedPublicRecipe();
+    const cookie = await signIn();
+    const formHtml = await (await get('/account/recipes/rp1/test-report', cookie)).text();
+    expect(formHtml).toContain('enctype="multipart/form-data"');
+    expect(formHtml).toContain('name="photo"');
+    expect(formHtml).toContain('name="photo_attest"');
+
+    const r2 = makeR2();
+    const fd = new FormData();
+    fd.set('note', 'Came out golden!');
+    fd.set('attest', '1');
+    fd.set('photo_attest', '1');
+    fd.set('photo', new File([png1x1Bytes()], 'dish.png', { type: 'image/png' }));
+    const res = await app.request(
+      `${ORIGIN}/account/recipes/rp1/test-report`,
+      { method: 'POST', headers: { origin: ORIGIN, cookie }, body: fd },
+      env({ IMAGES: r2 }),
+    );
+    expect(res.status).toBe(200);
+    const report = await DB.prepare(
+      'SELECT status, image_r2_key, image_mime, image_width, image_height, image_id FROM recipe_test_reports WHERE recipe_id = ?',
+    )
+      .bind('rp1')
+      .first<{ status: string; image_r2_key: string; image_mime: string; image_width: number; image_height: number; image_id: string | null }>();
+    expect(report?.status).toBe('pending');
+    expect(report?.image_r2_key).toMatch(/^reports\/rp1\/[a-z0-9]+\.png$/);
+    expect(report?.image_mime).toBe('image/png');
+    expect(report?.image_width).toBe(1);
+    expect(report?.image_height).toBe(1);
+    expect(report?.image_id).toBeNull();
+    expect(r2.objects.has(report!.image_r2_key)).toBe(true);
+    const imgCount = await DB.prepare('SELECT count(*) AS n FROM recipe_images').first<{ n: number }>();
+    expect(imgCount?.n).toBe(0);
+  });
+
+  it('refuses a report photo without photo rights attestation or with malformed bytes', async () => {
+    await seedPublicRecipe();
+    const cookie = await signIn();
+    const r2 = makeR2();
+
+    const noAttest = new FormData();
+    noAttest.set('attest', '1');
+    noAttest.set('photo', new File([png1x1Bytes()], 'dish.png', { type: 'image/png' }));
+    const res1 = await app.request(
+      `${ORIGIN}/account/recipes/rp1/test-report`,
+      { method: 'POST', headers: { origin: ORIGIN, cookie }, body: noAttest },
+      env({ IMAGES: r2 }),
+    );
+    expect(res1.status).toBe(400);
+    expect(r2.objects.size).toBe(0);
+
+    const badBytes = new FormData();
+    badBytes.set('attest', '1');
+    badBytes.set('photo_attest', '1');
+    badBytes.set('photo', new File([new Uint8Array([1, 2, 3, 4])], 'bad.png', { type: 'image/png' }));
+    const res2 = await app.request(
+      `${ORIGIN}/account/recipes/rp1/test-report`,
+      { method: 'POST', headers: { origin: ORIGIN, cookie }, body: badBytes },
+      env({ IMAGES: r2 }),
+    );
+    expect(res2.status).toBe(400);
+    expect(r2.objects.size).toBe(0);
+    const n = await DB.prepare('SELECT count(*) AS n FROM recipe_test_reports').first<{ n: number }>();
+    expect(n?.n).toBe(0);
+  });
 });
