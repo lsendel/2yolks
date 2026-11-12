@@ -188,6 +188,20 @@ export interface UiStrings {
   moreToCook: string;
   searchPlaceholder: string;
   checkedProgress: string;
+  shareRecipeNav: string;
+  myKitchenNav: string;
+  themeToggle: string;
+  themeLight: string;
+  themeDark: string;
+  viewGrid: string;
+  viewList: string;
+  testedBadge: string;
+  saveStoryCard: string;
+  storyCardReady: string;
+  shareGroceryList: string;
+  groceryListReady: string;
+  emptyShareCta: string;
+  communityTag: string;
 }
 
 const UI_STRINGS: Record<string, UiStrings> = {
@@ -216,10 +230,24 @@ const UI_STRINGS: Record<string, UiStrings> = {
     copyIngredients: 'Copy list', ingredientsCopied: 'List copied',
     copyRecipeCard: 'Copy recipe card', recipeCardCopied: 'Card copied',
     shareHeading: 'Share this recipe',
-    shareSubhead: 'No ads, no life story — send a clean recipe link to a friend or group chat.',
+    shareSubhead: 'No ads, no life story — send a clean recipe link or visual story card to a friend or group chat.',
     moreToCook: 'More to cook',
     searchPlaceholder: 'Filter recipes by dish or category…',
     checkedProgress: 'checked',
+    shareRecipeNav: 'Share a recipe',
+    myKitchenNav: 'My kitchen',
+    themeToggle: 'Switch color theme',
+    themeLight: 'Light',
+    themeDark: 'Dark',
+    viewGrid: 'Cards',
+    viewList: 'Index',
+    testedBadge: 'Tested',
+    saveStoryCard: 'Story card (PNG)',
+    storyCardReady: 'Story saved',
+    shareGroceryList: 'Send grocery list',
+    groceryListReady: 'Grocery list copied',
+    emptyShareCta: 'Have a great recipe for this? Share yours',
+    communityTag: 'Cooked it? Tag #CookedWith2Yolks',
   },
   es: {
     ingredients: 'Ingredientes', steps: 'Pasos', source: 'Fuente',
@@ -246,10 +274,24 @@ const UI_STRINGS: Record<string, UiStrings> = {
     copyIngredients: 'Copiar lista', ingredientsCopied: 'Lista copiada',
     copyRecipeCard: 'Copiar ficha', recipeCardCopied: 'Ficha copiada',
     shareHeading: 'Comparte esta receta',
-    shareSubhead: 'Sin anuncios ni relleno — env\u00eda la receta directa a un amigo o chat grupal.',
+    shareSubhead: 'Sin anuncios ni relleno — env\u00eda la receta o una tarjeta visual a un amigo o chat grupal.',
     moreToCook: 'M\u00e1s para cocinar',
     searchPlaceholder: 'Filtrar recetas por plato o categor\u00eda…',
     checkedProgress: 'marcados',
+    shareRecipeNav: 'Enviar receta',
+    myKitchenNav: 'Mi cocina',
+    themeToggle: 'Cambiar tema de color',
+    themeLight: 'Claro',
+    themeDark: 'Oscuro',
+    viewGrid: 'Tarjetas',
+    viewList: '\u00cdndice',
+    testedBadge: 'Probada',
+    saveStoryCard: 'Tarjeta Story (PNG)',
+    storyCardReady: 'Tarjeta guardada',
+    shareGroceryList: 'Enviar compras',
+    groceryListReady: 'Lista copiada',
+    emptyShareCta: '\u00bfTienes una receta para esto? Comp\u00e1rtela',
+    communityTag: '\u00bfLa cocinaste? Etiqueta #CookedWith2Yolks',
   },
   fr: {
     ingredients: 'Ingr\u00e9dients', steps: '\u00c9tapes', source: 'Source',
@@ -276,10 +318,24 @@ const UI_STRINGS: Record<string, UiStrings> = {
     copyIngredients: 'Copier la liste', ingredientsCopied: 'Liste copi\u00e9e',
     copyRecipeCard: 'Copier la fiche', recipeCardCopied: 'Fiche copi\u00e9e',
     shareHeading: 'Partager cette recette',
-    shareSubhead: 'Sans publicit\u00e9 ni d\u00e9tour — envoyez la recette directement \u00e0 un ami ou un groupe.',
+    shareSubhead: 'Sans publicit\u00e9 ni d\u00e9tour — envoyez la recette ou une carte visuelle \u00e0 un ami ou un groupe.',
     moreToCook: '\u00c0 cuisiner aussi',
     searchPlaceholder: 'Filtrer les recettes par plat ou cat\u00e9gorie…',
     checkedProgress: 'coch\u00e9s',
+    shareRecipeNav: 'Partager une recette',
+    myKitchenNav: 'Ma cuisine',
+    themeToggle: 'Changer de th\u00e8me',
+    themeLight: 'Clair',
+    themeDark: 'Sombre',
+    viewGrid: 'Cartes',
+    viewList: 'Index',
+    testedBadge: 'Test\u00e9e',
+    saveStoryCard: 'Carte Story (PNG)',
+    storyCardReady: 'Carte enregistr\u00e9e',
+    shareGroceryList: 'Envoyer la liste',
+    groceryListReady: 'Liste copi\u00e9e',
+    emptyShareCta: 'Vous avez cette recette ? Partagez-la',
+    communityTag: 'Cuisin\u00e9e ? Taguez #CookedWith2Yolks',
   },
 };
 

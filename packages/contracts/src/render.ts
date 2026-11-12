@@ -57,16 +57,38 @@ export function splitUnit(rest: string): { unit: string; after: string; written:
   return { unit, after: m[2] ?? '', written: m[1]! };
 }
 
-interface Line { qty: number | null; qtyEnd: number | null; unit: string | null; written: string; text: string }
+interface Line { qty: number | null; qtyEnd: number | null; unit: string | null; written: string; text: string; convertedText?: string }
+
+function analyzeStringRest(rest: string): { su: ReturnType<typeof splitUnit>; convertedAfter?: string } {
+  const su = splitUnit(rest);
+  if (!su) return { su: null };
+  const headBeforeComma = su.after.split(',')[0] ?? '';
+  const parenMatch = /\(\s*([\d.,/]+)\s*([A-Za-z\u00c0-\u00ff.]+)\s*\)/.exec(headBeforeComma);
+  if (parenMatch) {
+    const pKey = parenMatch[2]!.replace(/\.$/, '').toLowerCase();
+    const pUnit = ALIASES[pKey];
+    const mainSys = unitInfo(su.unit)?.system;
+    const parenSys = pUnit ? unitInfo(pUnit)?.system : undefined;
+    if (pUnit && mainSys && parenSys === mainSys) {
+      const stripped = su.after.replace(/\s*\(\s*[\d.,/]+\s*[A-Za-z\u00c0-\u00ff.]+\s*\)/, '').trim();
+      return { su, convertedAfter: stripped };
+    }
+    return { su: null };
+  }
+  if (/\d/.test(headBeforeComma)) return { su: null };
+  return { su };
+}
 
 function toLine(entry: IngredientEntry): Line {
   if (typeof entry === 'string') {
     const p = parseIngredient(entry);
     if (p.qty === null) return { qty: null, qtyEnd: null, unit: null, written: '', text: p.rest };
-    // A line with another number in it ("1 cup (240 ml)") is never converted.
-    const su = /\d/.test(p.rest) ? null : splitUnit(p.rest);
+    // Dual-system lines ("1 cup (240 ml)") stay as written; prep notes after a
+    // comma ("1 kg pork shoulder, in 4 cm pieces") and same-system restatements
+    // ("2500 ml water (2.5 liters)") convert cleanly.
+    const { su, convertedAfter } = analyzeStringRest(p.rest);
     return su
-      ? { qty: p.qty, qtyEnd: p.qtyEnd, unit: su.unit, written: su.written, text: su.after }
+      ? { qty: p.qty, qtyEnd: p.qtyEnd, unit: su.unit, written: su.written, text: su.after, convertedText: convertedAfter }
       : { qty: p.qty, qtyEnd: p.qtyEnd, unit: null, written: '', text: p.rest };
   }
   const s = entry as StructuredIngredient;
@@ -97,13 +119,14 @@ export function renderIngredient(entry: IngredientEntry, lang: string, system: U
   }
   const a = convertQuantity({ qty: l.qty * mult, unit: l.unit }, system);
   if (!a) return `${fmtRange(l.qty * mult, l.qtyEnd === null ? null : l.qtyEnd * mult)} ${asWritten(l, mult, typeof entry !== 'string', lang)} ${typeof entry !== 'string' ? joinText(lang, l.text) : l.text}`.trim();
+  const cText = l.convertedText ?? l.text;
   if (l.qtyEnd !== null) {
     const b = convertQuantity({ qty: l.qtyEnd * mult, unit: l.unit }, system)!;
-    if (b.unit === a.unit) return `${fmtRange(a.qty, b.qty, system === 'metric')} ${label(a.unit, lang, b.qty)} ${typeof entry !== 'string' ? joinText(lang, l.text) : l.text}`.trim();
+    if (b.unit === a.unit) return `${fmtRange(a.qty, b.qty, system === 'metric')} ${label(a.unit, lang, b.qty)} ${typeof entry !== 'string' ? joinText(lang, cText) : cText}`.trim();
     // Range straddles two display units: keep the unit as written.
     return `${fmtRange(l.qty * mult, l.qtyEnd * mult)} ${l.written} ${l.text}`.trim();
   }
-  return `${system === 'metric' ? fmtRange(a.qty, null, true) : formatQty(a.qty)} ${label(a.unit, lang, a.qty)} ${typeof entry !== 'string' ? joinText(lang, l.text) : l.text}`.trim();
+  return `${system === 'metric' ? fmtRange(a.qty, null, true) : formatQty(a.qty)} ${label(a.unit, lang, a.qty)} ${typeof entry !== 'string' ? joinText(lang, cText) : cText}`.trim();
 }
 
 export function isConvertible(entry: IngredientEntry, system: UnitSystem): boolean {

@@ -19,6 +19,12 @@ describe('unit rendering', () => {
   it('does not touch lines with a second number', () => {
     expect(renderIngredient('1 cup (240 ml) milk', 'en', 'metric')).toBe('1 cup (240 ml) milk');
   });
+  it('converts metric lines with cut-size notes after a comma or same-system parentheticals', () => {
+    expect(renderIngredient('1 kg pork shoulder, in 4 cm pieces', 'en', 'us')).toBe('2 ¼ lb pork shoulder, in 4 cm pieces');
+    expect(renderIngredient('2500 ml water (2.5 liters)', 'en', 'us')).toBe('10 ⅝ cups water');
+    expect(renderIngredient('2500 ml water (2.5 liters)', 'en', 'metric')).toBe('2500 ml water (2.5 liters)');
+    expect(renderIngredient('1 kg de espaldilla de cerdo, en trozos de 4 cm', 'es', 'us')).toBe('2 ¼ lb de espaldilla de cerdo, en trozos de 4 cm');
+  });
   it('scales', () => {
     expect(renderIngredient('1 cup flour', 'en', 'us', 2)).toBe('2 cups flour');
   });

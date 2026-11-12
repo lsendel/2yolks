@@ -1,5 +1,5 @@
 import {describe,it,expect} from 'vitest';
-import {renderHome,renderRecipe,isoDuration} from './server';
+import {renderHome,renderRecipe,renderRecipeCardSvg,renderAbout,isoDuration} from './server';
 import {discoveryRecipes} from './App';
 const rows=[{id:'r1',country:'us',lang:'en',slug:'a',title:'First recipe',category:'soups-stews',untested:true,totalMinutes:70},{id:'r1',country:'us',lang:'fr',slug:'b',title:'Première recette',category:'soups-stews',untested:true,totalMinutes:70},{id:'r2',country:'mx',lang:'en',slug:'c',title:'Second recipe',category:'dumplings',untested:true}];
 describe('After hours discovery',()=>{
@@ -62,16 +62,39 @@ describe('After hours discovery',()=>{
  });
 });
 
-import { CAPTURE_CLIENT_SCRIPT, DISCOVERY_CLIENT_SCRIPT, RECIPE_CLIENT_SCRIPT } from './clientScript';
+import { THEME_CLIENT_SCRIPT, CAPTURE_CLIENT_SCRIPT, DISCOVERY_CLIENT_SCRIPT, RECIPE_CLIENT_SCRIPT } from './clientScript';
 
-describe('inline client scripts', () => {
+describe('inline client scripts & SVG/theme enhancements', () => {
   it('every inline script is syntactically valid JavaScript', () => {
-    for (const src of [CAPTURE_CLIENT_SCRIPT, DISCOVERY_CLIENT_SCRIPT, RECIPE_CLIENT_SCRIPT]) {
+    for (const src of [THEME_CLIENT_SCRIPT, CAPTURE_CLIENT_SCRIPT, DISCOVERY_CLIENT_SCRIPT, RECIPE_CLIENT_SCRIPT]) {
       expect(() => new Function(src)).not.toThrow();
     }
   });
   it('capture checks flag ambiguous cup measures and missing quantities', () => {
     expect(CAPTURE_CLIENT_SCRIPT).toContain('cup');
     expect(CAPTURE_CLIENT_SCRIPT).toContain('data-check');
+  });
+  it('activates Fraunces display typography, inline SVG marks, view/theme toggles, and 9:16 Story SVG card', () => {
+    const home = renderHome({ recipes: rows, locales: [], lang: 'en' });
+    expect(home).toContain("--font-display:'Fraunces'");
+    expect(home).toContain('class="brand-yolks-svg"');
+    expect(home).toContain('class="cat-icon"');
+    expect(home).toContain('data-view-btn="grid"');
+    expect(home).toContain('data-theme-toggle');
+    expect(home).toContain('/account/recipes/new');
+
+    const cardSvg = renderRecipeCardSvg({
+      recipe: { id: '9214e255', sourceId: 's1', originCountry: 'us', imageKey: null, createdAt: '2026-11-01', totalMinutes: 55, baseServings: 6, category: 'soups-stews', testedAt: '2026-11-05' },
+      locale: { recipeId: '9214e255', country: 'us', lang: 'en', title: 'Pozole Rojo & Garnishes', slug: 'pozole-rojo', intro: 'Rich guajillo broth.', ingredientsJson: '["1 kg pork shoulder, in 4 cm pieces"]', stepsJson: '["Simmer gently."]', status: 'published' },
+      source: { id: 's1', name: '2yolks', url: 'https://2yolks.com/', license: 'CC0-1.0', clearedAt: '2026-11-01', notes: null },
+    });
+    expect(cardSvg).toContain('<svg');
+    expect(cardSvg).toContain('Pozole Rojo &amp; Garnishes');
+    expect(cardSvg).toContain('2 ¼ lb pork shoulder, in 4 cm pieces');
+    expect(cardSvg).toContain('#CookedWith2Yolks');
+
+    const aboutFr = renderAbout([], 'https://2yolks.com', 'fr');
+    expect(aboutFr).toContain('À propos de 2yolks');
+    expect(aboutFr).not.toContain('<h1>About 2yolks</h1>');
   });
 });

@@ -1,15 +1,49 @@
 /**
- * Client-side progressive enhancement for the recipe page and discovery index.
- * Rendered inline (no build step, no framework):
- * serving scaler, unit toggle, ingredient copy, share-card copy,
- * cook mode overlay with Wake Lock, keyboard navigation, and per-step timers.
- * Steps data comes from the #cook-data JSON script tag (escaped server-side).
+ * Client-side progressive enhancement for theme switching, discovery index,
+ * recipe reading/sharing/Cook Mode, and multimodal AI recipe capture.
+ * Rendered inline (no client bundle step, zero third-party scripts).
  */
+
+export const THEME_CLIENT_SCRIPT = `(function () {
+  var btn = document.querySelector('[data-theme-toggle]');
+  if (!btn) return;
+  btn.addEventListener('click', function () {
+    var root = document.documentElement;
+    var cur = root.getAttribute('data-theme');
+    var next = cur === 'dark' ? 'light' : 'dark';
+    root.setAttribute('data-theme', next);
+    try { localStorage.setItem('2y-theme', next); } catch (e) {}
+  });
+})();`;
+
 export const DISCOVERY_CLIENT_SCRIPT = `(function () {
+  var list = document.querySelector('[data-recipe-list]');
+  var viewBtns = Array.prototype.slice.call(document.querySelectorAll('[data-view-btn]'));
+  function setView(mode) {
+    var v = mode === 'grid' ? 'grid' : 'list';
+    if (list) list.setAttribute('data-view', v);
+    viewBtns.forEach(function (b) {
+      b.setAttribute('aria-pressed', b.getAttribute('data-view-btn') === v ? 'true' : 'false');
+    });
+  }
+  if (viewBtns.length && list) {
+    try {
+      var savedView = localStorage.getItem('2y-view');
+      if (savedView === 'grid' || savedView === 'list') setView(savedView);
+    } catch (e) {}
+    viewBtns.forEach(function (b) {
+      b.addEventListener('click', function () {
+        var mode = b.getAttribute('data-view-btn') || 'list';
+        setView(mode);
+        try { localStorage.setItem('2y-view', mode); } catch (e) {}
+      });
+    });
+  }
+
   var input = document.querySelector('[data-recipe-search]');
   if (!input) return;
   var items = Array.prototype.slice.call(document.querySelectorAll('[data-recipe-item]'));
-  var list = document.querySelector('[data-recipe-list]') || (input.closest('section') ? input.closest('section').querySelector('ul.discovery-list') : null);
+  if (!list) list = input.closest('section') ? input.closest('section').querySelector('ul.discovery-list') : null;
   var emptyEl = document.querySelector('[data-search-empty]');
   var closestNote = document.querySelector('[data-closest-note]');
   var clearBtn = document.querySelector('[data-clear-search]');
@@ -325,7 +359,7 @@ export const RECIPE_CLIENT_SCRIPT = `(function () {
     var first = scaler.querySelector('button[data-mult="1"]');
     if (first) first.setAttribute('aria-pressed', 'true');
   }
-  // Ingredient checkbox progress + copy ingredients list
+  // Ingredient checkbox progress + copy/send grocery list
   var ingChecks = Array.prototype.slice.call(document.querySelectorAll('ul.ingredients input[type="checkbox"]'));
   var ingProg = document.querySelector('[data-ing-progress]');
   function updateIngProgress() {
@@ -336,11 +370,11 @@ export const RECIPE_CLIENT_SCRIPT = `(function () {
   }
   ingChecks.forEach(function (c) { c.addEventListener('change', updateIngProgress); });
   function flashBtn(btn) {
-    var orig = btn.textContent;
+    var orig = btn.innerHTML;
     var msg = btn.getAttribute('data-copied');
     if (!msg) return;
     btn.textContent = msg;
-    setTimeout(function () { btn.textContent = orig; }, 1600);
+    setTimeout(function () { btn.innerHTML = orig; }, 1600);
   }
   function copyText(text, btn) {
     if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -356,10 +390,36 @@ export const RECIPE_CLIENT_SCRIPT = `(function () {
       if (lines.length) copyText(lines.join('\\n'), copyIngBtn);
     });
   }
-  // Share bar + Copy recipe card
+  var shareNav = document.querySelector('[data-share-url]');
+  var pageTitle = (shareNav && shareNav.getAttribute('data-share-title')) || document.title;
+  var pageUrl = (shareNav && shareNav.getAttribute('data-share-url')) || window.location.href;
+  var groceryBtn = document.querySelector('[data-share-grocery]');
+  if (groceryBtn) {
+    groceryBtn.addEventListener('click', function () {
+      var rows = Array.prototype.slice.call(document.querySelectorAll('ul.ingredients li'));
+      var unchecked = rows.filter(function (li) {
+        var cb = li.querySelector('input[type="checkbox"]');
+        return !cb || !cb.checked;
+      });
+      var target = unchecked.length > 0 ? unchecked : rows;
+      var lines = target.map(function (li) {
+        var line = li.querySelector('.line');
+        return '\\u2610 ' + ((line ? line.textContent : li.textContent) || '').trim();
+      });
+      if (!lines.length) return;
+      var payload = pageTitle + ' — 2yolks\\n\\n' + lines.join('\\n') + '\\n\\n' + pageUrl;
+      if (navigator.share) {
+        navigator.share({ title: pageTitle, text: payload }).catch(function () {
+          copyText(payload, groceryBtn);
+        });
+      } else {
+        copyText(payload, groceryBtn);
+      }
+    });
+  }
+  // Share bar + Copy recipe card + 9:16 Story PNG export
   var dataEl = document.getElementById('cook-data');
   var overlay = document.querySelector('[data-cook-mode]');
-  var shareNav = document.querySelector('[data-share-url]');
   if (shareNav) {
     var sUrl = shareNav.getAttribute('data-share-url'), sTitle = shareNav.getAttribute('data-share-title');
     var nat = shareNav.querySelector('[data-share-native]');
@@ -374,6 +434,65 @@ export const RECIPE_CLIENT_SCRIPT = `(function () {
         });
         var card = sTitle + ' — 2yolks\\n\\n' + lines.join('\\n') + '\\n\\n' + sUrl;
         copyText(card, cardBtn);
+      });
+    }
+    var storyBtn = shareNav.querySelector('[data-story-card]');
+    if (storyBtn) {
+      storyBtn.addEventListener('click', function () {
+        var svgUrl = storyBtn.getAttribute('data-card-svg');
+        var slug = storyBtn.getAttribute('data-recipe-slug') || 'recipe';
+        if (!svgUrl) return;
+        storyBtn.disabled = true;
+        fetch(svgUrl)
+          .then(function (r) { if (!r.ok) throw new Error('card'); return r.text(); })
+          .then(function (svgText) {
+            return new Promise(function (resolve, reject) {
+              var blob = new Blob([svgText], { type: 'image/svg+xml;charset=utf-8' });
+              var objUrl = URL.createObjectURL(blob);
+              var img = new Image();
+              img.onload = function () {
+                try {
+                  var canvas = document.createElement('canvas');
+                  canvas.width = 1080;
+                  canvas.height = 1920;
+                  var ctx = canvas.getContext('2d');
+                  ctx.drawImage(img, 0, 0, 1080, 1920);
+                  URL.revokeObjectURL(objUrl);
+                  canvas.toBlob(function (pngBlob) {
+                    if (!pngBlob) return reject(new Error('png'));
+                    resolve(pngBlob);
+                  }, 'image/png');
+                } catch (err) {
+                  URL.revokeObjectURL(objUrl);
+                  reject(err);
+                }
+              };
+              img.onerror = function () { URL.revokeObjectURL(objUrl); reject(new Error('img')); };
+              img.src = objUrl;
+            });
+          })
+          .then(function (pngBlob) {
+            var fname = slug + '-2yolks-story.png';
+            var file = typeof File === 'function' ? new File([pngBlob], fname, { type: 'image/png' }) : null;
+            if (file && navigator.canShare && navigator.canShare({ files: [file] }) && navigator.share) {
+              return navigator.share({ files: [file], title: sTitle, url: sUrl }).catch(function () {});
+            }
+            var dlUrl = URL.createObjectURL(pngBlob);
+            var a = document.createElement('a');
+            a.href = dlUrl;
+            a.download = fname;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            setTimeout(function () { URL.revokeObjectURL(dlUrl); }, 2000);
+            flashBtn(storyBtn);
+          })
+          .catch(function () {
+            window.open(svgUrl, '_blank', 'noopener');
+          })
+          .then(function () {
+            storyBtn.disabled = false;
+          });
       });
     }
   }
@@ -476,14 +595,9 @@ export const RECIPE_CLIENT_SCRIPT = `(function () {
 })();`;
 
 /**
- * Live quality checks on the capture form: gentle, non-blocking hints while
- * the cook types. Nothing here gates saving - the server still validates.
- * Strings are localized en/es/fr and follow the form's language select;
- * checks start in a neutral "not yet checked" state until the cook has typed
- * something - an untouched field is never a green pass.
- *
- * The emitted function takes a template-literal-safe approach: every regex
- * backslash is double-escaped so the TS template does not eat it.
+ * Live quality checks + optional AI Kitchen Co-Editor on the capture form.
+ * Nothing here gates saving - the server still validates.
+ * Strings are localized en/es/fr and follow the form's UI language.
  */
 export const CAPTURE_CHECK_STRINGS = `{"en":{"title":"Give the recipe a name","ingredients":"List the ingredients, one per line","qty_ok":"Every ingredient line starts with an amount","cups_ok":"No ambiguous cup measures","qty_todo":"## ingredient line(s) do not start with an amount - cooks need quantities","cups_todo":"You use \\"cup\\" - cups vary by country, so consider grams or ml too","steps":"Write the steps, one per line","servings_ok":"Servings (optional) should be a number","servings_bad":"Servings should be a number","source_ok":"Source noted","source_todo":"Add the https:// link to the original","optional":"optional"},"es":{"title":"Ponle un nombre a la receta","ingredients":"Anota los ingredientes, uno por línea","qty_ok":"Cada línea de ingrediente empieza con una cantidad","cups_ok":"Sin medidas ambiguas en tazas","qty_todo":"## línea(s) de ingredientes no empiezan con cantidad - hacen falta cantidades","cups_todo":"Usas \\"taza\\" - las tazas varían por país, considera también gramos o ml","steps":"Escribe los pasos, uno por línea","servings_ok":"Las porciones (opcional) deben ser un número","servings_bad":"Las porciones deben ser un número","source_ok":"Fuente anotada","source_todo":"Agrega el enlace https:// al original","optional":"opcional"},"fr":{"title":"Donnez un nom à la recette","ingredients":"Listez les ingrédients, un par ligne","qty_ok":"Chaque ligne d'ingrédient commence par une quantité","cups_ok":"Pas de mesures ambiguës en tasses","qty_todo":"## ligne(s) d'ingrédients ne commencent pas par une quantité - il faut des quantités","cups_todo":"Vous utilisez \\"tasse\\" - les tasses varient selon les pays, pensez aussi aux grammes ou ml","steps":"Écrivez les étapes, une par ligne","servings_ok":"Les portions (facultatif) doivent être un nombre","servings_bad":"Les portions doivent être un nombre","source_ok":"Source notée","source_todo":"Ajoutez le lien https:// vers l'original","optional":"facultatif"}}`;
 
@@ -495,8 +609,8 @@ export const CAPTURE_CLIENT_SCRIPT = `(function () {
   var ALL = JSON.parse(document.getElementById('capture-check-strings').textContent);
   var CATLABELS = JSON.parse(document.getElementById('capture-cat-labels').textContent);
   // Chrome and live checks follow the account UI language (document lang);
-    // the recipe locale select is recipe data and never re-localizes chrome.
-    function lang() {
+  // the recipe locale select is recipe data and never re-localizes chrome.
+  function lang() {
     var v = (document.documentElement && document.documentElement.lang) || 'en';
     return ALL[v] ? v : 'en';
   }
@@ -554,4 +668,289 @@ export const CAPTURE_CLIENT_SCRIPT = `(function () {
   form.addEventListener('input', run);
   form.addEventListener('change', run);
   run();
+
+  // Multimodal AI Kitchen Co-Editor (photo + voice note + rough notes -> structured draft & polish)
+  var aiPanel = document.querySelector('[data-ai-panel]');
+  if (aiPanel) {
+    var photoInput = aiPanel.querySelector('[data-ai-photo]');
+    var photoPreview = aiPanel.querySelector('[data-ai-photo-preview]');
+    var voiceBtn = aiPanel.querySelector('[data-ai-voice-btn]');
+    var voiceStatus = aiPanel.querySelector('[data-ai-voice-status]');
+    var notesInput = aiPanel.querySelector('[data-ai-notes]');
+    var extractBtn = aiPanel.querySelector('[data-ai-extract]');
+    var polishBtn = aiPanel.querySelector('[data-ai-polish]');
+    var undoBtn = aiPanel.querySelector('[data-ai-undo]');
+    var statusEl = aiPanel.querySelector('[data-ai-status]');
+    var improvementsWrap = aiPanel.querySelector('[data-ai-improvements-wrap]');
+    var improvementsList = aiPanel.querySelector('[data-ai-improvements]');
+    var questionsWrap = aiPanel.querySelector('[data-ai-questions-wrap]');
+    var questionsList = aiPanel.querySelector('[data-ai-questions]');
+
+    var attachedImage = null;
+    var attachedAudio = null;
+    var undoSnapshot = null;
+    var recorder = null;
+    var audioChunks = [];
+
+    function snapshotForm() {
+      var names = ['category', 'title', 'intro', 'ingredients', 'steps', 'prep', 'cook', 'servings'];
+      var snap = {};
+      names.forEach(function (n) {
+        var el = field(n);
+        if (el) snap[n] = el.value;
+      });
+      return snap;
+    }
+
+    function restoreSnapshot(snap) {
+      if (!snap) return;
+      Object.keys(snap).forEach(function (n) {
+        var el = field(n);
+        if (el) el.value = snap[n];
+      });
+      run();
+    }
+
+    if (undoBtn) {
+      undoBtn.addEventListener('click', function () {
+        if (!undoSnapshot) return;
+        restoreSnapshot(undoSnapshot);
+        undoSnapshot = null;
+        undoBtn.hidden = true;
+        if (statusEl) statusEl.hidden = true;
+      });
+    }
+
+    if (photoInput) {
+      photoInput.addEventListener('change', function () {
+        var file = photoInput.files && photoInput.files[0];
+        if (!file) {
+          attachedImage = null;
+          if (photoPreview) photoPreview.hidden = true;
+          return;
+        }
+        var reader = new FileReader();
+        reader.onload = function (ev) {
+          var img = new Image();
+          img.onload = function () {
+            var maxDim = 1024;
+            var w = img.width, h = img.height;
+            if (w > maxDim || h > maxDim) {
+              if (w >= h) { h = Math.round((h * maxDim) / w); w = maxDim; }
+              else { w = Math.round((w * maxDim) / h); h = maxDim; }
+            }
+            var canvas = document.createElement('canvas');
+            canvas.width = w;
+            canvas.height = h;
+            var ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0, w, h);
+            var dataUrl = canvas.toDataURL('image/jpeg', 0.82);
+            var comma = dataUrl.indexOf(',');
+            attachedImage = { mimeType: 'image/jpeg', data: dataUrl.slice(comma + 1) };
+            if (photoPreview) {
+              photoPreview.src = dataUrl;
+              photoPreview.hidden = false;
+            }
+          };
+          img.src = ev.target.result;
+        };
+        reader.readAsDataURL(file);
+      });
+    }
+
+    if (voiceBtn && typeof MediaRecorder !== 'undefined' && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      voiceBtn.hidden = false;
+      var startText = voiceBtn.getAttribute('data-label-start') || voiceBtn.textContent;
+      var stopText = voiceBtn.getAttribute('data-label-stop') || 'Stop';
+      var readyText = voiceBtn.getAttribute('data-label-ready') || 'Voice attached';
+      voiceBtn.addEventListener('click', function () {
+        if (recorder && recorder.state === 'recording') {
+          recorder.stop();
+          return;
+        }
+        navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
+          audioChunks = [];
+          recorder = new MediaRecorder(stream);
+          recorder.ondataavailable = function (e) { if (e.data && e.data.size > 0) audioChunks.push(e.data); };
+          recorder.onstop = function () {
+            stream.getTracks().forEach(function (t) { t.stop(); });
+            voiceBtn.textContent = startText;
+            var blob = new Blob(audioChunks, { type: recorder.mimeType || 'audio/webm' });
+            var fr = new FileReader();
+            fr.onload = function () {
+              var res = String(fr.result || '');
+              var c = res.indexOf(',');
+              if (c !== -1) {
+                attachedAudio = { mimeType: (blob.type || 'audio/webm').split(';')[0], data: res.slice(c + 1) };
+                if (voiceStatus) { voiceStatus.textContent = '\\u2713 ' + readyText; voiceStatus.hidden = false; }
+              }
+            };
+            fr.readAsDataURL(blob);
+          };
+          recorder.start();
+          voiceBtn.textContent = stopText;
+          setTimeout(function () { if (recorder && recorder.state === 'recording') recorder.stop(); }, 45000);
+        }).catch(function () {});
+      });
+    }
+
+    function applyChoice(q, answer) {
+      if (!answer) return;
+      if (q.field === 'servings') {
+        var m = /\\d+/.exec(answer);
+        if (m && field('servings')) field('servings').value = m[0];
+      } else if (q.field === 'prepMinutes') {
+        var mp = /\\d+/.exec(answer);
+        if (mp && field('prep')) field('prep').value = mp[0];
+      } else if (q.field === 'cookMinutes') {
+        var mc = /\\d+/.exec(answer);
+        if (mc && field('cook')) field('cook').value = mc[0];
+      } else if (q.field === 'ingredients' && field('ingredients')) {
+        var curIng = field('ingredients').value.trim();
+        field('ingredients').value = curIng ? curIng + '\\n' + answer : answer;
+      } else if (field('steps')) {
+        var curSt = field('steps').value.trim();
+        field('steps').value = curSt ? curSt + '\\n' + answer : answer;
+      }
+      run();
+    }
+
+    function renderFeedback(data) {
+      if (improvementsWrap && improvementsList) {
+        improvementsList.innerHTML = '';
+        var imps = Array.isArray(data.improvements) ? data.improvements : [];
+        if (imps.length > 0) {
+          imps.forEach(function (imp) {
+            var li = document.createElement('li');
+            li.textContent = imp;
+            improvementsList.appendChild(li);
+          });
+          improvementsWrap.hidden = false;
+        } else {
+          improvementsWrap.hidden = true;
+        }
+      }
+      if (questionsWrap && questionsList) {
+        questionsList.innerHTML = '';
+        var qs = Array.isArray(data.followUpQuestions) ? data.followUpQuestions : [];
+        if (qs.length > 0) {
+          qs.forEach(function (q) {
+            var item = document.createElement('div');
+            item.className = 'ai-question';
+            var p = document.createElement('p');
+            p.textContent = q.question;
+            item.appendChild(p);
+            var chips = document.createElement('div');
+            chips.className = 'ai-choices';
+            (Array.isArray(q.quickChoices) ? q.quickChoices : []).forEach(function (choice) {
+              var b = document.createElement('button');
+              b.type = 'button';
+              b.className = 'quiet ai-chip';
+              b.textContent = '+ ' + choice;
+              b.addEventListener('click', function () {
+                applyChoice(q, choice);
+                b.disabled = true;
+                b.textContent = '\\u2713 ' + choice;
+              });
+              chips.appendChild(b);
+            });
+            item.appendChild(chips);
+            questionsList.appendChild(item);
+          });
+          questionsWrap.hidden = false;
+        } else {
+          questionsWrap.hidden = true;
+        }
+      }
+    }
+
+    function callAi(mode) {
+      var endpoint = aiPanel.getAttribute('data-ai-endpoint') || '/account/recipes/ai-assist';
+      var workingMsg = aiPanel.getAttribute('data-msg-working') || 'Working…';
+      var doneMsg = mode === 'polish'
+        ? (aiPanel.getAttribute('data-msg-done-polish') || 'Draft polished.')
+        : (aiPanel.getAttribute('data-msg-done-extract') || 'Draft structured.');
+      var notes = notesInput ? notesInput.value.trim() : '';
+      var draft = {
+        title: field('title') ? field('title').value.trim() : '',
+        category: field('category') ? field('category').value : '',
+        intro: field('intro') ? field('intro').value.trim() : '',
+        ingredients: field('ingredients') ? lines(field('ingredients').value) : [],
+        steps: field('steps') ? lines(field('steps').value) : [],
+        prep: field('prep') ? field('prep').value.trim() : '',
+        cook: field('cook') ? field('cook').value.trim() : '',
+        servings: field('servings') ? field('servings').value.trim() : ''
+      };
+      if (!attachedImage && !attachedAudio && !notes && !draft.ingredients.length && !draft.steps.length) {
+        if (statusEl) {
+          statusEl.className = 'err';
+          statusEl.textContent = aiPanel.getAttribute('data-msg-err-input') || 'Add notes, photo, or draft lines first.';
+          statusEl.hidden = false;
+        }
+        return;
+      }
+      if (extractBtn) extractBtn.disabled = true;
+      if (polishBtn) polishBtn.disabled = true;
+      if (statusEl) {
+        statusEl.className = 'ok';
+        statusEl.textContent = workingMsg;
+        statusEl.hidden = false;
+      }
+      fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mode: mode,
+          uiLang: lang(),
+          recipeLocale: field('locale') ? field('locale').value : 'us:en',
+          notes: notes,
+          image: attachedImage,
+          audio: attachedAudio,
+          draft: draft
+        })
+      })
+        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); })
+        .then(function (res) {
+          if (!res.ok || !res.body || !res.body.ok) {
+            throw new Error((res.body && res.body.error) || 'AI error');
+          }
+          undoSnapshot = snapshotForm();
+          if (undoBtn) undoBtn.hidden = false;
+          var d = res.body.recipe || {};
+          if (d.title && field('title')) field('title').value = d.title;
+          if (d.category && field('category')) field('category').value = d.category;
+          if (d.intro && field('intro')) field('intro').value = d.intro;
+          if (Array.isArray(d.ingredients) && d.ingredients.length && field('ingredients')) {
+            field('ingredients').value = d.ingredients.join('\\n');
+          }
+          if (Array.isArray(d.steps) && d.steps.length && field('steps')) {
+            field('steps').value = d.steps.join('\\n');
+          }
+          if (d.prepMinutes != null && d.prepMinutes > 0 && field('prep')) field('prep').value = String(d.prepMinutes);
+          if (d.cookMinutes != null && d.cookMinutes > 0 && field('cook')) field('cook').value = String(d.cookMinutes);
+          if (d.servings != null && d.servings > 0 && field('servings')) field('servings').value = String(d.servings);
+          run();
+          renderFeedback(res.body);
+          if (statusEl) {
+            statusEl.className = 'ok';
+            statusEl.textContent = doneMsg;
+            statusEl.hidden = false;
+          }
+        })
+        .catch(function (err) {
+          if (statusEl) {
+            statusEl.className = 'err';
+            statusEl.textContent = err && err.message ? err.message : 'Error';
+            statusEl.hidden = false;
+          }
+        })
+        .then(function () {
+          if (extractBtn) extractBtn.disabled = false;
+          if (polishBtn) polishBtn.disabled = false;
+        });
+    }
+
+    if (extractBtn) extractBtn.addEventListener('click', function () { callAi('extract'); });
+    if (polishBtn) polishBtn.addEventListener('click', function () { callAi('polish'); });
+  }
 })();`;
