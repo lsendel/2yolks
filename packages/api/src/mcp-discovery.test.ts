@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import app from './index';
+import { getMcpManifest } from './mcp';
 
 describe('public MCP discovery', () => {
   it('serves metadata without a DB or credentials and pins the production origin', async () => {
     const response = await app.request('https://untrusted.example/.well-known/mcp.json');
     expect(response.status).toBe(200);
     expect(response.headers.get('cache-control')).toBe('public, max-age=300');
-    const manifest = await response.json();
+    const manifest = await response.json() as ReturnType<typeof getMcpManifest>;
     const server = manifest.servers['2yolks-admin'];
     expect(server.url).toBe('https://2yolks.com/api/admin/mcp');
     expect(server.toolsUrl).toBe('https://2yolks.com/api/admin/mcp/tools');
