@@ -10,8 +10,8 @@ import {
   renderIngredient,
   renderStep,
 } from '@2yolks/contracts';
-import doc from './catalog.translation-drafts.json' assert { type: 'json' };
-import review from './catalog.translation-review.json' assert { type: 'json' };
+import doc from './catalog.translation-drafts.json' with { type: 'json' };
+import review from './catalog.translation-review.json' with { type: 'json' };
 
 type Draft = (typeof doc.drafts)[number];
 
@@ -28,8 +28,8 @@ const hashOf = (d: Draft): string =>
     .digest('hex');
 
 describe('catalog translation drafts & review contract', () => {
-  it('covers all 66 target locales with unique valid slugs and clean structured names', () => {
-    expect(doc.drafts).toHaveLength(66);
+  it('covers all 210 target locales with unique valid slugs and clean structured names', () => {
+    expect(doc.drafts).toHaveLength(210);
     const seenSlugs = new Set<string>();
     const seenKeys = new Set<string>();
 
@@ -75,7 +75,7 @@ describe('catalog translation drafts & review contract', () => {
       byRecipe.set(d.recipe_id, list);
     }
 
-    expect(byRecipe.size).toBe(33);
+    expect(byRecipe.size).toBe(105);
     for (const [recipeId, list] of byRecipe) {
       expect(list.length, `expected 2 target locales for ${recipeId}`).toBe(2);
       const [a, b] = list;
