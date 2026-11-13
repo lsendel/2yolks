@@ -125,3 +125,7 @@ curl https://2yolks.com/api/admin/mcp \
 ## Machine-translation publication (wave 1)
 
 `MCP_TRANSLATION_REVIEW` stays unset, so no caller can stamp a review through the MCP. Wave-1 translations are published by an audited, repo-versioned route instead: `packages/api/content/wave1.translation-review.json` binds one completed AI-agent review to the SHA-256 of each draft's exact content, and `scripts/translation-sql.mjs publish` only emits UPDATEs that match the stored draft content and provenance. They stamp `translation_reviewer_kind='agent'` and write an `mcp_audit` row (`manual.translation_publish`). Published machine translations show an on-page "machine-translated, not reviewed by a native speaker" label; only a human reviewer stamp removes it. `scripts/translation-sql.mjs unpublish` returns them to draft and deletes nothing. Original-language rows are identified by `translation_of IS NULL` together with the wave-1 content source (`wave1.json`, matched to the live rows); no original marker is written.
+
+## Public discovery
+
+`GET https://2yolks.com/.well-known/mcp.json` provides public connection metadata, role names and a registry-derived tool count. It does not expose credentials or content. The catalog and all tool calls still require a configured bearer key; this does not add a public recipe-read API.
