@@ -19,7 +19,7 @@ import { isUntested, localizedCountryName } from '@2yolks/contracts';
 import type { ImageStyle } from '@2yolks/contracts';
 import { recipeSlugAliases,  createDb, recipes, recipeLocales, recipeImages, sources, published, imageCleared, searchGapLogs } from './db';
 import { appApi } from './appapi';
-import { mcpApp } from './mcp';
+import { mcpApp, getMcpManifest } from './mcp';
 import { accountApp, type AccountBindings } from './account';
 
 type Bindings = {
@@ -117,6 +117,11 @@ app.get('/api/v1/countries/:code/recipes', async (c) => {
 });
 
 // --- Discovery --------------------------------------------------------------
+
+// Public metadata only. Tool catalogs and calls retain bearer auth.
+app.get('/.well-known/mcp.json', (c) => c.json(getMcpManifest(), 200, {
+  'cache-control': 'public, max-age=300',
+}));
 
 app.get('/robots.txt', (c) => {
   const origin = c.env.CANONICAL_ORIGIN ?? new URL(c.req.url).origin;

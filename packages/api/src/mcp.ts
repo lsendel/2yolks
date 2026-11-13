@@ -2142,3 +2142,23 @@ async function handleRpc(c: Context<{ Bindings: McpBindings }>) {
 
 mcpApp.post('/', handleRpc);
 mcpApp.post('/tools', handleRpc);
+
+/** Public discovery metadata. Origin is pinned, never taken from an untrusted Host. */
+export function getMcpManifest() {
+  return {
+    schemaVersion: '1.0',
+    name: '2yolks-mcp',
+    description: 'Role-scoped recipe and blog content tools. Writes preview by default; publishing requires an admin.',
+    servers: {
+      '2yolks-admin': {
+        url: 'https://2yolks.com/api/admin/mcp',
+        toolsUrl: 'https://2yolks.com/api/admin/mcp/tools',
+        transport: 'http',
+        protocolVersion: '2025-03-26',
+        authentication: { type: 'bearer', required: true },
+        roles: ['viewer', 'editor', 'admin'],
+        toolCount: TOOLS.length,
+      },
+    },
+  };
+}
