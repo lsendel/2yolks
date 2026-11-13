@@ -7,7 +7,7 @@
     "@2yolks/contracts": "*",
     "@2yolks/web": "*",
     "@noble/hashes": "^2.4.0",
-    "drizzle-orm": "^0.38",
+    "drizzle-orm": "^0.45.4",
     "hono": "^4",
     "react": "^19",
     "react-dom": "^19"
