@@ -6,6 +6,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { COUNTRIES, LOCALES } from '@2yolks/contracts';
 import app from './index';
+import { shapeCompact } from './mcp-toon';
 
 const ADMIN_KEY = 'test-admin-key-0000000000';
 const READ_KEY = 'test-read-key-00000000000';
@@ -1318,5 +1319,82 @@ describe('test-report photo moderation & MCP translation', () => {
     } finally {
       globalThis.fetch = realFetch;
     }
+  });
+});
+
+describe('AXI TOON compact responses', () => {
+  beforeEach(() => {
+    DB = migratedD1();
+    R2 = makeR2();
+  });
+
+  async function rawCall(name: string, args: Record<string, unknown>) {
+    const res = await call(ADMIN_KEY, 'tools/call', { name, arguments: args });
+    const body = (await res.json()) as {
+      result?: { content?: { text: string }[]; isError?: boolean };
+    };
+    return body.result?.content?.[0]?.text ?? '';
+  }
+
+  it('tools/list keeps full schemas by default and trims with detail:compact', async () => {
+    const full = await call(ADMIN_KEY, 'tools/list');
+    const fullTools = ((await full.json()) as { result: { tools: { inputSchema?: unknown }[] } }).result.tools;
+    expect(fullTools.every((t) => t.inputSchema !== undefined)).toBe(true);
+
+    const compact = await call(ADMIN_KEY, 'tools/list', { detail: 'compact' });
+    const compactTools = ((await compact.json()) as {
+      result: { tools: { name: string; description: string; inputSchema?: unknown }[] };
+    }).result.tools;
+    expect(compactTools.length).toBe(fullTools.length);
+    for (const t of compactTools) {
+      expect(t.inputSchema).toBeUndefined();
+      expect(typeof t.name).toBe('string');
+      expect(typeof t.description).toBe('string');
+    }
+  });
+
+  it('tools/call default output stays pretty JSON; format=toon renders explicit empty state', async () => {
+    const jsonText = await rawCall('recipes.list', {});
+    expect(jsonText.startsWith('{')).toBe(true);
+    expect(() => JSON.parse(jsonText)).not.toThrow();
+
+    const toonText = await rawCall('recipes.list', { format: 'toon' });
+    expect(toonText).not.toContain('{');
+    expect(toonText).toContain('[0]:');
+  });
+
+  it('format=toon projects list items to minimal fields and honors fields override', async () => {
+    const created = await toolCall(ADMIN_KEY, 'recipes.create_draft', { ...RECIPE, confirmed: true });
+    expect(created.isError).toBe(false);
+
+    const toonText = await rawCall('recipes.list', { format: 'toon' });
+    expect(toonText).toMatch(/\[\d+\]\{/);
+    // default projection keeps the first 4 primitive fields (id, country, lang, slug)
+    expect(toonText).toContain('test-pancakes');
+
+    const titled = await rawCall('recipes.list', { format: 'toon', fields: ['slug', 'title'] });
+    expect(titled).toContain('Test Pancakes');
+
+    const withFields = await rawCall('recipes.list', { format: 'toon', fields: ['slug', 'status'] });
+    expect(withFields).toContain('{slug,status}:');
+    expect(withFields).toContain('draft');
+  });
+});
+
+describe('AXI TOON truncation exemptions', () => {
+  it('keeps id/slug/url-suffixed values whole and truncates other long strings', () => {
+    const long = 'x'.repeat(300);
+    const shaped = shapeCompact({
+      downloadUrl: `https://cdn.example.com/${'p'.repeat(300)}`,
+      checkout_url: `https://pay.example.com/${'q'.repeat(300)}`,
+      image_link: `https://img.example.com/${'r'.repeat(300)}`,
+      slug: `s-${'s'.repeat(300)}`,
+      description: long,
+    }) as Record<string, unknown>;
+    expect(String(shaped.downloadUrl)).toHaveLength(300 + 'https://cdn.example.com/'.length);
+    expect(String(shaped.checkout_url)).toHaveLength(300 + 'https://pay.example.com/'.length);
+    expect(String(shaped.image_link)).toHaveLength(300 + 'https://img.example.com/'.length);
+    expect(String(shaped.slug)).toHaveLength(302);
+    expect(String(shaped.description)).toContain('truncated, 300 chars total');
   });
 });
