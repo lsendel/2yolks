@@ -14,6 +14,7 @@
 // and every auth denial lands in mcp_audit.
 import { Hono } from 'hono';
 import type { Context } from 'hono';
+import { parseFieldsArg, requestedFormat, shapeToolText } from './mcp-toon';
 import {
   getCountry,
   localesFor,
@@ -710,9 +711,12 @@ function rpcResult(id: unknown, result: unknown) {
   return { jsonrpc: '2.0', id: id ?? null, result };
 }
 
-function toolText(id: unknown, data: unknown, isError = false) {
+function toolText(id: unknown, data: unknown, isError = false, shape?: { format: 'json' | 'toon'; fields?: string[] }) {
+  const text = shape
+    ? shapeToolText(data, shape.format, shape.fields)
+    : JSON.stringify(data, null, 2);
   return rpcResult(id, {
-    content: [{ type: 'text', text: JSON.stringify(data, null, 2) }],
+    content: [{ type: 'text', text }],
     ...(isError ? { isError: true } : {}),
   });
 }
@@ -2111,6 +2115,21 @@ async function handleRpc(c: Context<{ Bindings: McpBindings }>) {
   }
   if (method === 'tools/list') {
     const tools = TOOLS.filter((t) => ROLE_RANK[auth.role] >= ROLE_RANK[t.role]);
+    // AXI budget trimming: detail:'compact' drops the bulky inputSchema
+    // (name, description, role and required fields stay). Full schemas
+    // remain the default and per tool via tools/describe.
+    if (params['detail'] === 'compact') {
+      const compact = tools.map((t) => {
+        const required = (t.inputSchema as { required?: string[] }).required;
+        return {
+          name: t.name,
+          description: t.description,
+          role: t.role,
+          ...(required && required.length > 0 ? { required } : {}),
+        };
+      });
+      return c.json(rpcResult(id, { tools: compact }));
+    }
     return c.json(rpcResult(id, { tools }));
   }
   if (method === 'tools/describe' || method === 'tools/get') {
@@ -2135,7 +2154,13 @@ async function handleRpc(c: Context<{ Bindings: McpBindings }>) {
     if (result.status >= 400) {
       return c.json(toolText(id, result.data, true), 200);
     }
-    return c.json(toolText(id, result.data), 200);
+    return c.json(
+      toolText(id, result.data, false, {
+        format: requestedFormat(args),
+        fields: parseFieldsArg(args['fields']),
+      }),
+      200,
+    );
   }
   return c.json(rpcError(id, -32601, `Method '${method}' not found`), 404);
 }
