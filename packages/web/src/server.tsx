@@ -1,5 +1,10 @@
 import { renderToString } from 'react-dom/server';
 
+// Re-exported for the worker's JSON feed route (same per-recipe language
+// selection as the SSR discovery lists).
+export { discoveryRecipes } from './App';
+
+
 /** Escape text interpolated into raw HTML/SVG elements. */
 export function escapeHtml(text: string): string {
   return text
