@@ -82,6 +82,8 @@ main.wide.discovery {max-width:1160px;padding:0;margin:auto;background:var(--plu
 .view-toggle button+button {border-left:1px solid #87798e;}
 .view-toggle button[aria-pressed="true"] {background:var(--lime);color:var(--plum);font-weight:750;}
 /* Discovery List View (default) */
+.lang-notice {display:flex;align-items:center;flex-wrap:wrap;gap:.5rem .75rem;margin:0 0 1.25rem;padding:.6rem .9rem;border:1px solid #65566e;border-radius:10px;color:#faf7f4;font-size:.95rem;}
+.lang-notice .chip {min-height:0;}
 .discovery-list {list-style:none;padding:0;margin:0;border-bottom:1px solid #65566e;}
 .index-group {margin-top:2rem;}
 .index-group[hidden] {display:none !important;}

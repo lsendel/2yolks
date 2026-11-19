@@ -290,3 +290,27 @@ describe('Homepage grouped sections (4A)', () => {
     expect(html.match(/data-recipe-item="true"/g)!.length).toBe(6);
   });
 });
+
+describe('Browser-language homepage default (2A)', () => {
+  it('parses Accept-Language in q-value order, prefix-matched', async () => {
+    const { browserLang } = await import('./server');
+    expect(browserLang('es-MX,es;q=0.9,en;q=0.8')).toBe('es');
+    expect(browserLang('fr-CA, fr;q=0.8, en;q=0.9')).toBe('fr');
+    expect(browserLang('en-US,en;q=0.9')).toBe('en');
+    expect(browserLang('de-DE,de;q=0.9,en;q=0.5')).toBe('en');
+    expect(browserLang('de-DE,de;q=0.9')).toBe('en');
+    expect(browserLang(undefined)).toBe('en');
+    expect(browserLang('')).toBe('en');
+    expect(browserLang('es;q=0.9,fr;q=1.0')).toBe('fr');
+  });
+
+  it('shows the visible switcher confirmation only when langNotice is set', () => {
+    const withNotice = renderHome({ recipes: [], locales: [], lang: 'es', langNotice: true });
+    expect(withNotice).toContain('class="lang-notice"');
+    expect(withNotice).toContain('Mostrando recetas en el idioma de tu navegador.');
+    expect(withNotice).toContain('href="/?lang=en"');
+    expect(withNotice).toContain('href="/?lang=fr"');
+    const without = renderHome({ recipes: [], locales: [], lang: 'es' });
+    expect(without).not.toContain('class="lang-notice"');
+  });
+});
