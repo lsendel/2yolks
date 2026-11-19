@@ -17,11 +17,12 @@ export const THEME_CLIENT_SCRIPT = `(function () {
 })();`;
 
 export const DISCOVERY_CLIENT_SCRIPT = `(function () {
-  var list = document.querySelector('[data-recipe-list]');
-  var viewBtns = Array.prototype.slice.call(document.querySelectorAll('[data-view-btn]'));
+  var lists = Array.prototype.slice.call(document.querySelectorAll('[data-recipe-list]'));
+  var list = lists[0];
+  var groups = Array.prototype.slice.call(document.querySelectorAll('[data-recipe-group]'));
   function setView(mode) {
     var v = mode === 'grid' ? 'grid' : 'list';
-    if (list) list.setAttribute('data-view', v);
+    lists.forEach(function (l) { l.setAttribute('data-view', v); });
     viewBtns.forEach(function (b) {
       b.setAttribute('aria-pressed', b.getAttribute('data-view-btn') === v ? 'true' : 'false');
     });
@@ -125,6 +126,7 @@ export const DISCOVERY_CLIENT_SCRIPT = `(function () {
     var rawSearch = norm(li.getAttribute('data-search') || (title + ' ' + cat + ' ' + body));
     return {
       el: li,
+      parent: li.parentNode,
       idx: idx,
       title: title,
       cat: cat,
@@ -170,8 +172,9 @@ export const DISCOVERY_CLIENT_SCRIPT = `(function () {
         r.el.hidden = false;
         var num = r.el.querySelector('.recipe-number');
         if (num) num.textContent = (r.idx + 1 < 10 ? '0' : '') + (r.idx + 1);
-        if (list) list.appendChild(r.el);
+        (r.parent || list).appendChild(r.el);
       });
+      groups.forEach(function (g) { g.hidden = false; });
       return;
     }
 
@@ -227,8 +230,12 @@ export const DISCOVERY_CLIENT_SCRIPT = `(function () {
         if (num) num.textContent = (rank + 1 < 10 ? '0' : '') + (rank + 1);
         if (list) list.appendChild(m.rec.el);
       });
+      // Ranked results render inside the first list; hide the other group
+      // shells so no empty headings linger (grouped homepage, 4A).
+      groups.forEach(function (g) { g.hidden = !(list && g.contains(list)); });
     } else {
       records.forEach(function (r) { r.el.hidden = true; });
+      groups.forEach(function (g) { g.hidden = true; });
       if (closestNote) closestNote.hidden = true;
       if (emptyEl) {
         emptyEl.hidden = false;

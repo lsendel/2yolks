@@ -256,3 +256,37 @@ describe('Search & Discovery Sprint (WS1, WS2, WS3, WS4)', () => {
     expect(results).toContain('Birria Tacos');
   });
 });
+
+describe('Homepage grouped sections (4A)', () => {
+  const many = Array.from({ length: 6 }, (_, i) => ({
+    id: `g${i}`,
+    country: 'us',
+    lang: 'en',
+    slug: `dish-${i}`,
+    title: `Dish ${i}`,
+    category: 'mains' as const,
+    intro: '',
+    ingredients: '',
+  }));
+  const mixed = [...many, { id: 'u1', country: 'us', lang: 'en', slug: 'oddball', title: 'Oddball', category: null, intro: '', ingredients: '' }];
+
+  it('groups by category with one capped row and a see-all link', () => {
+    const html = renderHome({ recipes: mixed as any, locales: [], lang: 'en' });
+    expect(html).toContain('data-recipe-group="true"');
+    // Capped at 4 of 6 mains, with a see-all link into the category filter.
+    // 4 capped mains + 1 uncategorized row carry data-recipe-item; the 2
+    // capped-out mains appear only in JSON-LD, not as list rows.
+    expect(html.match(/data-recipe-item="true"/g)!.length).toBe(5);
+    expect(html).toContain('href="/?lang=en&amp;cat=mains#recipes"');
+    expect(html).toContain('See all');
+    // Uncategorized recipes land in a final group pointing at /recipes.
+    expect(html).toContain('Oddball');
+    expect(html).toContain('href="/recipes"');
+  });
+
+  it('keeps the flat ranked list when a category is picked', () => {
+    const html = renderHome({ recipes: mixed as any, locales: [], lang: 'en', activeCategory: 'mains' });
+    expect(html).not.toContain('data-recipe-group="true"');
+    expect(html.match(/data-recipe-item="true"/g)!.length).toBe(6);
+  });
+});
