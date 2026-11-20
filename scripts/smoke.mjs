@@ -128,7 +128,7 @@ try {
   r = await get('/account/code', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', origin: `http://127.0.0.1:${PORT}` }, body: 'email=a%40example.com' });
   check('code request without mail key answers 503, not a crash', r.status === 503);
   r = await get('/account/recipes/new');
-  check('recipe form needs sign-in (303 to /account)', r.status === 303 && r.location === '/account');
+  check('recipe form needs sign-in (303 to /account with ?next=)', r.status === 303 && r.location === '/account?next=%2Faccount%2Frecipes%2Fnew');
   r = await get('/robots.txt');
   check('robots disallows /account', r.body.includes('Disallow: /account'));
 

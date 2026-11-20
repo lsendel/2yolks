@@ -717,7 +717,7 @@ describe('community kitchen-test reports', () => {
     await seedPublicRecipe();
     const res = await get('/account/recipes/rp1/test-report');
     expect(res.status).toBe(303);
-    expect(res.headers.get('location')).toBe('/account');
+    expect(res.headers.get('location')).toBe('/account?next=%2Faccount%2Frecipes%2Frp1%2Ftest-report');
     const home = await get('/account');
     expect(await home.text()).toContain('name="email"');
   });
@@ -861,5 +861,43 @@ describe('community kitchen-test reports', () => {
     expect(r2.objects.size).toBe(0);
     const n = await DB.prepare('SELECT count(*) AS n FROM recipe_test_reports').first<{ n: number }>();
     expect(n?.n).toBe(0);
+  });
+
+  it('preserves allowlisted ?next= across sign-in back to the test-report page and drops unsafe next URLs', async () => {
+    await seedPublicRecipe();
+    const redir = await get('/account/recipes/rp1/test-report?lang=es');
+    expect(redir.status).toBe(303);
+    const loc = redir.headers.get('location');
+    expect(loc).toBe('/account?lang=es&next=%2Faccount%2Frecipes%2Frp1%2Ftest-report');
+
+    const signInPage = await get(loc!);
+    const signInHtml = await signInPage.text();
+    expect(signInHtml).toContain('name="next" value="/account/recipes/rp1/test-report"');
+
+    const codePage = await post('/account/code?lang=es', {
+      email: 'cook@example.com',
+      next: '/account/recipes/rp1/test-report',
+    });
+    expect(codePage.status).toBe(200);
+    expect(await codePage.text()).toContain('name="next" value="/account/recipes/rp1/test-report"');
+
+    const esCode = /\b(\d{6})\b/.exec(sent[sent.length - 1]!.text)![1]!;
+    const verified = await post('/account/verify?lang=es', {
+      email: 'cook@example.com',
+      code: esCode,
+      next: '/account/recipes/rp1/test-report',
+    });
+    expect(verified.status).toBe(303);
+    expect(verified.headers.get('location')).toBe('/account/recipes/rp1/test-report?lang=es');
+
+    // Hostile next value is ignored and falls back to /account
+    await post('/account/code', { email: 'cook2@example.com', next: 'https://evil.example/phish' });
+    const safeRedir = await post('/account/verify', {
+      email: 'cook2@example.com',
+      code: lastCode(),
+      next: '//evil.example/phish',
+    });
+    expect(safeRedir.status).toBe(303);
+    expect(safeRedir.headers.get('location')).toBe('/account');
   });
 });
