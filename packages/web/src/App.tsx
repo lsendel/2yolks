@@ -491,7 +491,10 @@ export function Home({ recipes, lang = 'en', activeCategory = null, currentCount
                 data-search={`${r.title} ${catText ?? ''} ${searchBody}`.toLowerCase()}
                 className={r.imageId && asImageStyle(r.imageStyle) ? 'has-thumb' : undefined}
               >
-                {numbered ? <span className="recipe-number">{String(i + 1).padStart(2, '0')}</span> : null}
+                {/* The grid's first track is 2.2rem; always render the span so
+                    the content column stays in place (the /recipes squeeze bug
+                    fixed in #33 was exactly this shift). */}
+                <span className="recipe-number">{numbered ? String(i + 1).padStart(2, '0') : ''}</span>
                 {r.imageId && asImageStyle(r.imageStyle) ? (
                   <span className="recipe-thumb">
                     <img src={`/img/recipe/${r.imageId}`} alt="" loading="lazy" width="96" height="96" />
