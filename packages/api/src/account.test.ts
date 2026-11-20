@@ -617,7 +617,7 @@ describe('account i18n (en/es/fr)', () => {
     expect(es).toContain('Aún no lo sé');
     expect(es).toContain('Una o dos frases antes de la receta');
     // recipe data locale untouched by the UI language: still defaults to us:en
-    expect(es).toContain('<select name="locale">');
+    expect(es).toMatch(/<select name="locale"[^>]*>/);
     expect(es).toMatch(/<option value="us:en"[^>]*selected/);
     const fr = await (await get('/account/recipes/new?lang=fr', cookie)).text();
     expect(fr).toContain('<span data-category-prompt>Quel type de plat est-ce ?</span>');
@@ -899,5 +899,172 @@ describe('community kitchen-test reports', () => {
     });
     expect(safeRedir.status).toBe(303);
     expect(safeRedir.headers.get('location')).toBe('/account');
+  });
+});
+
+describe('share flow: one clear finish (attest + send in one POST)', () => {
+  const idFrom = (loc: string) => /recipes\/([a-z0-9]+)\/edit/.exec(loc)![1]!;
+  it('a new recipe with the permission box ticked is saved and sent in with one POST', async () => {
+    const cookie = await signIn();
+    const before = sent.length;
+    const res = await post('/account/recipes/save', recipeForm({ intent: 'submit' }), { cookie });
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('Thanks, it is with us');
+    expect(html).toMatch(/data-capture-clear="[a-z0-9]+"/); // device autosave copy is dropped
+    const row = await DB.prepare('SELECT r.attested_at AS a, r.submitted_at AS s, l.status AS st FROM recipes r JOIN recipe_locales l ON l.recipe_id = r.id').first<Record<string, unknown>>();
+    expect(row!['a']).toBeTruthy();
+    expect(row!['s']).toBeTruthy();
+    expect(row!['st']).toBe('draft'); // never published by a submit
+    expect(sent.length).toBe(before + 1);
+    expect(sent[sent.length - 1]!.to).toEqual(['owner@example.com']);
+  });
+  it('send without the permission box: refused inline next to the box, nothing saved or sent', async () => {
+    const cookie = await signIn();
+    const before = sent.length;
+    const res = await post('/account/recipes/save', recipeForm({ attest: '', intent: 'submit' }), { cookie });
+    expect(res.status).toBe(400);
+    const html = await res.text();
+    expect(html).toContain('<title>Add a recipe - 2yolks</title>');
+    expect(html).toMatch(/<input type="checkbox" name="attest" value="1" id="f-attest"[^>]*aria-invalid="true" aria-describedby="err-attest"/);
+    expect(html).toContain('<p class="field-err" id="err-attest">Tick the permission box to send this recipe in for review.</p>');
+    expect(html).toContain('<a href="#f-attest">'); // summary links to the field
+    expect(html).toContain('value="Abuela Soup"'); // what was typed is kept
+    expect((await DB.prepare('SELECT count(*) AS n FROM recipes').first<{ n: number }>())!.n).toBe(0);
+    expect(sent.length).toBe(before);
+  });
+  it('an existing unattested draft: the edit page offers the box beside an enabled send button, and one POST finishes', async () => {
+    const cookie = await signIn();
+    const saved = await post('/account/recipes/save', recipeForm({ attest: '' }), { cookie });
+    const id = idFrom(saved.headers.get('location')!);
+    const edit = await (await get(`/account/recipes/${id}/edit`, cookie)).text();
+    expect(edit).not.toContain('Tick the permission box above and save first');
+    expect(edit).not.toMatch(/<button[^>]*disabled[^>]*>Send in for review/);
+    const finish = edit.slice(edit.indexOf('data-finish'), edit.indexOf('</form>', edit.indexOf('data-finish')));
+    expect(finish).toContain('name="attest"');
+    expect(finish).toContain('name="intent" value="submit"');
+    expect(finish).toContain('name="intent" value="save"');
+    // Save comes first in DOM order so Enter in a text field never sends anything in.
+    expect(finish.indexOf('value="save"')).toBeLessThan(finish.indexOf('value="submit"'));
+    expect(edit).toContain(`/account/recipes/${id}/delete`);
+    const res = await post('/account/recipes/save', { ...recipeForm({ intent: 'submit' }), id }, { cookie });
+    expect(res.status).toBe(200);
+    const row = await DB.prepare('SELECT attested_at AS a, submitted_at AS s FROM recipes WHERE id = ?').bind(id).first<Record<string, unknown>>();
+    expect(row!['a']).toBeTruthy();
+    expect(row!['s']).toBeTruthy();
+  });
+  it('the submit route records a ticked attestation and submits; without it the submit is still refused', async () => {
+    const cookie = await signIn();
+    const a = idFrom((await post('/account/recipes/save', recipeForm({ attest: '' }), { cookie })).headers.get('location')!);
+    expect((await post(`/account/recipes/${a}/submit`, {}, { cookie })).status).toBe(409);
+    expect((await DB.prepare('SELECT submitted_at AS s FROM recipes WHERE id = ?').bind(a).first<{ s: string | null }>())!.s).toBeNull();
+    const ok = await post(`/account/recipes/${a}/submit`, { attest: '1' }, { cookie });
+    expect(ok.status).toBe(200);
+    const row = await DB.prepare('SELECT attested_at AS at, submitted_at AS s FROM recipes WHERE id = ?').bind(a).first<Record<string, unknown>>();
+    expect(row!['at']).toBeTruthy();
+    expect(row!['s']).toBeTruthy();
+  });
+  it('validation errors on an existing draft keep the Edit title, the finish panel and the remove button, with inline errors', async () => {
+    const cookie = await signIn();
+    const id = idFrom((await post('/account/recipes/save', recipeForm(), { cookie })).headers.get('location')!);
+    const res = await post('/account/recipes/save', { ...recipeForm({ ingredients: '', prep: 'abc' }), id }, { cookie });
+    expect(res.status).toBe(400);
+    const html = await res.text();
+    expect(html).toContain('<title>Edit your draft - 2yolks</title>');
+    expect(html).toContain('<h1>Edit your draft</h1>');
+    expect(html).toContain('name="intent" value="submit"');
+    expect(html).toContain(`/account/recipes/${id}/delete`);
+    expect(html).toMatch(/<textarea name="ingredients" id="f-ingredients" required aria-invalid="true" aria-describedby="err-ingredients">/);
+    expect(html).toContain('<p class="field-err" id="err-ingredients">Add at least one ingredient, one per line.</p>');
+    expect(html).toMatch(/name="prep" id="f-prep"[^>]*aria-invalid="true" aria-describedby="err-prep"/);
+    expect(html).toContain('id="err-prep"');
+    // the summary stays at the top too
+    expect(html).toContain('Fix these first:');
+  });
+  it('shows every problem at once: author, https link and validator errors each next to their field', async () => {
+    const cookie = await signIn();
+    const res = await post('/account/recipes/save', recipeForm({ display_name: '', source_kind: 'adapted', source_url: 'http://nope', title: '' }), { cookie });
+    expect(res.status).toBe(400);
+    const html = await res.text();
+    for (const f of ['display_name', 'source_url', 'title']) {
+      expect(html, f).toContain(`aria-describedby="err-${f}"`);
+      expect(html, f).toContain(`id="err-${f}"`);
+    }
+    // one message per control: the validator's duplicate for the https link is folded away
+    expect(html.match(/id="err-source_url">[^<]*</)![0]).toBe('id="err-source_url">Adapted recipes need an https:// link to the original.<');
+  });
+  it('a rate-limited save re-renders what was typed instead of a blank form', async () => {
+    const cookie = await signIn();
+    const rl = { limit: async () => ({ success: false }) };
+    const res = await post('/account/recipes/save', recipeForm({ title: 'Keep Me Soup' }), { cookie, e: { RL_SUBMIT: rl } });
+    expect(res.status).toBe(429);
+    expect(await res.text()).toContain('value="Keep Me Soup"');
+  });
+  it('marks prep/cook as optional, wraps the original link for progressive hiding, and labels the AI status as a live region', async () => {
+    const cookie = await signIn();
+    for (const [lang, opt] of [['en', '(optional)'], ['es', '(opcional)'], ['fr', '(facultatif)']] as const) {
+      const html = await (await get(`/account/recipes/new?lang=${lang}`, cookie)).text();
+      expect(html).toMatch(new RegExp(`name="prep"`));
+      const prepLabel = html.slice(html.lastIndexOf('<label>', html.indexOf('name="prep"')), html.indexOf('name="prep"'));
+      expect(prepLabel, lang).toContain(`<small>${opt}</small>`);
+      const cookLabel = html.slice(html.lastIndexOf('<label>', html.indexOf('name="cook"')), html.indexOf('name="cook"'));
+      expect(cookLabel, lang).toContain(`<small>${opt}</small>`);
+      // visible without JS (no hidden attribute server-side); the script hides it unless "adapted"
+      expect(html).toContain('<div class="field" data-source-link><label>');
+      expect(html).toContain('<div data-ai-status role="status" aria-live="polite" hidden></div>');
+    }
+  });
+  it('the photo hint tells the truth: sent to Google Gemini to read, not kept by 2yolks (en/es/fr)', async () => {
+    const cookie = await signIn();
+    for (const lang of ['en', 'es', 'fr']) {
+      const html = await (await get(`/account/recipes/new?lang=${lang}`, cookie)).text();
+      expect(html, lang).toContain('Gemini');
+      expect(html, lang).not.toMatch(/never stored on third-party|nunca se almacena en servidores externos|jamais conservée par des tiers/);
+    }
+  });
+});
+
+describe('sign-in code budget override (CODES_PER_DAY)', () => {
+  it('parses the env var: positive integers only, clamped, default 32', async () => {
+    const { codesPerDay, CODES_PER_DAY, MAX_CODES_PER_DAY } = await import('./account');
+    expect(CODES_PER_DAY).toBe(32);
+    expect(codesPerDay({})).toBe(32);
+    expect(codesPerDay({ CODES_PER_DAY: '' })).toBe(32);
+    expect(codesPerDay({ CODES_PER_DAY: '0' })).toBe(32);
+    expect(codesPerDay({ CODES_PER_DAY: '-5' })).toBe(32);
+    expect(codesPerDay({ CODES_PER_DAY: '12.5' })).toBe(32);
+    expect(codesPerDay({ CODES_PER_DAY: 'lots' })).toBe(32);
+    expect(codesPerDay({ CODES_PER_DAY: ' 64 ' })).toBe(64);
+    expect(codesPerDay({ CODES_PER_DAY: '5000' })).toBe(MAX_CODES_PER_DAY);
+    expect(MAX_CODES_PER_DAY).toBe(1000);
+  });
+  it('the /account/code route spends against the overridden budget', async () => {
+    const e = { CODES_PER_DAY: '2' };
+    expect((await post('/account/code', { email: 'one@example.com' }, { e })).status).toBe(200);
+    expect((await post('/account/code', { email: 'two@example.com' }, { e })).status).toBe(200);
+    expect((await post('/account/code', { email: 'three@example.com' }, { e })).status).toBe(503);
+    // a higher override lets the next one through
+    expect((await post('/account/code', { email: 'three@example.com' }, { e: { CODES_PER_DAY: '40' } })).status).toBe(200);
+  });
+});
+
+describe('validator paths map to form controls', () => {
+  it('maps contracts paths (and times messages) to field names', async () => {
+    const { fieldForValidatorPath: f } = await import('./account');
+    expect(f('locales[0].title', 'x')).toBe('title');
+    expect(f('locales[0].slug', 'x')).toBe('title');
+    expect(f('locales[0].ingredients', 'x')).toBe('ingredients');
+    expect(f('locales[0].steps', 'x')).toBe('steps');
+    expect(f('locales[0].intro', 'x')).toBe('intro');
+    expect(f('times', 'prepMinutes must be an integer')).toBe('prep');
+    expect(f('times', 'cookMinutes must be an integer')).toBe('cook');
+    expect(f('times', 'baseServings must be a number')).toBe('servings');
+    expect(f('times', 'totalMinutes must be at least 1')).toBeUndefined();
+    expect(f('source.url', 'x')).toBe('source_url');
+    expect(f('source.name', 'x')).toBe('display_name');
+    expect(f('originCountry', 'x')).toBe('locale');
+    expect(f('locales[0].lang', 'x')).toBe('locale');
+    expect(f('category', 'x')).toBe('category');
+    expect(f('locales', 'x')).toBeUndefined();
   });
 });

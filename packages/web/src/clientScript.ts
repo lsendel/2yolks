@@ -631,13 +631,160 @@ export const RECIPE_CLIENT_SCRIPT = `(function () {
 })();`;
 
 /**
- * Live quality checks + optional AI Kitchen Co-Editor on the capture form.
- * Nothing here gates saving - the server still validates.
+ * Live quality checks + optional AI Kitchen Co-Editor on the capture form,
+ * plus on-device autosave/restore of the draft. Nothing here gates saving -
+ * the server still validates (and enforces the rights attestation).
  * Strings are localized en/es/fr and follow the form's UI language.
  */
-export const CAPTURE_CHECK_STRINGS = `{"en":{"title":"Give the recipe a name","ingredients":"List the ingredients, one per line","qty_ok":"Every ingredient line starts with an amount","cups_ok":"No ambiguous cup measures","qty_todo":"## ingredient line(s) do not start with an amount - cooks need quantities","cups_todo":"You use \\"cup\\" - cups vary by country, so consider grams or ml too","steps":"Write the steps, one per line","servings_ok":"Servings (optional) should be a number","servings_bad":"Servings should be a number","source_ok":"Source noted","source_todo":"Add the https:// link to the original","optional":"optional"},"es":{"title":"Ponle un nombre a la receta","ingredients":"Anota los ingredientes, uno por línea","qty_ok":"Cada línea de ingrediente empieza con una cantidad","cups_ok":"Sin medidas ambiguas en tazas","qty_todo":"## línea(s) de ingredientes no empiezan con cantidad - hacen falta cantidades","cups_todo":"Usas \\"taza\\" - las tazas varían por país, considera también gramos o ml","steps":"Escribe los pasos, uno por línea","servings_ok":"Las porciones (opcional) deben ser un número","servings_bad":"Las porciones deben ser un número","source_ok":"Fuente anotada","source_todo":"Agrega el enlace https:// al original","optional":"opcional"},"fr":{"title":"Donnez un nom à la recette","ingredients":"Listez les ingrédients, un par ligne","qty_ok":"Chaque ligne d'ingrédient commence par une quantité","cups_ok":"Pas de mesures ambiguës en tasses","qty_todo":"## ligne(s) d'ingrédients ne commencent pas par une quantité - il faut des quantités","cups_todo":"Vous utilisez \\"tasse\\" - les tasses varient selon les pays, pensez aussi aux grammes ou ml","steps":"Écrivez les étapes, une par ligne","servings_ok":"Les portions (facultatif) doivent être un nombre","servings_bad":"Les portions doivent être un nombre","source_ok":"Source notée","source_todo":"Ajoutez le lien https:// vers l'original","optional":"facultatif"}}`;
+const CAPTURE_CHECK_STRINGS_DATA: Record<'en' | 'es' | 'fr', Record<string, string>> = {
+  en: {
+    title: 'Give the recipe a name',
+    ingredients: 'List the ingredients, one per line',
+    qty_ok: 'Every ingredient line starts with an amount',
+    cups_ok: 'No ambiguous cup measures',
+    qty_todo: '## ingredient line(s) do not start with an amount - cooks need quantities',
+    cups_todo: 'You use "cup" - cups vary by country, so consider grams or ml too',
+    steps: 'Write the steps, one per line',
+    servings_ok: 'Servings (optional) should be a number',
+    servings_bad: 'Servings should be a number',
+    source_ok: 'Source noted',
+    source_todo: 'Add the https:// link to the original',
+    optional: 'optional',
+    restored: 'Restored your unsaved draft from this device.',
+    unsaved: 'This device has unsaved changes for this recipe.',
+    restore: 'Restore them',
+    discard: 'Discard',
+  },
+  es: {
+    title: 'Ponle un nombre a la receta',
+    ingredients: 'Anota los ingredientes, uno por línea',
+    qty_ok: 'Cada línea de ingrediente empieza con una cantidad',
+    cups_ok: 'Sin medidas ambiguas en tazas',
+    qty_todo: '## línea(s) de ingredientes no empiezan con cantidad - hacen falta cantidades',
+    cups_todo: 'Usas "taza" - las tazas varían por país, considera también gramos o ml',
+    steps: 'Escribe los pasos, uno por línea',
+    servings_ok: 'Las porciones (opcional) deben ser un número',
+    servings_bad: 'Las porciones deben ser un número',
+    source_ok: 'Fuente anotada',
+    source_todo: 'Agrega el enlace https:// al original',
+    optional: 'opcional',
+    restored: 'Recuperamos tu borrador sin guardar de este dispositivo.',
+    unsaved: 'Este dispositivo tiene cambios sin guardar de esta receta.',
+    restore: 'Recuperarlos',
+    discard: 'Descartar',
+  },
+  fr: {
+    title: 'Donnez un nom à la recette',
+    ingredients: 'Listez les ingrédients, un par ligne',
+    qty_ok: "Chaque ligne d'ingrédient commence par une quantité",
+    cups_ok: 'Pas de mesures ambiguës en tasses',
+    qty_todo: "## ligne(s) d'ingrédients ne commencent pas par une quantité - il faut des quantités",
+    cups_todo: 'Vous utilisez "tasse" - les tasses varient selon les pays, pensez aussi aux grammes ou ml',
+    steps: 'Écrivez les étapes, une par ligne',
+    servings_ok: 'Les portions (facultatif) doivent être un nombre',
+    servings_bad: 'Les portions doivent être un nombre',
+    source_ok: 'Source notée',
+    source_todo: "Ajoutez le lien https:// vers l'original",
+    optional: 'facultatif',
+    restored: 'Votre brouillon non enregistré sur cet appareil a été restauré.',
+    unsaved: 'Cet appareil a des modifications non enregistrées pour cette recette.',
+    restore: 'Les restaurer',
+    discard: 'Supprimer',
+  },
+};
+export const CAPTURE_CHECK_STRINGS = JSON.stringify(CAPTURE_CHECK_STRINGS_DATA);
+
+/**
+ * Pure helpers used by the capture script. Kept as plain ES5 source (String.raw,
+ * so regex backslashes stay literal) and exported so tests can evaluate them.
+ *  - captureDecide: what to do with an autosaved copy on load:
+ *    'none' | 'restore' (server form is blank: put the copy back) | 'offer' (ask first).
+ *  - mergeIngredientLine: a quick-choice answer replaces the existing line for
+ *    the same ingredient ("salt" -> "1 tsp salt") instead of adding a duplicate.
+ */
+export const CAPTURE_HELPERS_JS = String.raw`
+function captureNorm(v) { return String(v == null ? '' : v).replace(/\r/g, '').trim(); }
+function captureIsBlank(f) {
+  return ['title', 'intro', 'ingredients', 'steps'].every(function (n) { return !captureNorm(f && f[n]); });
+}
+function captureSame(a, b, names) {
+  return names.every(function (n) { return captureNorm(a && a[n]) === captureNorm(b && b[n]); });
+}
+function captureDecide(saved, current, names, now, maxAgeMs) {
+  if (!saved || typeof saved !== 'object' || !saved.f || typeof saved.f !== 'object' || typeof saved.at !== 'number') return 'none';
+  if (now - saved.at > maxAgeMs) return 'none';
+  if (captureIsBlank(saved.f) || captureSame(saved.f, current, names)) return 'none';
+  return captureIsBlank(current) ? 'restore' : 'offer';
+}
+function ingredientCore(line) {
+  var s = String(line == null ? '' : line).toLowerCase().replace(/\s+/g, ' ').trim();
+  s = s.replace(/^[0-9\u00BC-\u00BE\u2150-\u215E][0-9\u00BC-\u00BE\u2150-\u215E.,\/\s-]*/, '');
+  s = s.replace(/^(?:kg|g|mg|ml|cl|dl|l|oz|lbs?|cups?|tbsps?|tsps?|tablespoons?|teaspoons?|tazas?|cdas?|cdtas?|cucharadas?|cucharaditas?|tasses?|c\.\s?à\s?[sc]\.?|cuill[eè]res?(?: à (?:soupe|café))?|pinch(?:es)?|pizcas?|pinc[ée]es?|cloves?|dientes?|gousses?|cans?|latas?|bo[iî]tes?|pieces?|piezas?|morceaux?)\.?(?=\s|$)\s*/, '');
+  s = s.replace(/^(?:of|de|d['’])\s*/, '');
+  return s.replace(/\s*[,(;].*$/, '').trim();
+}
+function mergeIngredientLine(text, answer, target) {
+  var ans = String(answer == null ? '' : answer).trim();
+  var src = String(text == null ? '' : text);
+  if (!ans) return src;
+  var lines = src.split(/\r?\n/);
+  var tgt = String(target == null ? '' : target).replace(/\s+/g, ' ').trim().toLowerCase();
+  var ansCore = ingredientCore(ans);
+  var hit = -1;
+  for (var i = 0; i < lines.length; i++) {
+    var l = lines[i].replace(/\s+/g, ' ').trim().toLowerCase();
+    if (!l) continue;
+    if (tgt && l === tgt) { hit = i; break; }
+    if (hit === -1 && ansCore && ingredientCore(l) === ansCore) hit = i;
+  }
+  if (hit !== -1) { lines[hit] = ans; return lines.join('\n'); }
+  var cur = src.replace(/\s+$/, '');
+  return cur ? cur + '\n' + ans : ans;
+}
+`;
 
 export const CAPTURE_CLIENT_SCRIPT = `(function () {
+${CAPTURE_HELPERS_JS}
+  // --- On-device autosave (localStorage; never sent anywhere) -----------------
+  var DRAFT_PREFIX = '2yolks:capture:';
+  var PENDING_KEY = '2yolks:capture:pending';
+  var MAX_AGE = 30 * 24 * 3600 * 1000;
+  var W = typeof window !== 'undefined' ? window : null;
+  function store(kind) {
+    try { var s = W[kind]; var k = DRAFT_PREFIX + 'probe'; s.setItem(k, '1'); s.removeItem(k); return s; } catch (e) { return null; }
+  }
+  var local = store('localStorage');
+  var session = store('sessionStorage');
+  function readSaved(key) {
+    if (!local) return null;
+    try { return JSON.parse(local.getItem(key) || 'null'); } catch (e) { return null; }
+  }
+  function drop(key) { if (local && key) { try { local.removeItem(key); } catch (e) {} } }
+  function takePending() {
+    var p = null;
+    if (session) { try { p = session.getItem(PENDING_KEY); session.removeItem(PENDING_KEY); } catch (e) {} }
+    return p;
+  }
+  (function purgeOld() {
+    if (!local) return;
+    try {
+      var now = Date.now(), dead = [];
+      for (var i = 0; i < local.length; i++) {
+        var k = local.key(i);
+        if (!k || k.indexOf(DRAFT_PREFIX) !== 0) continue;
+        var v = readSaved(k);
+        if (!v || typeof v.at !== 'number' || now - v.at > MAX_AGE) dead.push(k);
+      }
+      dead.forEach(drop);
+    } catch (e) {}
+  })();
+  // "Sent in" page: the draft is with the reviewers now, forget the device copy.
+  var clearEl = document.querySelector('[data-capture-clear]');
+  if (clearEl) {
+    drop(takePending());
+    drop(DRAFT_PREFIX + clearEl.getAttribute('data-capture-clear'));
+  }
+
   var form = document.querySelector('form[data-capture-form]');
   if (!form) return;
   var box = document.querySelector('[data-live-checks]');
@@ -673,9 +820,19 @@ export const CAPTURE_CLIENT_SCRIPT = `(function () {
     var preHint = document.querySelector('[data-preamble-hint]');
     if (preHint) preHint.textContent = labels.__preambleHint;
   }
+  // "Link to the original" only matters for adapted recipes. Visible without
+  // JS; hidden here unless "adapted" is picked (or it carries a server error).
+  function syncSourceLink() {
+    var wrap = form.querySelector('[data-source-link]');
+    if (!wrap) return;
+    var urlEl = field('source_url');
+    var hasErr = !!urlEl && urlEl.getAttribute('aria-invalid') === 'true';
+    wrap.hidden = field('source_kind').value !== 'adapted' && !hasErr;
+  }
   function run() {
     var T = ALL[lang()];
     localizeChrome();
+    syncSourceLink();
     var title = (field('title').value || '').trim();
     set('title', title.length >= 3 ? 'ok' : title.length ? 'todo' : 'idle', T.title);
     var ings = lines(field('ingredients').value || '');
@@ -701,9 +858,125 @@ export const CAPTURE_CLIENT_SCRIPT = `(function () {
     if (url) { try { var u = new URL(url); urlOk = u.protocol === 'https:' && u.hostname.indexOf('.') > 0; } catch (e) { urlOk = false; } }
     set('source', !adapted ? 'ok' : urlOk ? 'ok' : url ? 'todo' : 'idle', !adapted ? T.source_ok : T.source_todo);
   }
-  form.addEventListener('input', run);
-  form.addEventListener('change', run);
+
+  var FIELDS = ['category', 'title', 'locale', 'intro', 'ingredients', 'steps', 'prep', 'cook', 'servings', 'display_name', 'source_kind', 'source_url'];
+  var idEl = form.querySelector('input[name="id"]');
+  var KEY = DRAFT_PREFIX + (idEl && idEl.value ? idEl.value : 'new');
+  function readForm() {
+    var o = {};
+    FIELDS.forEach(function (n) { var el = field(n); if (el) o[n] = el.value; });
+    return o;
+  }
+  function writeForm(o) {
+    FIELDS.forEach(function (n) { var el = field(n); if (el && typeof o[n] === 'string') el.value = o[n]; });
+    run();
+  }
+  var saveTimer = null;
+  function persistNow() {
+    if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+    if (!local) return;
+    var f = readForm();
+    try {
+      if (captureIsBlank(f)) local.removeItem(KEY);
+      else local.setItem(KEY, JSON.stringify({ v: 1, at: Date.now(), f: f }));
+    } catch (e) {}
+  }
+  function persistSoon() {
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(persistNow, 400);
+  }
+  function changed() { run(); persistSoon(); }
+
+  // A successful save lands on ?saved=1: drop the copy that was just stored on
+  // the server. Any other load means the last submit did not go through.
+  var pending = takePending();
+  var justSaved = /[?&]saved=1(?:&|$)/.test(W && W.location ? W.location.search : '');
+  if (justSaved) { drop(pending); drop(KEY); }
+
+  function showDraftNotice(text, actions) {
+    var n = document.createElement('div');
+    n.className = 'ok draft-notice';
+    n.setAttribute('role', 'status');
+    var span = document.createElement('span');
+    span.textContent = text;
+    n.appendChild(span);
+    actions.forEach(function (a) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'quiet';
+      b.textContent = a[0];
+      b.addEventListener('click', function () {
+        a[1]();
+        if (n.parentNode) n.parentNode.removeChild(n);
+      });
+      n.appendChild(b);
+    });
+    var anchor = document.querySelector('[data-ai-panel]') || form;
+    anchor.parentNode.insertBefore(n, anchor);
+  }
+  if (!justSaved) {
+    var TS = ALL[lang()];
+    var savedCopy = readSaved(KEY);
+    var serverCopy = readForm();
+    var decision = captureDecide(savedCopy, serverCopy, FIELDS, Date.now(), MAX_AGE);
+    if (decision === 'restore') {
+      writeForm(savedCopy.f);
+      showDraftNotice(TS.restored, [[TS.discard, function () { writeForm(serverCopy); drop(KEY); }]]);
+    } else if (decision === 'offer') {
+      showDraftNotice(TS.unsaved, [
+        [TS.restore, function () { writeForm(savedCopy.f); persistNow(); }],
+        [TS.discard, function () { drop(KEY); }]
+      ]);
+    }
+  }
+
+  form.addEventListener('input', changed);
+  form.addEventListener('change', changed);
+  if (W && W.addEventListener) W.addEventListener('pagehide', function () { if (saveTimer) persistNow(); });
+  if (document.addEventListener) document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'hidden' && saveTimer) persistNow(); });
   run();
+
+  // One clear finish: "Send in for review" needs the permission box. Say so
+  // right next to it before a round trip (the server enforces it regardless).
+  var attestEl = field('attest');
+  function attestError(show) {
+    if (!attestEl) return;
+    var p = document.getElementById('err-attest');
+    if (!show) {
+      attestEl.removeAttribute('aria-invalid');
+      attestEl.removeAttribute('aria-describedby');
+      if (p && p.parentNode) p.parentNode.removeChild(p);
+      return;
+    }
+    if (!p) {
+      p = document.createElement('p');
+      p.className = 'field-err';
+      p.id = 'err-attest';
+      var lab = attestEl.closest('label') || attestEl;
+      lab.parentNode.insertBefore(p, lab.nextSibling);
+    }
+    p.textContent = attestEl.getAttribute('data-err-attest') || '';
+    attestEl.setAttribute('aria-invalid', 'true');
+    attestEl.setAttribute('aria-describedby', 'err-attest');
+  }
+  if (attestEl) attestEl.addEventListener('change', function () { if (attestEl.checked) attestError(false); });
+  form.addEventListener('submit', function (e) {
+    var btn = e.submitter;
+    if (btn && btn.value === 'submit' && attestEl && !attestEl.checked) {
+      e.preventDefault();
+      attestError(true);
+      attestEl.focus();
+      return;
+    }
+    persistNow();
+    if (session) { try { session.setItem(PENDING_KEY, KEY); } catch (err) {} }
+  });
+
+  // Server-side validation errors: bring the first offending field into view.
+  var firstInvalid = form.querySelector('[aria-invalid="true"]');
+  if (firstInvalid) {
+    try { firstInvalid.focus({ preventScroll: true }); firstInvalid.scrollIntoView({ block: 'center' }); } catch (e) { firstInvalid.focus(); }
+  }
 
   // Multimodal AI Kitchen Co-Editor (photo + voice note + rough notes -> structured draft & polish)
   var aiPanel = document.querySelector('[data-ai-panel]');
@@ -723,12 +996,29 @@ export const CAPTURE_CLIENT_SCRIPT = `(function () {
     var improvementsList = aiPanel.querySelector('[data-ai-improvements]');
     var questionsWrap = aiPanel.querySelector('[data-ai-questions-wrap]');
     var questionsList = aiPanel.querySelector('[data-ai-questions]');
+    function msg(name, fallback) { return aiPanel.getAttribute('data-msg-' + name) || fallback; }
 
     var attachedImage = null;
     var attachedAudio = null;
     var undoSnapshot = null;
     var recorder = null;
     var audioChunks = [];
+
+    function setStatus(kind, text, withSignIn) {
+      if (!statusEl) return;
+      statusEl.hidden = false;
+      statusEl.className = kind;
+      statusEl.textContent = text;
+      if (withSignIn) {
+        statusEl.appendChild(document.createTextNode(' '));
+        var a = document.createElement('a');
+        a.href = aiPanel.getAttribute('data-signin-url') || '/account';
+        a.target = '_blank';
+        a.rel = 'noopener';
+        a.textContent = msg('signin', 'Sign in again');
+        statusEl.appendChild(a);
+      }
+    }
 
     function snapshotForm() {
       var names = ['category', 'title', 'locale', 'intro', 'ingredients', 'steps', 'prep', 'cook', 'servings'];
@@ -746,7 +1036,7 @@ export const CAPTURE_CLIENT_SCRIPT = `(function () {
         var el = field(n);
         if (el) el.value = snap[n];
       });
-      run();
+      changed();
     }
 
     if (undoBtn) {
@@ -844,13 +1134,13 @@ export const CAPTURE_CLIENT_SCRIPT = `(function () {
         var mc = /\\d+/.exec(answer);
         if (mc && field('cook')) field('cook').value = mc[0];
       } else if (q.field === 'ingredients' && field('ingredients')) {
-        var curIng = field('ingredients').value.trim();
-        field('ingredients').value = curIng ? curIng + '\\n' + answer : answer;
+        // Replace the existing line for the same ingredient instead of adding a duplicate.
+        field('ingredients').value = mergeIngredientLine(field('ingredients').value, answer, q.target);
       } else if (field('steps')) {
         var curSt = field('steps').value.trim();
         field('steps').value = curSt ? curSt + '\\n' + answer : answer;
       }
-      run();
+      changed();
     }
 
     function renderFeedback(data) {
@@ -902,14 +1192,23 @@ export const CAPTURE_CLIENT_SCRIPT = `(function () {
       }
     }
 
+    function aiError(text, sessionEnded) {
+      var e = new Error(text);
+      e.userFacing = true;
+      e.sessionEnded = !!sessionEnded;
+      return e;
+    }
+
     function callAi(mode) {
       var endpoint = aiPanel.getAttribute('data-ai-endpoint') || '/account/recipes/ai-assist';
-      var workingMsg = aiPanel.getAttribute('data-msg-working') || 'Working…';
+      var workingMsg = msg('working', 'Working…');
+      var genericMsg = msg('err-generic', 'Something went wrong. Please try again.');
+      var sessionMsg = msg('err-session', 'Your session ended. Your draft is saved on this device.');
       var doneMsg = mode === 'polish'
-        ? (aiPanel.getAttribute('data-msg-done-polish') || 'Draft polished.')
+        ? msg('done-polish', 'Draft polished.')
         : mode === 'translate'
-          ? (aiPanel.getAttribute('data-msg-done-translate') || 'Draft translated.')
-          : (aiPanel.getAttribute('data-msg-done-extract') || 'Draft structured.');
+          ? msg('done-translate', 'Draft translated.')
+          : msg('done-extract', 'Draft structured.');
       var targetLocale = targetLangSel ? targetLangSel.value : '';
       var notes = notesInput ? notesInput.value.trim() : '';
       var draft = {
@@ -923,24 +1222,19 @@ export const CAPTURE_CLIENT_SCRIPT = `(function () {
         servings: field('servings') ? field('servings').value.trim() : ''
       };
       if (!attachedImage && !attachedAudio && !notes && !draft.ingredients.length && !draft.steps.length) {
-        if (statusEl) {
-          statusEl.className = 'err';
-          statusEl.textContent = aiPanel.getAttribute('data-msg-err-input') || 'Add notes, photo, or draft lines first.';
-          statusEl.hidden = false;
-        }
+        setStatus('err', msg('err-input', 'Add notes, photo, or draft lines first.'));
         return;
       }
+      // Keep the device copy current: if the session has ended, nothing is lost.
+      persistNow();
       if (extractBtn) extractBtn.disabled = true;
       if (polishBtn) polishBtn.disabled = true;
       if (translateBtn) translateBtn.disabled = true;
-      if (statusEl) {
-        statusEl.className = 'ok';
-        statusEl.textContent = workingMsg;
-        statusEl.hidden = false;
-      }
+      setStatus('ok', workingMsg);
       fetch(endpoint, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
         body: JSON.stringify({
           mode: mode,
           uiLang: lang(),
@@ -952,10 +1246,22 @@ export const CAPTURE_CLIENT_SCRIPT = `(function () {
           draft: draft
         })
       })
-        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); })
+        .then(function (r) {
+          var ct = (r.headers.get('content-type') || '').toLowerCase();
+          var isJson = ct.indexOf('application/json') !== -1;
+          // 401, or a redirect that ended on an HTML sign-in page: the session is gone.
+          if (r.status === 401 || (r.redirected && !isJson)) throw aiError(sessionMsg, true);
+          if (!isJson) throw aiError(genericMsg);
+          return r.json().then(function (j) { return { ok: r.ok, body: j }; }, function () { throw aiError(genericMsg); });
+        })
         .then(function (res) {
           if (!res.ok || !res.body || !res.body.ok) {
-            throw new Error((res.body && res.body.error) || 'AI error');
+            if (res.body && res.body.session) throw aiError(res.body.error || sessionMsg, true);
+            throw aiError((res.body && res.body.error) || genericMsg);
+          }
+          // Only a real (model) translation may switch the recipe language.
+          if (mode === 'translate' && res.body.provider !== 'gemini') {
+            throw aiError(msg('translate-unavailable', genericMsg));
           }
           undoSnapshot = snapshotForm();
           if (undoBtn) undoBtn.hidden = false;
@@ -973,20 +1279,12 @@ export const CAPTURE_CLIENT_SCRIPT = `(function () {
           if (d.cookMinutes != null && d.cookMinutes > 0 && field('cook')) field('cook').value = String(d.cookMinutes);
           if (d.servings != null && d.servings > 0 && field('servings')) field('servings').value = String(d.servings);
           if (mode === 'translate' && targetLocale && field('locale')) field('locale').value = targetLocale;
-          run();
+          changed();
           renderFeedback(res.body);
-          if (statusEl) {
-            statusEl.className = 'ok';
-            statusEl.textContent = doneMsg;
-            statusEl.hidden = false;
-          }
+          setStatus('ok', res.body.provider === 'deterministic' ? doneMsg + ' ' + msg('fallback', '') : doneMsg);
         })
         .catch(function (err) {
-          if (statusEl) {
-            statusEl.className = 'err';
-            statusEl.textContent = err && err.message ? err.message : 'Error';
-            statusEl.hidden = false;
-          }
+          setStatus('err', err && err.userFacing ? err.message : genericMsg, !!(err && err.sessionEnded));
         })
         .then(function () {
           if (extractBtn) extractBtn.disabled = false;

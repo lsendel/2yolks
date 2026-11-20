@@ -13,7 +13,7 @@ import { createDb, hasUserSharedRecipe, recipes, recipeLocales, sources, users }
 import { sendMail, type MailEnv } from './email';
 import { parseRecipeText, parseJsonLdRecipe, type ParsedRecipe } from './parse';
 import { safeFetchText, SsrfError } from './ssrf';
-import { assistRecipe, reserveAiBudget, sanitizeMediaPart, DEFAULT_AI_DAILY_CAP, type AiAssistRequest } from './aiRecipe';
+import { assistRecipe, aiUnavailableReason, AiUnavailableError, reserveAiBudget, sanitizeMediaPart, DEFAULT_AI_DAILY_CAP, type AiAssistRequest } from './aiRecipe';
 import { validateImage } from './imageValidation';
 import {
   build2YolksZelutoLinks,
@@ -37,6 +37,14 @@ export type AccountBindings = MailEnv & {
   GEMINI_API_KEY?: string;
   /** Optional daily cap override for AI invocations (defaults to 40/day). */
   AI_DAILY_CAP?: string;
+  /**
+   * Optional override for the site-wide daily sign-in code budget (positive
+   * integer, clamped to MAX_CODES_PER_DAY; anything else falls back to
+   * CODES_PER_DAY = 32). The default stays low on purpose: the Resend free
+   * plan (100/day, 3,000/month) is shared with other sites, so raise this only
+   * once the mail plan allows it.
+   */
+  CODES_PER_DAY?: string;
   /** Optional Workers rate-limit bindings (approximate, per location). Absent = skipped. */
   RL_AUTH?: RateLimiter;
   RL_SUBMIT?: RateLimiter;
@@ -51,13 +59,22 @@ export const SESSION_DAYS = 30;
 const CODE_TTL_MS = 10 * 60_000;
 export const MAX_ATTEMPTS = 5;
 export const CODES_PER_EMAIL_10MIN = 3;
-export const CODES_PER_DAY = 32; // login codes per rolling 24h, counted by kind. The Resend free plan (100/day, 3,000/month) is shared with other sites
-export const NOTICES_PER_DAY = 8; // review notices per rolling 24h, counted by kind; 32 + 8 = 40/day hard total
+export const CODES_PER_DAY = 32; // default login codes per rolling 24h, counted by kind. The Resend free plan (100/day, 3,000/month) is shared with other sites
+export const MAX_CODES_PER_DAY = 1000; // ceiling for the CODES_PER_DAY env override
+export const NOTICES_PER_DAY = 8; // review notices per rolling 24h, counted by kind; 32 + 8 = 40/day hard total at the default code budget
 export const MAX_DRAFTS_PER_USER = 50; // active (not removed) drafts
 export const MAX_ROWS_PER_USER = 500; // lifetime rows incl. removed ones, so remove/recreate loops cannot grow storage forever
 
 export const accountApp = new Hono<{ Bindings: AccountBindings; Variables: { user: { id: string; email: string; displayName: string | null } } }>();
 type Ctx = Context<{ Bindings: AccountBindings; Variables: { user: { id: string; email: string; displayName: string | null } } }>;
+
+/** Site-wide daily sign-in code budget: CODES_PER_DAY env override (positive integer, clamped) or the default 32. */
+export function codesPerDay(env: { CODES_PER_DAY?: string }): number {
+  const raw = typeof env.CODES_PER_DAY === 'string' ? env.CODES_PER_DAY.trim() : '';
+  if (!/^\d{1,9}$/.test(raw)) return CODES_PER_DAY;
+  const n = Number(raw);
+  return n >= 1 ? Math.min(n, MAX_CODES_PER_DAY) : CODES_PER_DAY;
+}
 
 // The whole account UI is localized en/es/fr. The language travels as ?lang=
 // on every link, form action and redirect (English default keeps bare URLs).
@@ -250,7 +267,7 @@ accountApp.post('/code', async (c) => {
   ).bind(id, email, await sha256Hex(`${email}:${code}`), now + CODE_TTL_MS, now, email, now - CODE_TTL_MS, CODES_PER_EMAIL_10MIN).run();
   if (ins.meta.changes !== 1) return page(c, t.titleSlowDown, signInForm(t, lang, banner('err', t.errTooManyCodes), next), 429, next);
   // Then the site-wide daily mail budget (atomic conditional INSERT). No budget: the code is never sent, so kill it.
-  if (!(await reserveMail(c.env.DB, 'code', CODES_PER_DAY))) {
+  if (!(await reserveMail(c.env.DB, 'code', codesPerDay(c.env)))) {
     await c.env.DB.prepare('UPDATE auth_codes SET used = 1 WHERE id = ?').bind(id).run();
     return page(c, t.titleBusy, signInForm(t, lang, banner('err', t.errBusy), next), 503, next);
   }
@@ -329,6 +346,11 @@ accountApp.post('/logout', async (c) => {
 // Everything below needs a signed-in user.
 accountApp.use('/recipes/*', async (c, nextFn) => {
   if (!c.get('user')) {
+    // The AI co-editor is called with fetch(): answer JSON 401 (not an HTML
+    // sign-in redirect) so the page can say "session ended" and keep the draft.
+    if (c.req.path.endsWith('/recipes/ai-assist')) {
+      return c.json({ ok: false, session: true, error: accountStrings(langOf(c)).aiErrSession }, 401, { 'cache-control': 'no-store' });
+    }
     const lang = langOf(c);
     const nextPath = c.req.method === 'GET' ? safeNextPath(new URL(c.req.url).pathname) : null;
     const target = nextPath
@@ -392,9 +414,45 @@ function captureDataIslands(): string {
   return `<script type="application/json" id="capture-check-strings">${json(JSON.parse(CAPTURE_CHECK_STRINGS))}</script><script type="application/json" id="capture-cat-labels">${json(catLabels)}</script>`;
 }
 
-function renderForm(s: FormState, t: AccountStrings, acctLang: string, errors: string[] = [], note = '', importOn = false): string {
-  const errBox = errors.length ? banner('err', `<strong>${t.fixThese}</strong><ul>${errors.map((e) => `<li>${esc(e)}</li>`).join('')}</ul>`) : '';
-  const aiPanel = `<div class="panel ai-panel" data-ai-panel data-ai-endpoint="/account/recipes/ai-assist${qs(acctLang)}" data-msg-working="${esc(t.aiWorking)}" data-msg-done-extract="${esc(t.aiDoneExtract)}" data-msg-done-polish="${esc(t.aiDonePolish)}" data-msg-done-translate="${esc(t.aiDoneTranslate)}" data-msg-err-input="${esc(t.aiErrInput)}">
+/** Form fields that can carry an inline error (name attribute; the control id is `f-<name>`). */
+export type FormField = 'category' | 'title' | 'locale' | 'intro' | 'ingredients' | 'steps' | 'prep' | 'cook' | 'servings' | 'display_name' | 'source_kind' | 'source_url' | 'attest';
+export type FieldError = { field?: FormField; msg: string };
+
+/** Map a contracts-validator failure (path + raw message) to the form control it belongs to. */
+export function fieldForValidatorPath(path: string, message: string): FormField | undefined {
+  const p = path.replace(/^locales\[\d+\]\.?/, '');
+  if (p.startsWith('title') || p.startsWith('slug')) return 'title';
+  if (p.startsWith('intro')) return 'intro';
+  if (p.startsWith('ingredients')) return 'ingredients';
+  if (p.startsWith('steps')) return 'steps';
+  if (p.startsWith('category')) return 'category';
+  if (p === 'times' || ['prepMinutes', 'cookMinutes', 'baseServings'].some((k) => p.startsWith(k))) {
+    const key = p === 'times' ? message : p;
+    if (key.startsWith('prepMinutes')) return 'prep';
+    if (key.startsWith('cookMinutes')) return 'cook';
+    if (key.startsWith('baseServings')) return 'servings';
+    return undefined;
+  }
+  if (p.startsWith('source.url')) return 'source_url';
+  if (p.startsWith('source.name')) return 'display_name';
+  if (p.startsWith('source')) return 'source_kind';
+  if (p.startsWith('originCountry') || p.startsWith('country') || p.startsWith('lang')) return 'locale';
+  return undefined;
+}
+
+const removeDraftForm = (t: AccountStrings, lang: string, id: string) =>
+  `<form method="post" action="/account/recipes/${esc(id)}/delete${qs(lang)}"><button class="quiet" type="submit">${t.removeDraft}</button></form>`;
+
+function renderForm(s: FormState, t: AccountStrings, acctLang: string, errors: ReadonlyArray<string | FieldError> = [], note = '', importOn = false, extras = ''): string {
+  // Errors show twice: a linked summary at the top (role=alert) and inline
+  // next to the offending control (aria-invalid + aria-describedby).
+  const errs: FieldError[] = errors.map((e) => (typeof e === 'string' ? { msg: e } : e));
+  const byField = new Map<FormField, string[]>();
+  for (const e of errs) if (e.field) byField.set(e.field, [...(byField.get(e.field) ?? []), e.msg]);
+  const inv = (f: FormField) => (byField.has(f) ? ` aria-invalid="true" aria-describedby="err-${f}"` : '');
+  const ferr = (f: FormField) => (byField.has(f) ? `<p class="field-err" id="err-${f}">${byField.get(f)!.map((m) => esc(m)).join(' ')}</p>` : '');
+  const errBox = errs.length ? banner('err', `<strong>${t.fixThese}</strong><ul>${errs.map((e) => `<li>${e.field ? `<a href="#f-${e.field}">${esc(e.msg)}</a>` : esc(e.msg)}</li>`).join('')}</ul>`) : '';
+  const aiPanel = `<div class="panel ai-panel" data-ai-panel data-ai-endpoint="/account/recipes/ai-assist${qs(acctLang)}" data-msg-working="${esc(t.aiWorking)}" data-msg-done-extract="${esc(t.aiDoneExtract)}" data-msg-done-polish="${esc(t.aiDonePolish)}" data-msg-done-translate="${esc(t.aiDoneTranslate)}" data-msg-err-input="${esc(t.aiErrInput)}" data-msg-err-generic="${esc(t.errGeneric)}" data-msg-err-session="${esc(t.aiErrSession)}" data-msg-signin="${esc(t.aiSignInLink)}" data-signin-url="/account${qs(acctLang)}" data-msg-translate-unavailable="${esc(t.aiErrTranslateUnavailable)}" data-msg-fallback="${esc(t.aiFallbackNote)}">
 <h2>${t.aiPanelTitle}</h2>
 <p class="hint">${t.aiPanelLead}</p>
 <div class="ai-grid">
@@ -412,7 +470,7 @@ function renderForm(s: FormState, t: AccountStrings, acctLang: string, errors: s
     <button type="button" class="quiet" data-ai-translate>${t.aiTranslateBtn}</button>
     <button type="button" class="quiet" data-ai-undo hidden>${t.aiUndoBtn}</button>
   </div>
-  <div data-ai-status hidden></div>
+  <div data-ai-status role="status" aria-live="polite" hidden></div>
   <div class="ai-feedback" data-ai-improvements-wrap hidden><h3>${t.aiImprovementsHeading}</h3><ul data-ai-improvements></ul></div>
   <div class="ai-feedback" data-ai-questions-wrap hidden><h3>${t.aiQuestionsHeading}</h3><div data-ai-questions></div></div>
 </div></div>`;
@@ -421,22 +479,29 @@ function renderForm(s: FormState, t: AccountStrings, acctLang: string, errors: s
 ${importOn ? `<form method="post" action="/account/recipes/import${qs(acctLang)}"><label>${t.importLabel}<small>${t.importHint}</small><input type="url" name="url" maxlength="2000" placeholder="https://"></label><button class="quiet" type="submit">${t.importButton}</button></form>` : `<p class="hint"><strong>${t.importOffName}</strong> ${t.importOffText}</p>`}</div>`;
   const lang = acctLang;
   const ft = FORM_STRINGS[lang]!;
+  // Finish: the permission box sits right next to "Send in for review".
+  // "Save private draft" comes first in DOM order so Enter in a text field
+  // saves a draft and never sends anything in by accident.
+  const finish = `<div class="panel finish" data-finish>
+<h2>${t.finishTitle}</h2><p class="hint">${t.finishHint}</p>
+<label class="check"><input type="checkbox" name="attest" value="1" id="f-attest" data-err-attest="${esc(t.errAttestToSubmit)}"${s.attest ? ' checked' : ''}${inv('attest')}><span>${t.attestText}</span></label>${ferr('attest')}
+<div class="finish-actions"><button class="quiet" type="submit" name="intent" value="save">${t.saveDraft}</button><button type="submit" name="intent" value="submit" data-submit-review>${t.submitButton}</button></div>
+</div>`;
   return `<h1>${s.id ? t.formTitleEdit : t.formTitleNew}</h1><p class="lead">${t.formLead}</p>${note}${errBox}${aiPanel}${entry}
 <form method="post" action="/account/recipes/save${qs(acctLang)}" data-capture-form>${s.id ? `<input type="hidden" name="id" value="${esc(s.id)}">` : ''}
-<label><span data-category-prompt>${esc(ft.prompt)}</span><select name="category">${categoryOptions(s.category, lang)}</select></label>
-<label>${t.labelTitle}<input type="text" name="title" value="${esc(s.title)}" maxlength="200" required></label>
-<label>${t.labelLanguage}<select name="locale">${localeOptions(s.locale)}</select></label>
-<label><span data-preamble-label>${esc(ft.preamble)}</span> <small data-preamble-hint>${esc(ft.preambleHint)}</small><textarea name="intro" maxlength="2000" style="min-height:4rem">${esc(s.intro)}</textarea></label>
-<label>${t.labelIngredients}<small>${t.ingredientsHint}</small><textarea name="ingredients" required>${esc(s.ingredients)}</textarea></label>
-<label>${t.labelSteps}<small>${t.stepsHint}</small><textarea name="steps" required>${esc(s.steps)}</textarea></label>
-<div class="row"><label>${t.labelPrep}<input type="number" name="prep" min="0" max="20000" value="${esc(s.prep)}"></label><label>${t.labelCook}<input type="number" name="cook" min="0" max="20000" value="${esc(s.cook)}"></label></div>
-<label>${t.labelServings} <small>${t.optional}</small><input type="number" name="servings" min="1" max="1000" step="any" value="${esc(s.servings)}"></label>
-<label>${t.labelAuthor}<input type="text" name="display_name" value="${esc(s.displayName)}" maxlength="80" required></label>
-<label>${t.labelSource}<select name="source_kind"><option value="original"${s.sourceKind === 'original' ? ' selected' : ''}>${t.sourceOriginal}</option><option value="adapted"${s.sourceKind === 'adapted' ? ' selected' : ''}>${t.sourceAdapted}</option></select></label>
-<label>${t.labelSourceLink} <small>${t.sourceLinkHint}</small><input type="url" name="source_url" value="${esc(s.sourceUrl)}" maxlength="2000" placeholder="https://"></label>
-<label class="check"><input type="checkbox" name="attest" value="1"${s.attest ? ' checked' : ''}><span>${t.attestText}</span></label>
+<label><span data-category-prompt>${esc(ft.prompt)}</span><select name="category" id="f-category"${inv('category')}>${categoryOptions(s.category, lang)}</select></label>${ferr('category')}
+<label>${t.labelTitle}<input type="text" name="title" id="f-title" value="${esc(s.title)}" maxlength="200" required${inv('title')}></label>${ferr('title')}
+<label>${t.labelLanguage}<select name="locale" id="f-locale"${inv('locale')}>${localeOptions(s.locale)}</select></label>${ferr('locale')}
+<label><span data-preamble-label>${esc(ft.preamble)}</span> <small data-preamble-hint>${esc(ft.preambleHint)}</small><textarea name="intro" id="f-intro" maxlength="2000" style="min-height:4rem"${inv('intro')}>${esc(s.intro)}</textarea></label>${ferr('intro')}
+<label>${t.labelIngredients}<small>${t.ingredientsHint}</small><textarea name="ingredients" id="f-ingredients" required${inv('ingredients')}>${esc(s.ingredients)}</textarea></label>${ferr('ingredients')}
+<label>${t.labelSteps}<small>${t.stepsHint}</small><textarea name="steps" id="f-steps" required${inv('steps')}>${esc(s.steps)}</textarea></label>${ferr('steps')}
+<div class="row"><label>${t.labelPrep} <small>${t.optional}</small><input type="number" name="prep" id="f-prep" min="0" max="20000" value="${esc(s.prep)}"${inv('prep')}></label><label>${t.labelCook} <small>${t.optional}</small><input type="number" name="cook" id="f-cook" min="0" max="20000" value="${esc(s.cook)}"${inv('cook')}></label></div>${ferr('prep')}${ferr('cook')}
+<label>${t.labelServings} <small>${t.optional}</small><input type="number" name="servings" id="f-servings" min="1" max="1000" step="any" value="${esc(s.servings)}"${inv('servings')}></label>${ferr('servings')}
+<label>${t.labelAuthor}<input type="text" name="display_name" id="f-display_name" value="${esc(s.displayName)}" maxlength="80" required${inv('display_name')}></label>${ferr('display_name')}
+<label>${t.labelSource}<select name="source_kind" id="f-source_kind"${inv('source_kind')}><option value="original"${s.sourceKind === 'original' ? ' selected' : ''}>${t.sourceOriginal}</option><option value="adapted"${s.sourceKind === 'adapted' ? ' selected' : ''}>${t.sourceAdapted}</option></select></label>${ferr('source_kind')}
+<div class="field" data-source-link><label>${t.labelSourceLink} <small>${t.sourceLinkHint}</small><input type="url" name="source_url" id="f-source_url" value="${esc(s.sourceUrl)}" maxlength="2000" placeholder="https://"${inv('source_url')}></label>${ferr('source_url')}</div>
 <ul class="live-checks" data-live-checks><li data-check="title"></li><li data-check="ingredients"></li><li data-check="qty"></li><li data-check="cups"></li><li data-check="steps"></li><li data-check="servings"></li><li data-check="source"></li></ul>
-<button type="submit">${t.saveDraft}</button></form>${captureDataIslands()}<script>${CAPTURE_CLIENT_SCRIPT}</script>`;
+${finish}</form>${extras}${captureDataIslands()}<script>${CAPTURE_CLIENT_SCRIPT}</script>`;
 }
 
 export function parseForm(form: Record<string, unknown>, user: { displayName: string | null }): FormState {
@@ -485,9 +550,9 @@ export async function loadOwned(c: Ctx, id: string) {
   return rows[0] ?? null;
 }
 
-const rf = (c: Ctx, s: FormState, errors: string[] = [], note = '') => {
+const rf = (c: Ctx, s: FormState, errors: ReadonlyArray<string | FieldError> = [], note = '', extras = '') => {
   const lang = langOf(c);
-  return renderForm(s, accountStrings(lang), lang, errors, note, c.env.IMPORT_ENABLED === 'true');
+  return renderForm(s, accountStrings(lang), lang, errors, note, c.env.IMPORT_ENABLED === 'true', extras);
 };
 
 accountApp.get('/recipes/new', (c) => { const t = accountStrings(langOf(c)); return page(c, t.formTitleNew, rf(c, blank(c.get('user')))); });
@@ -537,16 +602,27 @@ accountApp.post('/recipes/ai-assist', async (c) => {
     return c.json({ ok: false, error: t.aiErrInput }, 400, { 'cache-control': 'no-store' });
   }
 
+  const req: AiAssistRequest = { mode, uiLang, recipeLocale, targetLocale, notes, image, audio, draft };
+  // Honest fallback: without GEMINI_API_KEY we cannot translate or read a
+  // photo/voice note. Say so before spending budget, never fake a success.
+  const unavailable = aiUnavailableReason(req, c.env.GEMINI_API_KEY);
+  if (unavailable) {
+    return c.json({ ok: false, unavailable, error: unavailable === 'translate' ? t.aiErrTranslateUnavailable : t.aiErrMediaUnavailable }, 503, { 'cache-control': 'no-store' });
+  }
+
   const dailyCap = c.env.AI_DAILY_CAP && Number(c.env.AI_DAILY_CAP) > 0 ? Number(c.env.AI_DAILY_CAP) : DEFAULT_AI_DAILY_CAP;
   if (!(await reserveAiBudget(c.env.DB, user.id, mode, dailyCap))) {
     return c.json({ ok: false, error: t.aiErrBusy }, 429, { 'cache-control': 'no-store' });
   }
 
-  const req: AiAssistRequest = { mode, uiLang, recipeLocale, targetLocale, notes, image, audio, draft };
   try {
     const out = await assistRecipe(req, { apiKey: c.env.GEMINI_API_KEY });
     return c.json({ ok: true, ...out }, 200, { 'cache-control': 'no-store' });
-  } catch {
+  } catch (e) {
+    if (e instanceof AiUnavailableError) {
+      if (e.reason === 'empty') return c.json({ ok: false, error: t.aiErrInput }, 400, { 'cache-control': 'no-store' });
+      return c.json({ ok: false, unavailable: e.reason, error: e.reason === 'translate' ? t.aiErrTranslateUnavailable : t.aiErrMediaUnavailable }, 503, { 'cache-control': 'no-store' });
+    }
     return c.json({ ok: false, error: t.errGeneric }, 503, { 'cache-control': 'no-store' });
   }
 });
@@ -586,27 +662,43 @@ accountApp.get('/recipes/:id/edit', async (c) => {
     attest: !!row.r.attestedAt,
   };
   const saved = c.req.query('saved') ? banner('ok', t.okSaved) : '';
-  const submit = `<form method="post" action="/account/recipes/${esc(row.r.id)}/submit${qs(lang)}"><div class="panel"><h2>${t.submitPanelTitle}</h2><p class="hint">${t.submitPanelHint}${row.r.attestedAt ? '' : t.submitPanelAttestHint}</p><button type="submit"${row.r.attestedAt ? '' : ' disabled'}>${t.submitButton}</button></div></form>
-<form method="post" action="/account/recipes/${esc(row.r.id)}/delete${qs(lang)}"><button class="quiet" type="submit">${t.removeDraft}</button></form>`;
-  return page(c, t.formTitleEdit, rf(c, s, [], saved) + submit);
+  return page(c, t.formTitleEdit, rf(c, s, [], saved, removeDraftForm(t, lang, row.r.id)));
 });
 
 accountApp.post('/recipes/save', async (c) => {
   const user = c.get('user');
   const lang = langOf(c);
   const t = accountStrings(lang);
-  if (await limited(c.env.RL_SUBMIT, c, 'save')) return page(c, t.titleSlowDown, rf(c, blank(user), [t.errTooManyTries]), 429);
+  // Parse first (the body is already capped at 256 KB) so every error page,
+  // including rate limiting, re-renders what the cook typed instead of a blank form.
   const form = await c.req.parseBody();
   const s = parseForm(form, user);
-  const errors: string[] = [];
-  if (!s.displayName) errors.push(t.errAuthorRequired);
-  if (s.sourceKind === 'adapted' && !/^https:\/\//.test(s.sourceUrl)) errors.push(t.errAdaptedHttps);
+  const wantsSubmit = str(form['intent'], 10) === 'submit';
+  const formTitle = s.id ? t.formTitleEdit : t.formTitleNew;
+  const extras = s.id ? removeDraftForm(t, lang, s.id) : '';
+  if (await limited(c.env.RL_SUBMIT, c, 'save') || (wantsSubmit && await limited(c.env.RL_SUBMIT, c, 'submit'))) {
+    return page(c, t.titleSlowDown, rf(c, s, [t.errTooManyTries], '', extras), 429);
+  }
+  const errors: FieldError[] = [];
+  const push = (e: FieldError) => { if (!errors.some((x) => x.field === e.field && x.msg === e.msg)) errors.push(e); };
+  if (!s.displayName) push({ field: 'display_name', msg: t.errAuthorRequired });
+  if (s.sourceKind === 'adapted' && !/^https:\/\//.test(s.sourceUrl)) push({ field: 'source_url', msg: t.errAdaptedHttps });
   const [country, recipeLang] = s.locale.split(':');
-  if (!country || !recipeLang || !(LOCALES[country] ?? []).includes(recipeLang) || !getCountry(country)) errors.push(t.errPickLanguage);
+  const localeOk = !!country && !!recipeLang && (LOCALES[country] ?? []).includes(recipeLang) && !!getCountry(country);
+  if (!localeOk) push({ field: 'locale', msg: t.errPickLanguage });
+  // Sending in always needs the rights attestation (also re-checked in SQL by sendForReview).
+  if (wantsSubmit && !s.attest) push({ field: 'attest', msg: t.errAttestToSubmit });
   const origin = c.env.CANONICAL_ORIGIN ?? new URL(c.req.url).origin;
-  const result = errors.length ? null : validateRecipeSubmission(buildSubmission(s, origin));
-  if (result && !result.ok) for (const f of result.errors) errors.push(validatorMessage(t, f.path, f.message));
-  if (errors.length || !result || !result.ok) return page(c, t.formTitleNew, rf(c, s, errors), 400);
+  // Run the validator whenever the locale is usable so every problem shows at once.
+  const result = localeOk ? validateRecipeSubmission(buildSubmission(s, origin)) : null;
+  if (result && !result.ok) {
+    for (const f of result.errors) {
+      const field = fieldForValidatorPath(f.path, f.message);
+      if (field && errors.some((e) => e.field === field)) continue; // one message per control is enough
+      push({ field, msg: validatorMessage(t, f.path, f.message) });
+    }
+  }
+  if (errors.length || !result || !result.ok) return page(c, formTitle, rf(c, s, errors, '', extras), 400);
 
   const sub = result.value;
   const loc = sub.locales[0]!;
@@ -657,16 +749,22 @@ accountApp.post('/recipes/save', async (c) => {
       return page(c, t.formTitleNew, rf(c, s, [msg]), 400);
     }
   }
+  if (wantsSubmit) {
+    // One clear finish: the draft (with its attestation) is saved above, then sent in here.
+    const row = await loadOwned(c, id);
+    if (!row) return page(c, t.titleNotFound, banner('err', t.errDraftNotFound), 404);
+    return sendForReview(c, row);
+  }
   return c.redirect(`/account/recipes/${id}/edit?saved=1${qsAmp(lang)}`, 303);
 });
 
-accountApp.post('/recipes/:id/submit', async (c) => {
+type OwnedRow = NonNullable<Awaited<ReturnType<typeof loadOwned>>>;
+
+/** Flag an owned draft for human review. Never publishes; needs a saved attestation (checked again in SQL). */
+async function sendForReview(c: Ctx, row: OwnedRow) {
   const user = c.get('user');
   const lang = langOf(c);
   const t = accountStrings(lang);
-  if (await limited(c.env.RL_SUBMIT, c, 'submit')) return page(c, t.titleSlowDown, banner('err', t.errTooManyTries), 429);
-  const row = await loadOwned(c, c.req.param('id'));
-  if (!row) return page(c, t.titleNotFound, banner('err', t.errDraftNotFound), 404);
   if (row.r.submittedAt || row.l.status === 'published') return page(c, t.titleSubmitted, banner('ok', t.okAlreadySent), 409);
   if (!row.r.attestedAt) return page(c, t.titlePermissionNeeded, banner('err', t.errPermissionNeeded), 409);
   const now = new Date().toISOString();
@@ -698,7 +796,28 @@ accountApp.post('/recipes/:id/submit', async (c) => {
       text: `A recipe was sent in for review.\n\nTitle: ${row.l.title}\nRecipe id: ${row.r.id}\nAuthor shown as: ${row.r.authorName ?? user.displayName ?? ''}\nSubmitter: ${user.email}\nSource: ${row.s.name} (${row.s.url}), license label ${row.s.license}\nAuthor confirmed rights at: ${row.r.attestedAt}\n\nIt stays a private draft until you clear the source and publish it with the admin tools. Queue: MCP recipes.list with submitted:true.\n`,
     }).catch(() => false);
   }
-  return page(c, t.sentInPageTitle, `<h1>${t.sentInTitle}</h1><p class="lead">${fill(t.sentInLead, { title: esc(row.l.title) })}</p><p><a class="btn" href="/account${qs(lang)}">${t.backToRecipes}</a></p>`);
+  // data-capture-clear: the capture script drops this draft's autosaved copy from the device.
+  return page(c, t.sentInPageTitle, `<h1>${t.sentInTitle}</h1><p class="lead">${fill(t.sentInLead, { title: esc(row.l.title) })}</p><p><a class="btn" href="/account${qs(lang)}">${t.backToRecipes}</a></p><div data-capture-clear="${esc(row.r.id)}" hidden></div><script>${CAPTURE_CLIENT_SCRIPT}</script>`);
+}
+
+accountApp.post('/recipes/:id/submit', async (c) => {
+  const user = c.get('user');
+  const lang = langOf(c);
+  const t = accountStrings(lang);
+  if (await limited(c.env.RL_SUBMIT, c, 'submit')) return page(c, t.titleSlowDown, banner('err', t.errTooManyTries), 429);
+  const row = await loadOwned(c, c.req.param('id'));
+  if (!row) return page(c, t.titleNotFound, banner('err', t.errDraftNotFound), 404);
+  if (!row.r.submittedAt && row.l.status !== 'published' && !row.r.attestedAt) {
+    // The permission box may be ticked right on the submit action: record the
+    // attestation and submit in one POST. Without it, the submit is refused.
+    const form = await c.req.parseBody();
+    if (str(form['attest'], 2) === '1') {
+      const now = new Date().toISOString();
+      const att = await c.env.DB.prepare('UPDATE recipes SET attested_at = ? WHERE id = ? AND owner_user_id = ? AND submitted_at IS NULL AND attested_at IS NULL').bind(now, row.r.id, user.id).run();
+      if (att.meta.changes === 1) row.r.attestedAt = now;
+    }
+  }
+  return sendForReview(c, row);
 });
 
 // --- Community kitchen-test reports ------------------------------------------

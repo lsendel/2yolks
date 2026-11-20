@@ -10,6 +10,9 @@ import {
   assistRecipeDeterministic,
   translateStructuredRecipeWithGemini,
   reserveAiBudget,
+  assistRecipe,
+  aiUnavailableReason,
+  AiUnavailableError,
 } from './aiRecipe';
 
 const ORIGIN = 'https://2yolks.com';
@@ -148,8 +151,12 @@ describe('Gemini 3.8 Flash multimodal recipe co-editor & SVG story card routes',
       { method: 'POST', headers: { origin: ORIGIN, 'content-type': 'application/json' }, body: '{}' },
       { DB, CANONICAL_ORIGIN: ORIGIN, ASSETS: { fetch: async () => new Response('no', { status: 404 }) } as unknown as Fetcher },
     );
-    expect(unauth.status).toBe(303);
-    expect(unauth.headers.get('location')).toBe('/account');
+    // fetch() callers get JSON 401 (not an HTML sign-in redirect) so the page can keep the draft
+    expect(unauth.status).toBe(401);
+    const unauthBody = (await unauth.json()) as { ok: boolean; session: boolean; error: string };
+    expect(unauthBody.ok).toBe(false);
+    expect(unauthBody.session).toBe(true);
+    expect(unauthBody.error).toContain('session ended');
 
     const cookie = await createSessionCookie();
     const csrfBlocked = await app.request(
@@ -316,6 +323,85 @@ describe('Gemini 3.8 Flash multimodal recipe co-editor & SVG story card routes',
         [0],
       ),
     ).rejects.toThrow('Translation failed QA gate');
+  });
+
+  describe('honest fallback without GEMINI_API_KEY', () => {
+    const assets = { fetch: async () => new Response('no', { status: 404 }) } as unknown as Fetcher;
+    async function ai(body: Record<string, unknown>, lang = 'en', extra: Record<string, unknown> = {}) {
+      const exists = await DB.prepare("SELECT 1 AS x FROM users WHERE id = 'u_chef01'").first();
+      const cookie = exists ? `${SESSION_COOKIE}=${'a'.repeat(64)}` : await createSessionCookie();
+      return app.request(
+        `${ORIGIN}/account/recipes/ai-assist${lang === 'en' ? '' : `?lang=${lang}`}`,
+        { method: 'POST', headers: { origin: ORIGIN, cookie, 'content-type': 'application/json' }, body: JSON.stringify(body) },
+        { DB, CANONICAL_ORIGIN: ORIGIN, ASSETS: assets, ...extra },
+      );
+    }
+    const aiLogCount = async () => (await DB.prepare('SELECT count(*) AS n FROM ai_log').first<{ n: number }>())!.n;
+    const draft = { title: 'Tomato Soup', ingredients: ['2 cups stock'], steps: ['Simmer 15 minutes.'] };
+
+    it('translate says it is unavailable (localized), changes nothing, and spends no AI budget', async () => {
+      for (const [lang, needle] of [['en', 'Translation needs the AI service'], ['es', 'La traducción necesita el servicio de IA'], ['fr', 'La traduction nécessite le service d’IA']] as const) {
+        DB = migratedD1All();
+        const res = await ai({ mode: 'translate', uiLang: lang, recipeLocale: 'us:en', targetLocale: 'us:fr', draft }, lang);
+        expect(res.status, lang).toBe(503);
+        const body = (await res.json()) as { ok: boolean; unavailable?: string; error: string; recipe?: unknown };
+        expect(body.ok).toBe(false);
+        expect(body.unavailable).toBe('translate');
+        expect(body.error).toContain(needle);
+        expect(body.recipe).toBeUndefined();
+        expect(await aiLogCount()).toBe(0);
+      }
+    });
+
+    it('a photo or voice note alone is "not available", never a fake "Home Kitchen Recipe"', async () => {
+      const img = { mimeType: 'image/jpeg', data: 'aGVsbG8=' };
+      const res = await ai({ mode: 'extract', uiLang: 'en', recipeLocale: 'us:en', image: img });
+      expect(res.status).toBe(503);
+      const text = await res.text();
+      expect(text).not.toContain('Home Kitchen Recipe');
+      const body = JSON.parse(text) as { ok: boolean; unavailable?: string; error: string };
+      expect(body.ok).toBe(false);
+      expect(body.unavailable).toBe('media');
+      expect(body.error).toContain('Reading photos and voice notes needs the AI service');
+      const voice = await ai({ mode: 'extract', uiLang: 'es', recipeLocale: 'mx:es', audio: { mimeType: 'audio/webm', data: 'd29ybGQ=' } }, 'es');
+      expect(voice.status).toBe(503);
+      expect(((await voice.json()) as { error: string }).error).toContain('Leer fotos y notas de voz');
+      expect(await aiLogCount()).toBe(0);
+    });
+
+    it('typed notes still get the basic tidy-up, labelled as the deterministic provider', async () => {
+      const res = await ai({ mode: 'extract', uiLang: 'en', recipeLocale: 'us:en', notes: 'Quick broth\n2 cups stock\nSimmer the stock 10 minutes.', image: { mimeType: 'image/jpeg', data: 'aGVsbG8=' } });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { ok: boolean; provider: string };
+      expect(body.ok).toBe(true);
+      expect(body.provider).toBe('deterministic');
+    });
+
+    it('the edit form carries the localized honesty and session messages for the client', async () => {
+      const cookie = await createSessionCookie();
+      const html = await (await app.request(`${ORIGIN}/account/recipes/new?lang=fr`, { headers: { cookie } }, { DB, CANONICAL_ORIGIN: ORIGIN, ASSETS: assets })).text();
+      expect(html).toContain('data-msg-translate-unavailable="La traduction nécessite le service d’IA');
+      expect(html).toContain('data-msg-err-session="Votre session a expiré.');
+      expect(html).toContain('data-signin-url="/account?lang=fr"');
+      expect(html).toContain('data-msg-fallback="Mise en forme basique seulement');
+    });
+
+    it('assistRecipe itself refuses to fake a translation (no key, or nothing to translate)', async () => {
+      await expect(assistRecipe({ mode: 'translate', uiLang: 'en', recipeLocale: 'us:en', targetLocale: 'us:es', draft })).rejects.toBeInstanceOf(AiUnavailableError);
+      await expect(assistRecipe({ mode: 'translate', uiLang: 'en', recipeLocale: 'us:en', targetLocale: 'us:es', notes: 'just notes' }, { apiKey: 'k', fetchImpl: (async () => { throw new Error('must not call'); }) as typeof fetch }))
+        .rejects.toMatchObject({ reason: 'empty' });
+      expect(aiUnavailableReason({ mode: 'polish', uiLang: 'en', recipeLocale: 'us:en', notes: 'x' })).toBeNull();
+      expect(aiUnavailableReason({ mode: 'translate', uiLang: 'en', recipeLocale: 'us:en' }, 'key')).toBeNull();
+      expect(aiUnavailableReason({ mode: 'extract', uiLang: 'en', recipeLocale: 'us:en', image: { mimeType: 'image/png', data: 'AA==' }, draft: { steps: ['Boil.'] } })).toBeNull();
+    });
+
+    it('deterministic output never invents a title and points quantity questions at the line to replace', () => {
+      const out = assistRecipeDeterministic({ mode: 'polish', uiLang: 'en', recipeLocale: 'us:en', draft: { ingredients: ['200 g flour', 'salt'], steps: ['Mix.'] } });
+      expect(out.recipe.title).toBe('');
+      const q = out.followUpQuestions.find((x) => x.id === 'ing_qty')!;
+      expect(q.target).toBe('salt');
+      expect(q.quickChoices[0]).toBe('1 tsp salt');
+    });
   });
 
   it('POST /account/recipes/ai-assist supports mode=translate with targetLocale', async () => {

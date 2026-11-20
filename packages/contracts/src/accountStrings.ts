@@ -37,7 +37,8 @@ export interface AccountStrings {
   errAuthorRequired: string; errAdaptedHttps: string; errPickLanguage: string;
   errRowLimit: string; errDraftLimit: string;
   okSaved: string;
-  submitPanelTitle: string; submitPanelHint: string; submitPanelAttestHint: string; submitButton: string; removeDraft: string;
+  submitPanelTitle: string; submitPanelHint: string; submitButton: string; removeDraft: string;
+  finishTitle: string; finishHint: string; errAttestToSubmit: string;
   sentInPageTitle: string; sentInTitle: string; sentInLead: string; backToRecipes: string;
   // community kitchen-test reports
   reportPageTitle: string; reportTitle: string; reportLead: string;
@@ -61,6 +62,9 @@ export interface AccountStrings {
   aiWorking: string; aiDoneExtract: string; aiDonePolish: string; aiDoneTranslate: string;
   aiQuestionsHeading: string; aiImprovementsHeading: string;
   aiErrBusy: string; aiErrInput: string;
+  // honest AI: no-key fallback, session expiry
+  aiErrTranslateUnavailable: string; aiErrMediaUnavailable: string; aiFallbackNote: string;
+  aiErrSession: string; aiSignInLink: string;
 }
 
 const en: AccountStrings = {
@@ -74,7 +78,7 @@ const en: AccountStrings = {
   errAlreadySent: 'This recipe was already sent in for review.',
   errAlreadySentNoSave: 'This recipe was already sent in for review, so your changes were not saved.',
   okAlreadySent: 'Already sent in for review.',
-  titlePermissionNeeded: 'Permission needed', errPermissionNeeded: 'Tick the permission box on the draft and save before sending it in.',
+  titlePermissionNeeded: 'Permission needed', errPermissionNeeded: 'Tick the permission box next to “Send in for review” before sending it in.',
   errGeneric: 'Something went wrong. Please try again.',
   signInPageTitle: 'Sign in', signInTitle: 'Your 2yolks account',
   signInLead: 'Sign in with an email code to keep private drafts and send a recipe in for review. No password to remember.',
@@ -124,8 +128,10 @@ const en: AccountStrings = {
   okSaved: 'Saved as a private draft.',
   submitPanelTitle: 'Send in for review',
   submitPanelHint: 'We check the recipe and its rights before anything is published. Publishing is never automatic.',
-  submitPanelAttestHint: ' Tick the permission box above and save first.',
   submitButton: 'Send in for review', removeDraft: 'Remove this draft',
+  finishTitle: 'Ready to share it?',
+  finishHint: 'Send it in for review now, or save a private draft and come back later. We check the recipe and its rights before anything is published. Publishing is never automatic.',
+  errAttestToSubmit: 'Tick the permission box to send this recipe in for review.',
   sentInPageTitle: 'Sent in', sentInTitle: 'Thanks, it is with us',
   sentInLead: 'We will review "{title}" and its rights before anything goes live. Nothing is published automatically.',
   backToRecipes: 'Back to your recipes',
@@ -167,7 +173,7 @@ const en: AccountStrings = {
   aiPanelTitle: 'Snap, speak, or rough-draft with AI',
   aiPanelLead: 'Attach a photo of your dish or handwritten card, record a quick voice note, or type rough notes — our kitchen co-editor structures the recipe and flags missing details while keeping your voice.',
   aiPhotoLabel: 'Dish photo or handwritten recipe card',
-  aiPhotoHint: 'JPEG, PNG or WebP (resized in your browser before sending; never stored on third-party servers).',
+  aiPhotoHint: 'JPEG, PNG or WebP. Resized in your browser, then sent to Google’s Gemini API only to read the recipe. 2yolks does not keep the photo.',
   aiVoiceStart: 'Dictate voice note',
   aiVoiceStop: 'Stop recording',
   aiVoiceReady: 'Voice note attached',
@@ -186,6 +192,11 @@ const en: AccountStrings = {
   aiImprovementsHeading: 'What the kitchen co-editor refined:',
   aiErrBusy: 'The AI kitchen assistant reached today’s free-tier limit. You can still paste text or fill the form directly.',
   aiErrInput: 'Add a photo, voice note, rough notes, or draft steps first.',
+  aiErrTranslateUnavailable: 'Translation needs the AI service, which isn’t available right now. Your draft is unchanged.',
+  aiErrMediaUnavailable: 'Reading photos and voice notes needs the AI service, which isn’t available right now. Type your notes instead, or paste the recipe text. Your draft is unchanged.',
+  aiFallbackNote: 'Basic tidy-up only: the AI service isn’t available right now, so any photo or voice note was not read.',
+  aiErrSession: 'Your session ended. Your draft is saved on this device, so nothing is lost.',
+  aiSignInLink: 'Sign in again (opens a new tab)',
 };
 
 const es: AccountStrings = {
@@ -199,7 +210,7 @@ const es: AccountStrings = {
   errAlreadySent: 'Esta receta ya se envió a revisión.',
   errAlreadySentNoSave: 'Esta receta ya se envió a revisión, así que tus cambios no se guardaron.',
   okAlreadySent: 'Ya enviada a revisión.',
-  titlePermissionNeeded: 'Falta el permiso', errPermissionNeeded: 'Marca la casilla de permiso en el borrador y guarda antes de enviarla.',
+  titlePermissionNeeded: 'Falta el permiso', errPermissionNeeded: 'Marca la casilla de permiso junto a “Enviar a revisión” antes de enviarla.',
   errGeneric: 'Algo salió mal. Inténtalo de nuevo, por favor.',
   signInPageTitle: 'Iniciar sesión', signInTitle: 'Tu cuenta de 2yolks',
   signInLead: 'Inicia sesión con un código por correo para guardar borradores privados y enviar una receta a revisión. Sin contraseña que recordar.',
@@ -249,8 +260,10 @@ const es: AccountStrings = {
   okSaved: 'Guardado como borrador privado.',
   submitPanelTitle: 'Enviar a revisión',
   submitPanelHint: 'Revisamos la receta y sus derechos antes de publicar nada. La publicación nunca es automática.',
-  submitPanelAttestHint: ' Marca primero la casilla de permiso de arriba y guarda.',
   submitButton: 'Enviar a revisión', removeDraft: 'Eliminar este borrador',
+  finishTitle: '¿Lista para compartir?',
+  finishHint: 'Envíala a revisión ahora, o guarda un borrador privado y vuelve más tarde. Revisamos la receta y sus derechos antes de publicar nada. La publicación nunca es automática.',
+  errAttestToSubmit: 'Marca la casilla de permiso para enviar esta receta a revisión.',
   sentInPageTitle: 'Enviada', sentInTitle: 'Gracias, ya la tenemos',
   sentInLead: 'Revisaremos "{title}" y sus derechos antes de que nada se publique. Nada se publica automáticamente.',
   backToRecipes: 'Volver a tus recetas',
@@ -292,7 +305,7 @@ const es: AccountStrings = {
   aiPanelTitle: 'Foto, nota de voz o borrador rápido con IA',
   aiPanelLead: 'Sube una foto de tu plato o tarjeta escrita a mano, graba una nota de voz o escribe notas sueltas — el coeditor estructura la receta y detecta detalles faltantes conservando tu estilo.',
   aiPhotoLabel: 'Foto del plato o receta escrita a mano',
-  aiPhotoHint: 'JPEG, PNG o WebP (se reduce en tu navegador antes de enviarse; nunca se almacena en servidores externos).',
+  aiPhotoHint: 'JPEG, PNG o WebP. Se reduce en tu navegador y luego se envía a la API Gemini de Google solo para leer la receta. 2yolks no guarda la foto.',
   aiVoiceStart: 'Dictar nota de voz',
   aiVoiceStop: 'Detener grabación',
   aiVoiceReady: 'Nota de voz adjunta',
@@ -311,6 +324,11 @@ const es: AccountStrings = {
   aiImprovementsHeading: 'Lo que mejoró el coeditor de cocina:',
   aiErrBusy: 'El asistente de IA alcanzó el límite gratuito de hoy. Aún puedes pegar texto o llenar el formulario directamente.',
   aiErrInput: 'Agrega primero una foto, nota de voz, notas rápidas o pasos en el borrador.',
+  aiErrTranslateUnavailable: 'La traducción necesita el servicio de IA, que no está disponible ahora mismo. Tu borrador no cambió.',
+  aiErrMediaUnavailable: 'Leer fotos y notas de voz necesita el servicio de IA, que no está disponible ahora mismo. Escribe tus notas o pega el texto de la receta. Tu borrador no cambió.',
+  aiFallbackNote: 'Solo un orden básico: el servicio de IA no está disponible ahora mismo, así que no se leyó ninguna foto ni nota de voz.',
+  aiErrSession: 'Tu sesión terminó. Tu borrador está guardado en este dispositivo, así que no se pierde nada.',
+  aiSignInLink: 'Volver a iniciar sesión (abre una pestaña nueva)',
 };
 
 const fr: AccountStrings = {
@@ -324,7 +342,7 @@ const fr: AccountStrings = {
   errAlreadySent: 'Cette recette a déjà été envoyée en relecture.',
   errAlreadySentNoSave: 'Cette recette a déjà été envoyée en relecture, vos changements n’ont pas été enregistrés.',
   okAlreadySent: 'Déjà envoyée en relecture.',
-  titlePermissionNeeded: 'Autorisation requise', errPermissionNeeded: 'Cochez la case d’autorisation sur le brouillon et enregistrez avant de l’envoyer.',
+  titlePermissionNeeded: 'Autorisation requise', errPermissionNeeded: 'Cochez la case d’autorisation à côté de « Envoyer en relecture » avant de l’envoyer.',
   errGeneric: 'Une erreur est survenue. Veuillez réessayer.',
   signInPageTitle: 'Connexion', signInTitle: 'Votre compte 2yolks',
   signInLead: 'Connectez-vous avec un code reçu par e-mail pour garder des brouillons privés et envoyer une recette en relecture. Aucun mot de passe à retenir.',
@@ -374,8 +392,10 @@ const fr: AccountStrings = {
   okSaved: 'Enregistré comme brouillon privé.',
   submitPanelTitle: 'Envoyer en relecture',
   submitPanelHint: 'Nous vérifions la recette et ses droits avant toute publication. La publication n’est jamais automatique.',
-  submitPanelAttestHint: ' Cochez d’abord la case d’autorisation ci-dessus et enregistrez.',
   submitButton: 'Envoyer en relecture', removeDraft: 'Supprimer ce brouillon',
+  finishTitle: 'Prête à partager ?',
+  finishHint: 'Envoyez-la en relecture maintenant, ou enregistrez un brouillon privé et revenez plus tard. Nous vérifions la recette et ses droits avant toute publication. La publication n’est jamais automatique.',
+  errAttestToSubmit: 'Cochez la case d’autorisation pour envoyer cette recette en relecture.',
   sentInPageTitle: 'Envoyée', sentInTitle: 'Merci, nous l’avons bien reçue',
   sentInLead: 'Nous relirons « {title} » et ses droits avant toute mise en ligne. Rien n’est publié automatiquement.',
   backToRecipes: 'Retour à vos recettes',
@@ -417,7 +437,7 @@ const fr: AccountStrings = {
   aiPanelTitle: 'Photo, note vocale ou brouillon rapide avec l’IA',
   aiPanelLead: 'Ajoutez une photo de votre plat ou d’une fiche manuscrite, dictez une note vocale ou écrivez vos notes en vrac — notre co-éditeur structure la recette et signale les détails manquants.',
   aiPhotoLabel: 'Photo du plat ou fiche manuscrite',
-  aiPhotoHint: 'JPEG, PNG ou WebP (redimensionnée dans votre navigateur avant envoi ; jamais conservée par des tiers).',
+  aiPhotoHint: 'JPEG, PNG ou WebP. Redimensionnée dans votre navigateur, puis envoyée à l’API Gemini de Google uniquement pour lire la recette. 2yolks ne conserve pas la photo.',
   aiVoiceStart: 'Dicter une note vocale',
   aiVoiceStop: 'Arrêter l’enregistrement',
   aiVoiceReady: 'Note vocale jointe',
@@ -436,6 +456,11 @@ const fr: AccountStrings = {
   aiImprovementsHeading: 'Ce que le co-éditeur a amélioré :',
   aiErrBusy: 'L’assistant IA a atteint son quota gratuit quotidien. Vous pouvez toujours coller un texte ou remplir le formulaire.',
   aiErrInput: 'Ajoutez d’abord une photo, une note vocale, des notes ou des étapes.',
+  aiErrTranslateUnavailable: 'La traduction nécessite le service d’IA, indisponible pour le moment. Votre brouillon n’a pas changé.',
+  aiErrMediaUnavailable: 'La lecture des photos et des notes vocales nécessite le service d’IA, indisponible pour le moment. Saisissez vos notes ou collez le texte de la recette. Votre brouillon n’a pas changé.',
+  aiFallbackNote: 'Mise en forme basique seulement : le service d’IA est indisponible pour le moment, aucune photo ni note vocale n’a été lue.',
+  aiErrSession: 'Votre session a expiré. Votre brouillon est enregistré sur cet appareil, rien n’est perdu.',
+  aiSignInLink: 'Se reconnecter (ouvre un nouvel onglet)',
 };
 
 const ACCOUNT_STRINGS: Record<string, AccountStrings> = { en, es, fr };
