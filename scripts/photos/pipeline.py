@@ -30,7 +30,7 @@ Usage:
 
 recipes.json: [{"id": "...", "title": "...", "category": "...", "country": "us"}]
 """
-import argparse, json, os, sys, time, urllib.parse, urllib.request
+import argparse, json, os, re, sys, time, urllib.parse, urllib.request
 from io import BytesIO
 
 from PIL import Image
@@ -148,6 +148,14 @@ def cmd_sheet(args):
     print('wrote', os.path.join(args.work, 'review-sheet.html'))
 
 def cmd_assign(args):
+    """Assign cleared candidates: R2 put + ONE recipe_images row per recipe.
+
+    Contract (migration 0004): kind is 'hero' or 'step' only - the review thumb
+    is never inserted. The newest cleared hero wins serving (workers order by
+    created_at DESC), so the prior graphic row stays as instant rollback:
+    rollback = UPDATE recipe_images SET cleared_at=NULL WHERE id=<new id>.
+    Id pattern: img<recipe6>p<n> ('p' = photo), unique per recipe.
+    """
     work = json.load(open(os.path.join(args.work, 'candidates.json')))
     cleared = set(l.split('#')[0].strip() for l in open(args.cleared) if l.strip() and not l.startswith('#'))
     stmts = []
@@ -156,19 +164,31 @@ def cmd_assign(args):
         for c in entry['candidates']:
             if not any(c['id'].startswith(cid) or cid == c['id'][:8] for cid in cleared):
                 continue
-            for kind, v in (c.get('variants') or {}).items():
-                r2_key = f"recipes/{rec['id']}/{kind}-{c['id'][:8]}.webp"
-                stmts.append(f"wrangler r2 object put 2yolks-images/{r2_key} --file {v['path']} --content-type image/webp")
-                stmts.append(
-                    "wrangler d1 execute 2yolks --remote --command \"INSERT INTO recipe_images "
-                    f"(id, recipe_id, kind, r2_key, mime, bytes, width, height, style, source_name, source_url, license, cleared_at) VALUES "
-                    f"('{rec['id']}-{kind}-{c['id'][:8]}', '{rec['id']}', 'hero', '{r2_key}', 'image/webp', {v['bytes']}, {v['width']}, {v['height']}, 'photo', "
-                    f"'{sqlq(c.get('creator') or c.get('provider') or 'unknown')}', '{sqlq(c.get('foreign_landing_url') or '')}', '{sqlq(c.get('license') or 'unknown')}', datetime('now'))\"")
+            v = (c.get('variants') or {}).get('hero')
+            if not v:
+                continue
+            r2_key = f"recipes/{rec['id']}/hero-{c['id'][:8]}.webp"
+            img_id = f"img{rec['id'][:6]}p1"
+            lic = spdx(c.get('license'), c.get('license_url'))
+            stmts.append(f"wrangler r2 object put 2yolks-images/{r2_key} --file {v['path']} --content-type image/webp")
+            q = chr(34)
+            sql = (
+                "INSERT INTO recipe_images "
+                "(id, recipe_id, kind, r2_key, mime, bytes, width, height, style, source_name, source_url, license, cleared_at) VALUES "
+                f"('{img_id}', '{rec['id']}', 'hero', '{r2_key}', 'image/webp', {v['bytes']}, {v['width']}, {v['height']}, 'photo', "
+                f"'{sqlq(c.get('creator') or c.get('provider') or 'unknown')}', '{sqlq(c.get('foreign_landing_url') or '')}', '{lic}', datetime('now'))")
+            stmts.append(f"wrangler d1 execute 2yolks --remote --command {q}{sql}{q}")
     print('\n'.join(stmts) if stmts else 'nothing cleared')
     if args.execute and stmts:
         import subprocess
         for s in stmts:
             subprocess.run(s, shell=True, check=True)
+
+def spdx(lic, url):
+    ver = '4.0'
+    m = re.search(r'/licenses/[a-z-]+/([0-9.]+)/', url or '')
+    if m: ver = m.group(1)
+    return {'by': f'CC-BY-{ver}', 'by-sa': f'CC-BY-SA-{ver}', 'cc0': 'CC0-1.0', 'pdm': 'PDM-1.0'}.get(lic or '', 'unknown')
 
 def sqlq(s):
     return s.replace("'", "''")
