@@ -17,7 +17,7 @@ import {
   type AccountBindings, type FormState,
   sha256Hex, randomCode, randomToken, newId, normEmail, str,
   reserveMail, cleanupExpired, limited, parseForm, buildSubmission, loadOwned,
-  SESSION_DAYS, MAX_ATTEMPTS, CODES_PER_EMAIL_10MIN, CODES_PER_DAY, NOTICES_PER_DAY,
+  SESSION_DAYS, MAX_ATTEMPTS, CODES_PER_EMAIL_10MIN, codesPerDay, NOTICES_PER_DAY,
   MAX_DRAFTS_PER_USER, MAX_ROWS_PER_USER,
 } from './account';
 
@@ -122,7 +122,7 @@ appApi.post('/auth/code', async (c) => {
   ).bind(id, email, await sha256Hex(`${email}:${code}`), now + 10 * 60_000, now, email, now - 10 * 60_000, CODES_PER_EMAIL_10MIN).run();
   if (ins.meta.changes !== 1) return err(c, 429, 'Too many codes requested for this email. Try again in a few minutes.');
   // Then the site-wide daily mail budget (atomic conditional INSERT). No budget: the code is never sent, so kill it.
-  if (!(await reserveMail(c.env.DB, 'code', CODES_PER_DAY))) {
+  if (!(await reserveMail(c.env.DB, 'code', codesPerDay(c.env)))) {
     await c.env.DB.prepare('UPDATE auth_codes SET used = 1 WHERE id = ?').bind(id).run();
     return err(c, 503, 'Sign-in is busy right now. Please try again tomorrow.');
   }
