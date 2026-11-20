@@ -204,6 +204,9 @@ export interface UiStrings {
   groceryListReady: string;
   emptyShareCta: string;
   communityTag: string;
+  searchNav: string;
+  menuNav: string;
+  moreShareOptions: string;
 }
 
 const UI_STRINGS: Record<string, UiStrings> = {
@@ -234,7 +237,7 @@ const UI_STRINGS: Record<string, UiStrings> = {
     shareHeading: 'Share this recipe',
     shareSubhead: 'No ads, no life story — send a clean recipe link or visual story card to a friend or group chat.',
     moreToCook: 'More to cook',
-    searchPlaceholder: 'Filter recipes by dish or category…',
+    searchPlaceholder: 'Search recipes or ingredients…',
     checkedProgress: 'checked',
     shareRecipeNav: 'Share a recipe',
     myKitchenNav: 'My kitchen',
@@ -252,6 +255,7 @@ const UI_STRINGS: Record<string, UiStrings> = {
     groceryListReady: 'Grocery list copied',
     emptyShareCta: 'Have a great recipe for this? Share yours',
     communityTag: 'Cooked it? Tag #CookedWith2Yolks',
+    searchNav: 'Search', menuNav: 'Menu', moreShareOptions: 'More ways to share',
   },
   es: {
     ingredients: 'Ingredientes', steps: 'Pasos', source: 'Fuente',
@@ -280,7 +284,7 @@ const UI_STRINGS: Record<string, UiStrings> = {
     shareHeading: 'Comparte esta receta',
     shareSubhead: 'Sin anuncios ni relleno — env\u00eda la receta o una tarjeta visual a un amigo o chat grupal.',
     moreToCook: 'M\u00e1s para cocinar',
-    searchPlaceholder: 'Filtrar recetas por plato o categor\u00eda…',
+    searchPlaceholder: 'Buscar recetas o ingredientes…',
     checkedProgress: 'marcados',
     shareRecipeNav: 'Enviar receta',
     myKitchenNav: 'Mi cocina',
@@ -298,6 +302,7 @@ const UI_STRINGS: Record<string, UiStrings> = {
     groceryListReady: 'Lista copiada',
     emptyShareCta: '\u00bfTienes una receta para esto? Comp\u00e1rtela',
     communityTag: '\u00bfLa cocinaste? Etiqueta #CookedWith2Yolks',
+    searchNav: 'Buscar', menuNav: 'Men\u00fa', moreShareOptions: 'M\u00e1s formas de compartir',
   },
   fr: {
     ingredients: 'Ingr\u00e9dients', steps: '\u00c9tapes', source: 'Source',
@@ -326,7 +331,7 @@ const UI_STRINGS: Record<string, UiStrings> = {
     shareHeading: 'Partager cette recette',
     shareSubhead: 'Sans publicit\u00e9 ni d\u00e9tour — envoyez la recette ou une carte visuelle \u00e0 un ami ou un groupe.',
     moreToCook: '\u00c0 cuisiner aussi',
-    searchPlaceholder: 'Filtrer les recettes par plat ou cat\u00e9gorie…',
+    searchPlaceholder: 'Chercher une recette ou un ingr\u00e9dient…',
     checkedProgress: 'coch\u00e9s',
     shareRecipeNav: 'Partager une recette',
     myKitchenNav: 'Ma cuisine',
@@ -344,6 +349,7 @@ const UI_STRINGS: Record<string, UiStrings> = {
     groceryListReady: 'Liste copi\u00e9e',
     emptyShareCta: 'Vous avez cette recette ? Partagez-la',
     communityTag: 'Cuisin\u00e9e ? Taguez #CookedWith2Yolks',
+    searchNav: 'Rechercher', menuNav: 'Menu', moreShareOptions: 'Autres fa\u00e7ons de partager',
   },
 };
 

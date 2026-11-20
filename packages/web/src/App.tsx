@@ -84,9 +84,13 @@ export function SiteHeader({ nav = [], lang = 'en' }: { nav?: SiteNavItem[]; lan
           <TwinYolkLogoMark />
         </a>
         <nav className="site-nav" aria-label={lang === 'es' ? 'Recetas' : lang === 'fr' ? 'Recettes' : 'Recipes'}>
-          <a href={`/recipes${lq}`}>{t.allRecipes}</a>
-          <a href={`/how-we-test${lq}`}>{t.testingShort}</a>
-          <a href={`/account${lq}`}>{t.myKitchenNav}</a>
+          <a className="nav-search" href={`/${lq}#search`} aria-label={t.searchNav}>
+            <SocialIcon name="search" />
+            <span className="nav-search-label">{t.searchNav}</span>
+          </a>
+          <a className="nav-secondary" href={`/recipes${lq}`}>{t.allRecipes}</a>
+          <a className="nav-secondary" href={`/how-we-test${lq}`}>{t.testingShort}</a>
+          <a className="nav-secondary" href={`/account${lq}`}>{t.myKitchenNav}</a>
           <a className="nav-share-cta" href={`/account/recipes/new${lq}`}>
             <SocialIcon name="plus" />
             {t.shareRecipeNav}
@@ -111,6 +115,31 @@ export function SiteHeader({ nav = [], lang = 'en' }: { nav?: SiteNavItem[]; lan
             <SocialIcon name="sun" className="social-icon icon-sun" />
           </button>
         </div>
+        {/* Compact mobile menu: a native disclosure, so it works without JS. */}
+        <details className="mobile-menu">
+          <summary aria-label={t.menuNav}>
+            <SocialIcon name="menu" />
+          </summary>
+          <div className="mobile-menu-panel">
+            <nav aria-label={t.menuNav}>
+              <a href={`/recipes${lq}`}>{t.allRecipes}</a>
+              <a href={`/account${lq}`}>{t.myKitchenNav}</a>
+              <a href={`/how-we-test${lq}`}>{t.testingShort}</a>
+            </nav>
+            <nav className="mobile-menu-langs" aria-label="Language">
+              {nav.map((item) => (
+                <a key={item.href} href={item.href} aria-current={item.current ? 'page' : undefined}>
+                  {item.label}
+                </a>
+              ))}
+            </nav>
+            <button type="button" className="theme-toggle theme-toggle-menu" data-theme-toggle>
+              <SocialIcon name="moon" className="social-icon icon-moon" />
+              <SocialIcon name="sun" className="social-icon icon-sun" />
+              {t.themeToggle}
+            </button>
+          </div>
+        </details>
       </div>
     </header>
   );
@@ -294,10 +323,10 @@ export interface HomeProps {
   langNotice?: boolean;
 }
 
-const DISCOVERY: Record<string, { eyebrow: string; title: string; intro: string; cta: string; index: string; all: string; note: string; illustration: string; total: string; empty: string; noExact: string; nothingMatches: string; didYouMean: string; clearSearch: string; seeAll: string; langNotice: string }> = {
-  en: { eyebrow: 'RECIPES WITHOUT BORDERS', title: 'Small kitchen. Big appetite.', intro: 'Find something worth cooking. Recipes to read, make and share.', cta: "What's cooking?", index: 'Find your flavor', all: 'All recipes', note: 'Every recipe, honestly labeled.', illustration: 'AI-generated ingredient illustration, not a dish photograph', total: 'Total', empty: 'No recipes in this filter yet.', noExact: 'No exact match — closest matches:', nothingMatches: "Nothing matches '{q}' yet", didYouMean: 'Did you mean:', clearSearch: 'Clear search', seeAll: 'See all', langNotice: 'Showing recipes in your browser language. Switch:' },
-  es: { eyebrow: 'RECETAS SIN FRONTERAS', title: 'Cocina pequeña. Gran apetito.', intro: 'Encuentra algo que quieras cocinar. Recetas para leer, preparar y compartir.', cta: '¿Qué cocinamos?', index: 'Encuentra tu sabor', all: 'Todas las recetas', note: 'Cada receta, con su estado real.', illustration: 'Ilustración de ingredientes generada por IA, no es una foto del plato', total: 'Total', empty: 'Aún no hay recetas en este filtro.', noExact: 'Sin coincidencias exactas — resultados más cercanos:', nothingMatches: "Aún no hay coincidencias para '{q}'", didYouMean: 'Quizás quisiste decir:', clearSearch: 'Borrar búsqueda', seeAll: 'Ver todas', langNotice: 'Mostrando recetas en el idioma de tu navegador. Cambiar:' },
-  fr: { eyebrow: 'RECETTES SANS FRONTIÈRES', title: 'Petite cuisine. Grand appétit.', intro: 'Trouvez une recette à cuisiner. Des recettes à lire, préparer et partager.', cta: 'On cuisine quoi ?', index: 'Trouvez votre saveur', all: 'Toutes les recettes', note: 'Chaque recette, avec son statut réel.', illustration: 'Illustration d’ingrédients générée par IA, pas une photo du plat', total: 'Total', empty: 'Aucune recette dans ce filtre.', noExact: 'Aucune correspondance exacte — résultats les plus proches :', nothingMatches: "Aucune correspondance pour « {q} » pour l'instant", didYouMean: 'Vouliez-vous dire :', clearSearch: 'Effacer la recherche', seeAll: 'Tout voir', langNotice: 'Recettes affichées dans la langue de votre navigateur. Changer :' },
+const DISCOVERY: Record<string, { eyebrow: string; title: string; intro: string; cta: string; index: string; all: string; note: string; illustration: string; total: string; empty: string; noExact: string; nothingMatches: string; didYouMean: string; clearSearch: string; seeAll: string; langNotice: string; heroSearchLabel: string; heroSearchPlaceholder: string; heroSearchButton: string; quickSearches: string[]; resultsOne: string; resultsMany: string; searchAll: string }> = {
+  en: { eyebrow: 'RECIPES WITHOUT BORDERS', title: 'Small kitchen. Big appetite.', intro: 'Find something worth cooking. Recipes to read, make and share.', cta: "What's cooking?", index: 'Find your flavor', all: 'All recipes', note: 'Every recipe, honestly labeled.', illustration: 'AI-generated ingredient illustration, not a dish photograph', total: 'Total', empty: 'No recipes in this filter yet.', noExact: 'No exact match — closest matches:', nothingMatches: "Nothing matches '{q}' yet", didYouMean: 'Did you mean:', clearSearch: 'Clear search', seeAll: 'See all', langNotice: 'Showing recipes in your browser language. Switch:', heroSearchLabel: 'Search recipes', heroSearchPlaceholder: 'Chicken, pasta, soup…', heroSearchButton: 'Search', quickSearches: ['chicken', 'pasta', 'soup', 'tacos', 'pie'], resultsOne: '1 recipe found', resultsMany: '{n} recipes found', searchAll: 'Search all categories' },
+  es: { eyebrow: 'RECETAS SIN FRONTERAS', title: 'Cocina pequeña. Gran apetito.', intro: 'Encuentra algo que quieras cocinar. Recetas para leer, preparar y compartir.', cta: '¿Qué cocinamos?', index: 'Encuentra tu sabor', all: 'Todas las recetas', note: 'Cada receta, con su estado real.', illustration: 'Ilustración de ingredientes generada por IA, no es una foto del plato', total: 'Total', empty: 'Aún no hay recetas en este filtro.', noExact: 'Sin coincidencias exactas — resultados más cercanos:', nothingMatches: "Aún no hay coincidencias para '{q}'", didYouMean: 'Quizás quisiste decir:', clearSearch: 'Borrar búsqueda', seeAll: 'Ver todas', langNotice: 'Mostrando recetas en el idioma de tu navegador. Cambiar:', heroSearchLabel: 'Buscar recetas', heroSearchPlaceholder: 'Pollo, pasta, sopa…', heroSearchButton: 'Buscar', quickSearches: ['pollo', 'pasta', 'sopa', 'tacos', 'pay'], resultsOne: '1 receta encontrada', resultsMany: '{n} recetas encontradas', searchAll: 'Buscar en todas las categorías' },
+  fr: { eyebrow: 'RECETTES SANS FRONTIÈRES', title: 'Petite cuisine. Grand appétit.', intro: 'Trouvez une recette à cuisiner. Des recettes à lire, préparer et partager.', cta: 'On cuisine quoi ?', index: 'Trouvez votre saveur', all: 'Toutes les recettes', note: 'Chaque recette, avec son statut réel.', illustration: 'Illustration d’ingrédients générée par IA, pas une photo du plat', total: 'Total', empty: 'Aucune recette dans ce filtre.', noExact: 'Aucune correspondance exacte — résultats les plus proches :', nothingMatches: "Aucune correspondance pour « {q} » pour l'instant", didYouMean: 'Vouliez-vous dire :', clearSearch: 'Effacer la recherche', seeAll: 'Tout voir', langNotice: 'Recettes affichées dans la langue de votre navigateur. Changer :', heroSearchLabel: 'Chercher une recette', heroSearchPlaceholder: 'Poulet, pâtes, soupe…', heroSearchButton: 'Chercher', quickSearches: ['poulet', 'pâtes', 'soupe', 'tacos', 'tarte'], resultsOne: '1 recette trouvée', resultsMany: '{n} recettes trouvées', searchAll: 'Chercher dans toutes les catégories' },
 };
 
 export function discoveryRecipes(rows: RecipeRow[], lang: string): RecipeRow[] {
@@ -423,6 +452,19 @@ export function Home({ recipes, lang = 'en', activeCategory = null, currentCount
           <span className="eyebrow">{d.eyebrow}</span>
           <h1>{d.title}</h1>
           <p>{d.intro}</p>
+          {/* Plain GET form: works without JS; the fragment keeps results in view. */}
+          <form className="hero-search" action="/#recipes" method="get" role="search">
+            {lang !== 'en' ? <input type="hidden" name="lang" value={lang} /> : null}
+            <label className="visually-hidden" htmlFor="hero-q">{d.heroSearchLabel}</label>
+            <SocialIcon name="search" className="social-icon hero-search-icon" />
+            <input id="hero-q" type="search" name="q" placeholder={d.heroSearchPlaceholder} autoComplete="off" enterKeyHint="search" />
+            <button type="submit">{d.heroSearchButton}</button>
+          </form>
+          <p className="hero-quick">
+            {d.quickSearches.map((q) => (
+              <a key={q} href={`/?${lang !== 'en' ? `lang=${lang}&` : ''}q=${encodeURIComponent(q)}#recipes`}>{q}</a>
+            ))}
+          </p>
           <div className="hero-cta-row">
             <a className="discovery-cta" href="#recipes">
               {d.cta}
@@ -491,7 +533,7 @@ export function Home({ recipes, lang = 'en', activeCategory = null, currentCount
             ))}
           </nav>
           <div className="toolbar-controls">
-            <div className="discovery-search-wrap">
+            <div className="discovery-search-wrap" id="search">
               <input
                 type="search"
                 className="discovery-search"
@@ -514,6 +556,7 @@ export function Home({ recipes, lang = 'en', activeCategory = null, currentCount
           </div>
         </div>
         <p className="closest-match-note" data-closest-note hidden>{d.noExact}</p>
+        <p className="visually-hidden" role="status" aria-live="polite" data-search-status data-one={d.resultsOne} data-many={d.resultsMany}></p>
         {(() => {
           // One row per section with "see all" (Luis's pick 4A, 2026-11-19):
           // the default homepage groups by category, capped at one row each;
@@ -637,13 +680,19 @@ export function Home({ recipes, lang = 'en', activeCategory = null, currentCount
           </div>
           <div className="empty-actions">
             <button type="button" className="btn-clear" data-clear-search>{d.clearSearch}</button>
+            {activeCategory ? (
+              <a className="btn-clear" data-search-all data-base={`/${lq}`} href={`/${lq}#recipes`}>
+                <SocialIcon name="search" />
+                {d.searchAll}
+              </a>
+            ) : null}
             <a className="empty-share-link" href={`/account/recipes/new${lq}`}>
               <SocialIcon name="plus" />
               {t.emptyShareCta}
             </a>
           </div>
         </div>
-        {filtered.length === 0 ? <p className="empty-note">{d.empty}</p> : null}
+        {filtered.length === 0 ? <p className="empty-note" data-filter-empty>{d.empty}</p> : null}
       </section>
     </main>
   );
@@ -906,6 +955,11 @@ export function RecipeView({
               <SocialIcon name="story" />
               {t.saveStoryCard}
             </button>
+          </div>
+          {/* Secondary channels stay one tap away instead of a 13-button wall. */}
+          <details className="share-more">
+            <summary>{t.moreShareOptions}</summary>
+            <div className="share-buttons">
             <button
               type="button"
               className="share-story-btn"
@@ -927,7 +981,8 @@ export function RecipeView({
                 {l.label || t.shareEmail}
               </a>
             ))}
-          </div>
+            </div>
+          </details>
         </nav>
       ) : null}
       <p className="recipe-source">
@@ -1008,6 +1063,7 @@ export function PrivacyView({ lang = 'en' }: { lang?: string }) {
         <h1>Privacidad</h1>
         <p>No necesitas iniciar sesi&oacute;n para leer recetas y leer no usa cookies. Si cambias entre unidades de EE. UU. y m&eacute;tricas o eliges tema claro/oscuro, tu preferencia se guarda en tu propio navegador (almacenamiento local, claves &quot;2y-units&quot; y &quot;2y-theme&quot;) para recordarla. Se queda en tu dispositivo y no se nos env&iacute;a.</p>
         <p>Si creas una cuenta para enviar una receta, guardamos tu correo electr&oacute;nico, el nombre de autor que elijas y los borradores que guardes. Para iniciar sesi&oacute;n enviamos un c&oacute;digo de 6 d&iacute;gitos a tu correo mediante el servicio Resend; el c&oacute;digo se guarda solo como hash. Al iniciar sesi&oacute;n se usa una cookie de sesi&oacute;n (&quot;__Host-2y_sid&quot;, HttpOnly, hasta 30 d&iacute;as) que te mantiene conectado en ese navegador, y solo guardamos un hash de su valor. Los borradores son privados hasta que los env&iacute;es para revisi&oacute;n. Nada de lo que env&iacute;es se publica autom&aacute;ticamente.</p>
+        <p>Cuando una b&uacute;squeda de recetas no encuentra nada, guardamos las palabras buscadas, el idioma de la p&aacute;gina y la hora (sin cuenta, direcci&oacute;n IP ni cookie) para saber qu&eacute; recetas faltan. Mientras escribes una receta, una copia sin guardar y tu elecci&oacute;n de vista de lista o tarjetas tambi&eacute;n pueden quedar en el almacenamiento local de tu navegador para no perder nada si la p&aacute;gina se recarga; esa copia se queda en tu dispositivo.</p>
         <p>Medimos visitas y velocidad de p&aacute;gina con Cloudflare Web Analytics. Seg&uacute;n Cloudflare, este servicio de anal&iacute;tica no usa cookies ni almacenamiento local, no identifica a los visitantes y no recopila datos personales para estad&iacute;sticas.</p>
       </main>
     );
@@ -1018,6 +1074,7 @@ export function PrivacyView({ lang = 'en' }: { lang?: string }) {
         <h1>Confidentialit&eacute;</h1>
         <p>Vous n&apos;avez pas besoin de vous connecter pour lire les recettes, et la lecture ne d&eacute;pose aucun cookie. Si vous changez d&apos;unit&eacute;s ou de th&egrave;me clair/sombre, votre choix reste uniquement dans le stockage local de votre navigateur (&laquo; 2y-units &raquo;, &laquo; 2y-theme &raquo;).</p>
         <p>Si vous cr&eacute;ez un compte pour proposer une recette, nous conservons votre adresse e-mail, le nom d&apos;auteur choisi et vos brouillons priv&eacute;s. La connexion utilise un code &agrave; 6 chiffres envoy&eacute; via Resend (stock&eacute; uniquement sous forme de hachage) et un cookie de session (&laquo; __Host-2y_sid &raquo;, HttpOnly, 30 jours maximum). Rien de ce que vous envoyez n&apos;est publi&eacute; automatiquement.</p>
+        <p>Quand une recherche de recette ne trouve rien, nous enregistrons les mots cherch&eacute;s, la langue de la page et l&apos;heure (sans compte, adresse IP ni cookie) pour savoir quelles recettes manquent. Pendant que vous r&eacute;digez une recette, une copie non enregistr&eacute;e et votre choix d&apos;affichage liste ou cartes peuvent aussi rester dans le stockage local de votre navigateur, pour ne rien perdre si la page se recharge ; cette copie reste sur votre appareil.</p>
         <p>Nous mesurons les pages vues et la vitesse avec Cloudflare Web Analytics, un service sans cookies ni suivi individuel.</p>
       </main>
     );
@@ -1027,6 +1084,7 @@ export function PrivacyView({ lang = 'en' }: { lang?: string }) {
       <h1>Privacy</h1>
       <p>You do not need to sign in to read recipes, and reading sets no cookies. If you switch between US and metric units or choose a light/dark theme, your choice is saved in your own browser (local storage, keys &quot;2y-units&quot; and &quot;2y-theme&quot;) so the page remembers it. It stays on your device and is not sent to us.</p>
       <p>If you create an account to send in a recipe, we store your email address, the author name you choose, and the recipe drafts you save. Signing in uses a 6-digit code sent to your email through the email service Resend; the code is stored only as a hash. Signing in sets one session cookie (&quot;__Host-2y_sid&quot;, HttpOnly, up to 30 days) that keeps you signed in on that browser, and we store only a hash of its value. Signing out ends that session. Drafts are private to you until you send one in for review. Nothing you send in is published automatically.</p>
+      <p>When a recipe search finds nothing, we record the search words, the page language and the time (no account, IP address or cookie) so we know which recipes people are missing. While you write a recipe, an unsaved copy and your list or card view choice can also be kept in your browser&apos;s local storage so nothing is lost if the page reloads; that copy stays on your device.</p>
       <p>We measure page views and page speed with Cloudflare Web Analytics. Per Cloudflare, this analytics service does not use cookies or local storage, does not fingerprint visitors, and does not collect personal data for analytics. We use the counts only to see which pages people read.</p>
     </main>
   );

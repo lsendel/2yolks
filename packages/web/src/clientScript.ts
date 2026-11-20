@@ -5,24 +5,27 @@
  */
 
 export const THEME_CLIENT_SCRIPT = `(function () {
-  var btn = document.querySelector('[data-theme-toggle]');
-  if (!btn) return;
-  btn.addEventListener('click', function () {
-    var root = document.documentElement;
-    var cur = root.getAttribute('data-theme');
-    var next = cur === 'dark' ? 'light' : 'dark';
-    root.setAttribute('data-theme', next);
-    try { localStorage.setItem('2y-theme', next); } catch (e) {}
+  var btns = Array.prototype.slice.call(document.querySelectorAll('[data-theme-toggle]'));
+  if (!btns.length) return;
+  btns.forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var root = document.documentElement;
+      var cur = root.getAttribute('data-theme');
+      var next = cur === 'dark' ? 'light' : 'dark';
+      root.setAttribute('data-theme', next);
+      try { localStorage.setItem('2y-theme', next); } catch (e) {}
+    });
   });
 })();`;
 
 export const DISCOVERY_CLIENT_SCRIPT = `(function () {
   var lists = Array.prototype.slice.call(document.querySelectorAll('[data-recipe-list]'));
-  var list = lists[0];
+  var list = lists[0] || document.querySelector('[data-recipe-list]');
   var groups = Array.prototype.slice.call(document.querySelectorAll('[data-recipe-group]'));
+  var viewBtns = Array.prototype.slice.call(document.querySelectorAll('[data-view-btn]'));
   function setView(mode) {
     var v = mode === 'grid' ? 'grid' : 'list';
-    lists.forEach(function (l) { l.setAttribute('data-view', v); });
+    (lists.length ? lists : (list ? [list] : [])).forEach(function (l) { l.setAttribute('data-view', v); });
     viewBtns.forEach(function (b) {
       b.setAttribute('aria-pressed', b.getAttribute('data-view-btn') === v ? 'true' : 'false');
     });
@@ -90,19 +93,24 @@ export const DISCOVERY_CLIENT_SCRIPT = `(function () {
     return v;
   }
 
-  function matchTokenInText(tok, text) {
+  // Typo tolerance is deliberately narrow: one edit for 5-7 letter words, two
+  // for 8+, and only against whole words of similar length. Fuzzy matching is
+  // a fallback pass (see filterRecipes), never mixed into exact results, so
+  // "pasta" cannot surface Mulled Wine via "taste".
+  function matchTokenInText(tok, text, fuzzy) {
     if (!tok || !text) return false;
     if (text.indexOf(tok) !== -1) return true;
     var vars = getVariants(tok);
     for (var i = 0; i < vars.length; i++) {
       if (text.indexOf(vars[i]) !== -1) return true;
     }
-    if (tok.length >= 5) {
+    if (fuzzy && tok.length >= 5) {
+      var maxD = tok.length >= 8 ? 2 : 1;
       var words = text.split(/[^a-z0-9]+/);
       for (var i = 0; i < words.length; i++) {
         var w = words[i];
-        if (w.length >= 4 && Math.abs(w.length - tok.length) <= 2) {
-          if (editDist(tok, w) <= 2) return true;
+        if (w.length >= 4 && Math.abs(w.length - tok.length) <= maxD) {
+          if (editDist(tok, w) <= maxD) return true;
         }
       }
     }
@@ -128,6 +136,7 @@ export const DISCOVERY_CLIENT_SCRIPT = `(function () {
       el: li,
       parent: li.parentNode,
       idx: idx,
+      display: (li.getAttribute('data-title') || (li.querySelector('h3') ? li.querySelector('h3').textContent : '') || '').trim(),
       title: title,
       cat: cat,
       body: body,
@@ -162,9 +171,48 @@ export const DISCOVERY_CLIENT_SCRIPT = `(function () {
     } catch (e) {}
   }
 
+  var statusEl = document.querySelector('[data-search-status]');
+  var filterEmptyEl = document.querySelector('[data-filter-empty]');
+  var searchAllLink = document.querySelector('[data-search-all]');
+  function announce(n, q) {
+    if (!statusEl) return;
+    if (!q) { statusEl.textContent = ''; return; }
+    var tmpl = n === 1 ? (statusEl.getAttribute('data-one') || '1 recipe') : (statusEl.getAttribute('data-many') || '{n} recipes');
+    statusEl.textContent = tmpl.replace('{n}', String(n));
+  }
+
+  function runPass(tokens, fuzzy) {
+    var matched = [];
+    records.forEach(function (rec) {
+      var titleMatchesAll = true;
+      var categoryMatchesAny = false;
+      for (var i = 0; i < tokens.length; i++) {
+        var tok = tokens[i];
+        var inTitle = matchTokenInText(tok, rec.title, fuzzy);
+        var inCat = matchTokenInText(tok, rec.cat, fuzzy);
+        // Intros/ingredients are long free text: exact (plural-aware) only.
+        var inBody = matchTokenInText(tok, rec.body, false);
+        if (!inTitle && !inCat && !inBody) return;
+        if (!inTitle) titleMatchesAll = false;
+        if (inCat) categoryMatchesAny = true;
+      }
+      matched.push({ rec: rec, tier: titleMatchesAll ? 1 : (categoryMatchesAny ? 2 : 3) });
+    });
+    return matched;
+  }
+
   function filterRecipes() {
     var rawQ = (input.value || '').trim();
     var q = norm(rawQ);
+    if (filterEmptyEl) filterEmptyEl.hidden = Boolean(q);
+    if (searchAllLink) {
+      try {
+        var su = new URL(searchAllLink.getAttribute('data-base') || '/', window.location.href);
+        if (rawQ) su.searchParams.set('q', rawQ); else su.searchParams.delete('q');
+        su.hash = 'recipes';
+        searchAllLink.setAttribute('href', su.pathname + su.search + su.hash);
+      } catch (e) {}
+    }
     if (!q) {
       if (closestNote) closestNote.hidden = true;
       if (emptyEl) emptyEl.hidden = true;
@@ -172,50 +220,27 @@ export const DISCOVERY_CLIENT_SCRIPT = `(function () {
         r.el.hidden = false;
         var num = r.el.querySelector('.recipe-number');
         if (num) num.textContent = (r.idx + 1 < 10 ? '0' : '') + (r.idx + 1);
-        (r.parent || list).appendChild(r.el);
+        var dest = r.parent || list;
+        if (dest) dest.appendChild(r.el);
       });
       groups.forEach(function (g) { g.hidden = false; });
+      announce(0, '');
       return;
     }
 
     var tokens = q.split(/\\s+/);
-    var matched = [];
-    var strictCount = 0;
-
-    records.forEach(function (rec) {
-      var allTokensMatch = true;
-      var titleMatchesAll = true;
-      var categoryMatchesAny = false;
-      var isStrictMatch = true;
-
-      for (var i = 0; i < tokens.length; i++) {
-        var tok = tokens[i];
-        var inTitle = matchTokenInText(tok, rec.title);
-        var inCat = matchTokenInText(tok, rec.cat);
-        var inBody = matchTokenInText(tok, rec.body);
-        if (!inTitle && !inCat && !inBody) {
-          allTokensMatch = false;
-          break;
-        }
-        if (!inTitle) titleMatchesAll = false;
-        if (inCat) categoryMatchesAny = true;
-
-        if (!strictMatchToken(tok, rec.all)) {
-          isStrictMatch = false;
-        }
-      }
-
-      if (allTokensMatch) {
-        var tier = titleMatchesAll ? 1 : (categoryMatchesAny ? 2 : 3);
-        if (isStrictMatch) strictCount++;
-        matched.push({ rec: rec, tier: tier });
-      }
-    });
+    var matched = runPass(tokens, false);
+    var usedFuzzy = false;
+    if (matched.length === 0) {
+      matched = runPass(tokens, true);
+      usedFuzzy = matched.length > 0;
+    }
+    announce(matched.length, q);
 
     if (matched.length > 0) {
       if (emptyEl) emptyEl.hidden = true;
       if (closestNote) {
-        closestNote.hidden = (strictCount > 0);
+        closestNote.hidden = !usedFuzzy;
       }
       matched.sort(function (a, b) {
         if (a.tier !== b.tier) return a.tier - b.tier;
@@ -264,7 +289,7 @@ export const DISCOVERY_CLIENT_SCRIPT = `(function () {
               var link = s.rec.el.querySelector('h3 a');
               var li = document.createElement('li');
               var a = document.createElement('a');
-              a.textContent = s.rec.title;
+              a.textContent = s.rec.display || s.rec.title;
               if (link) a.href = link.href;
               li.appendChild(a);
               suggestionsList.appendChild(li);
@@ -286,6 +311,8 @@ export const DISCOVERY_CLIENT_SCRIPT = `(function () {
       input.value = initQ;
       filterRecipes();
     }
+    // The header search link lands on /#search: focus the box for typing.
+    if (window.location.hash === '#search') input.focus({ preventScroll: true });
   } catch (e) {}
 
   input.addEventListener('input', function () {

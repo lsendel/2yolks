@@ -208,6 +208,13 @@ export function SocialIcon({ name, className = 'social-icon' }: { name: string; 
         <path d="M15.6 11.8A6.2 6.2 0 0 1 8.2 4.4a6.3 6.3 0 1 0 7.4 7.4z" />
       ) : name === 'plus' ? (
         <path d="M10 4.2v11.6M4.2 10h11.6" />
+      ) : name === 'search' ? (
+        <>
+          <circle cx="8.6" cy="8.6" r="5.4" />
+          <path d="M12.6 12.6l4.4 4.4" />
+        </>
+      ) : name === 'menu' ? (
+        <path d="M3.5 5.5h13M3.5 10h13M3.5 14.5h13" />
       ) : (
         <>
           <circle cx="14.5" cy="4.8" r="2.1" />
