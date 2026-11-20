@@ -14,7 +14,7 @@ import {
   validateRecipeSubmission,
   isRecipeCategorySlug,
   type RecipePage, asImageStyle } from '@2yolks/contracts';
-import { renderHome, renderRecipeIndex, renderCountryHome, renderRecipe, renderRecipeCardSvg, renderRecipeOgSvg, renderAbout, renderPrivacy, renderHowWeTest, renderNotFound, type SiteNavItem } from '@2yolks/web/server';
+import { renderHome, renderRecipeIndex, renderCountryHome, renderRecipe, renderRecipeCardSvg, renderRecipeOgSvg, renderAbout, renderPrivacy, renderHowWeTest, renderNotFound, discoveryRecipes, type SiteNavItem } from '@2yolks/web/server';
 import { isUntested, localizedCountryName } from '@2yolks/contracts';
 import type { ImageStyle } from '@2yolks/contracts';
 import { recipeSlugAliases,  createDb, recipes, recipeLocales, recipeImages, sources, published, imageCleared, searchGapLogs } from './db';
@@ -67,6 +67,17 @@ app.route('/account', accountApp);
 // Native app JSON API (bearer-token sibling of /account). Mounted before /:country.
 app.route('/api/v1', appApi);
 
+// The country Cloudflare places this request in (cf-ipcountry header, else
+// the cf object), registry-checked and lowercased; null when absent or
+// unknown, never guessed. The native app uses it as the content-language
+// fallback after the device locale (Luis, 2026-11-19); it is a hint, never
+// an override, and it changes no responses by itself.
+function detectedCountryCode(c: Context<{ Bindings: Bindings }>): string | null {
+  const raw = c.req.header('cf-ipcountry') ?? (c.req.raw as { cf?: { country?: unknown } }).cf?.country;
+  const code = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+  return code && getCountry(code) ? code : null;
+}
+
 // Additive: `countries` and `locales` keep their full-catalogue shape.
 // `published` lists, per country, the locales that currently have at least
 // one published recipe, so clients can tell supported from available.
@@ -84,7 +95,7 @@ app.get('/api/v1/countries', async (c) => {
     if (!list.includes(r.lang)) list.push(r.lang);
   }
   for (const list of Object.values(pub)) list.sort();
-  return c.json({ countries: COUNTRIES, locales: LOCALES, published: pub });
+  return c.json({ countries: COUNTRIES, locales: LOCALES, published: pub, detectedCountry: detectedCountryCode(c) });
 });
 
 app.get('/api/v1/countries/:code/recipes', async (c) => {
@@ -135,6 +146,37 @@ app.get('/api/v1/countries/:code/recipes', async (c) => {
       };
     }),
   });
+});
+
+
+// Language feed for the native app's language-first home: one row per
+// published recipe across all countries, preferring the requested language
+// and falling back exactly like the web discovery list (the actual lang
+// stays on the row so clients can show an honest fallback badge). Additive;
+// rows carry the same category + rights-cleared hero fields as the per-
+// country list.
+app.get('/api/v1/recipes', async (c) => {
+  const requested = c.req.query('lang') ?? 'en';
+  const languages = [...new Set(Object.values(LOCALES).flat())].sort();
+  if (!languages.includes(requested)) {
+    return c.json({ error: 'unsupported language', languages }, 404);
+  }
+  const db = createDb(c.env.DB);
+  const rows = discoveryRecipes(await loadDiscoveryRecipeRows(db, demoAllowed(c)), requested);
+  const origin = c.env.CANONICAL_ORIGIN ?? new URL(c.req.url).origin;
+  return c.json({
+    lang: requested,
+    languages,
+    recipes: rows.map((r) => ({
+      id: r.id,
+      country: r.country,
+      lang: r.lang,
+      slug: r.slug,
+      title: r.title,
+      category: r.category ?? null,
+      heroImage: r.imageId && r.imageStyle ? { url: `${origin}/img/recipe/${r.imageId}`, style: r.imageStyle } : null,
+    })),
+  }, 200, { 'cache-control': 'public, max-age=300' });
 });
 
 // --- Discovery --------------------------------------------------------------
