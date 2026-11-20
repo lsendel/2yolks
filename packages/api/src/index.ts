@@ -14,7 +14,7 @@ import {
   validateRecipeSubmission,
   isRecipeCategorySlug,
   type RecipePage, asImageStyle } from '@2yolks/contracts';
-import { renderHome, renderRecipeIndex, renderCountryHome, renderRecipe, renderRecipeCardSvg, renderRecipeOgSvg, renderAbout, renderPrivacy, renderHowWeTest, renderNotFound, discoveryRecipes, type SiteNavItem } from '@2yolks/web/server';
+import { browserLang, renderHome, renderRecipeIndex, renderCountryHome, renderRecipe, renderRecipeCardSvg, renderRecipeOgSvg, renderAbout, renderPrivacy, renderHowWeTest, renderNotFound, discoveryRecipes, type SiteNavItem } from '@2yolks/web/server';
 import { isUntested, localizedCountryName } from '@2yolks/contracts';
 import type { ImageStyle } from '@2yolks/contracts';
 import { recipeSlugAliases,  createDb, recipes, recipeLocales, recipeImages, sources, published, imageCleared, searchGapLogs } from './db';
@@ -379,7 +379,12 @@ app.get('/recipes', async (c) => {
 
 app.get('/', async (c) => {
   const requestedLang=c.req.query('lang');
-  const lang=['en','es','fr'].includes(requestedLang??'')?requestedLang!:'en';
+  // Pick 2A: an explicit ?lang= always wins; otherwise the browser's
+  // Accept-Language defaults the catalogue language and the homepage shows
+  // the visible switcher confirmation.
+  const explicit=['en','es','fr'].includes(requestedLang??'')?requestedLang!:null;
+  const lang=explicit ?? browserLang(c.req.header('accept-language'));
+  const langNotice=!explicit && lang!=='en';
   const cat=c.req.query('cat');
   const activeCategory=cat && isRecipeCategorySlug(cat)?cat:null;
   // Default locales are always listed (unchanged behavior); additional
@@ -405,6 +410,7 @@ app.get('/', async (c) => {
       {
         locales: markets,
         lang,
+        langNotice,
         activeCategory,
         recipes: mapped,
       },

@@ -309,6 +309,27 @@ const HOME_SEO: Record<string, { title: string; description: string; locale: str
   },
 };
 
+/** Picks the catalogue language from an Accept-Language header: first
+ * supported language (en/es/fr) in q-value order, 'en' when nothing
+ * matches or the header is absent. Prefix-matched, so es-MX lands on es.
+ * Luis's pick 2A (2026-11-19): the browser language only DEFAULTS the
+ * catalogue language; the visible switcher confirmation stays on screen. */
+export function browserLang(header: string | null | undefined): string {
+  const supported = ['en', 'es', 'fr'];
+  if (!header) return 'en';
+  const parsed = header
+    .split(',')
+    .map((part) => {
+      const [tag, ...params] = part.trim().split(';');
+      const qParam = params.map((p) => p.trim()).find((p) => p.startsWith('q='));
+      const q = qParam ? Number.parseFloat(qParam.slice(2)) : 1;
+      return { code: (tag ?? '').slice(0, 2).toLowerCase(), q: Number.isFinite(q) ? q : 0 };
+    })
+    .filter((e) => e.code && supported.includes(e.code))
+    .sort((a, b) => b.q - a.q);
+  return parsed[0]?.code ?? 'en';
+}
+
 export function renderHome(props: HomeProps, nav?: SiteNavItem[], origin = 'https://2yolks.com'): string {
   const lang = props.lang ?? 'en';
   const seo = HOME_SEO[lang] ?? HOME_SEO.en!;

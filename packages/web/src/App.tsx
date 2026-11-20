@@ -289,12 +289,15 @@ export interface HomeProps {
   lang?: string;
   activeCategory?: string | null;
   currentCountry?: string | null;
+  /** True when lang came from the browser's Accept-Language rather than an
+   * explicit choice: show the visible switcher confirmation (pick 2A). */
+  langNotice?: boolean;
 }
 
-const DISCOVERY: Record<string, { eyebrow: string; title: string; intro: string; cta: string; index: string; all: string; note: string; illustration: string; total: string; empty: string; noExact: string; nothingMatches: string; didYouMean: string; clearSearch: string; seeAll: string }> = {
-  en: { eyebrow: 'RECIPES WITHOUT BORDERS', title: 'Small kitchen. Big appetite.', intro: 'Find something worth cooking. Recipes to read, make and share.', cta: "What's cooking?", index: 'Find your flavor', all: 'All recipes', note: 'Every recipe, honestly labeled.', illustration: 'AI-generated ingredient illustration, not a dish photograph', total: 'Total', empty: 'No recipes in this filter yet.', noExact: 'No exact match — closest matches:', nothingMatches: "Nothing matches '{q}' yet", didYouMean: 'Did you mean:', clearSearch: 'Clear search', seeAll: 'See all' },
-  es: { eyebrow: 'RECETAS SIN FRONTERAS', title: 'Cocina pequeña. Gran apetito.', intro: 'Encuentra algo que quieras cocinar. Recetas para leer, preparar y compartir.', cta: '¿Qué cocinamos?', index: 'Encuentra tu sabor', all: 'Todas las recetas', note: 'Cada receta, con su estado real.', illustration: 'Ilustración de ingredientes generada por IA, no es una foto del plato', total: 'Total', empty: 'Aún no hay recetas en este filtro.', noExact: 'Sin coincidencias exactas — resultados más cercanos:', nothingMatches: "Aún no hay coincidencias para '{q}'", didYouMean: 'Quizás quisiste decir:', clearSearch: 'Borrar búsqueda', seeAll: 'Ver todas' },
-  fr: { eyebrow: 'RECETTES SANS FRONTIÈRES', title: 'Petite cuisine. Grand appétit.', intro: 'Trouvez une recette à cuisiner. Des recettes à lire, préparer et partager.', cta: 'On cuisine quoi ?', index: 'Trouvez votre saveur', all: 'Toutes les recettes', note: 'Chaque recette, avec son statut réel.', illustration: 'Illustration d’ingrédients générée par IA, pas une photo du plat', total: 'Total', empty: 'Aucune recette dans ce filtre.', noExact: 'Aucune correspondance exacte — résultats les plus proches :', nothingMatches: "Aucune correspondance pour « {q} » pour l'instant", didYouMean: 'Vouliez-vous dire :', clearSearch: 'Effacer la recherche', seeAll: 'Tout voir' },
+const DISCOVERY: Record<string, { eyebrow: string; title: string; intro: string; cta: string; index: string; all: string; note: string; illustration: string; total: string; empty: string; noExact: string; nothingMatches: string; didYouMean: string; clearSearch: string; seeAll: string; langNotice: string }> = {
+  en: { eyebrow: 'RECIPES WITHOUT BORDERS', title: 'Small kitchen. Big appetite.', intro: 'Find something worth cooking. Recipes to read, make and share.', cta: "What's cooking?", index: 'Find your flavor', all: 'All recipes', note: 'Every recipe, honestly labeled.', illustration: 'AI-generated ingredient illustration, not a dish photograph', total: 'Total', empty: 'No recipes in this filter yet.', noExact: 'No exact match — closest matches:', nothingMatches: "Nothing matches '{q}' yet", didYouMean: 'Did you mean:', clearSearch: 'Clear search', seeAll: 'See all', langNotice: 'Showing recipes in your browser language. Switch:' },
+  es: { eyebrow: 'RECETAS SIN FRONTERAS', title: 'Cocina pequeña. Gran apetito.', intro: 'Encuentra algo que quieras cocinar. Recetas para leer, preparar y compartir.', cta: '¿Qué cocinamos?', index: 'Encuentra tu sabor', all: 'Todas las recetas', note: 'Cada receta, con su estado real.', illustration: 'Ilustración de ingredientes generada por IA, no es una foto del plato', total: 'Total', empty: 'Aún no hay recetas en este filtro.', noExact: 'Sin coincidencias exactas — resultados más cercanos:', nothingMatches: "Aún no hay coincidencias para '{q}'", didYouMean: 'Quizás quisiste decir:', clearSearch: 'Borrar búsqueda', seeAll: 'Ver todas', langNotice: 'Mostrando recetas en el idioma de tu navegador. Cambiar:' },
+  fr: { eyebrow: 'RECETTES SANS FRONTIÈRES', title: 'Petite cuisine. Grand appétit.', intro: 'Trouvez une recette à cuisiner. Des recettes à lire, préparer et partager.', cta: 'On cuisine quoi ?', index: 'Trouvez votre saveur', all: 'Toutes les recettes', note: 'Chaque recette, avec son statut réel.', illustration: 'Illustration d’ingrédients générée par IA, pas une photo du plat', total: 'Total', empty: 'Aucune recette dans ce filtre.', noExact: 'Aucune correspondance exacte — résultats les plus proches :', nothingMatches: "Aucune correspondance pour « {q} » pour l'instant", didYouMean: 'Vouliez-vous dire :', clearSearch: 'Effacer la recherche', seeAll: 'Tout voir', langNotice: 'Recettes affichées dans la langue de votre navigateur. Changer :' },
 };
 
 export function discoveryRecipes(rows: RecipeRow[], lang: string): RecipeRow[] {
@@ -384,7 +387,7 @@ export function RecipeIndex({ recipes, lang = 'en' }: { recipes: RecipeRow[]; la
   );
 }
 
-export function Home({ recipes, lang = 'en', activeCategory = null, currentCountry = null }: HomeProps) {
+export function Home({ recipes, lang = 'en', activeCategory = null, currentCountry = null, langNotice = false }: HomeProps) {
   const d = DISCOVERY[lang] ?? DISCOVERY.en!;
   const selected = discoveryRecipes(recipes, lang);
   const t = uiStrings(lang);
@@ -405,6 +408,16 @@ export function Home({ recipes, lang = 'en', activeCategory = null, currentCount
   const time = (n: number) => (n >= 60 ? `${Math.floor(n / 60)} h${n % 60 ? ' ' + (n % 60) + ' min' : ''}` : `${n} min`);
   return (
     <main className="wide discovery" id="main">
+      {langNotice ? (
+        <p className="lang-notice" role="status">
+          {d.langNotice}
+          {(['en', 'es', 'fr'] as const).filter((l) => l !== lang).map((l) => (
+            <a key={l} className="chip" hrefLang={l} href={`/?lang=${l}`}>
+              {LANG_NAMES[l]}
+            </a>
+          ))}
+        </p>
+      ) : null}
       <section className="after-hero">
         <div className="after-copy">
           <span className="eyebrow">{d.eyebrow}</span>
