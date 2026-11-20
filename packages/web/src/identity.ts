@@ -83,6 +83,12 @@ main.wide.discovery {max-width:1160px;padding:0;margin:auto;background:var(--plu
 .view-toggle button[aria-pressed="true"] {background:var(--lime);color:var(--plum);font-weight:750;}
 /* Discovery List View (default) */
 .discovery-list {list-style:none;padding:0;margin:0;border-bottom:1px solid #65566e;}
+.index-group {margin-top:2rem;}
+.index-group[hidden] {display:none !important;}
+.index-group-head {display:flex;align-items:baseline;justify-content:space-between;gap:1rem;margin:0 0 .4rem;}
+.index-group-title {display:inline-flex;align-items:center;gap:.5rem;font-size:1.15rem;margin:0;color:#faf7f4;}
+.see-all {display:inline-flex;align-items:center;gap:.3rem;color:var(--lime);font-weight:650;text-decoration:none;font-size:.95rem;min-height:44px;}
+.see-all:hover {text-decoration:underline;}
 .discovery-list li {position:relative;display:grid;grid-template-columns:2.2rem minmax(0,1fr) auto;gap:1rem;border-top:1px solid #65566e;padding:1.3rem .75rem;margin:0 -.75rem;transition:background .15s,border-color .15s,transform .15s;}
 .discovery-list li.has-thumb {grid-template-columns:2.2rem 4.75rem minmax(0,1fr) auto;}
 .recipe-thumb {display:flex;flex-direction:column;align-items:center;gap:.25rem;width:4.75rem;}

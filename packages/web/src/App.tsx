@@ -291,10 +291,10 @@ export interface HomeProps {
   currentCountry?: string | null;
 }
 
-const DISCOVERY: Record<string, { eyebrow: string; title: string; intro: string; cta: string; index: string; all: string; note: string; illustration: string; total: string; empty: string; noExact: string; nothingMatches: string; didYouMean: string; clearSearch: string }> = {
-  en: { eyebrow: 'RECIPES WITHOUT BORDERS', title: 'Small kitchen. Big appetite.', intro: 'Find something worth cooking. Recipes to read, make and share.', cta: "What's cooking?", index: 'Find your flavor', all: 'All recipes', note: 'Every recipe, honestly labeled.', illustration: 'AI-generated ingredient illustration, not a dish photograph', total: 'Total', empty: 'No recipes in this filter yet.', noExact: 'No exact match — closest matches:', nothingMatches: "Nothing matches '{q}' yet", didYouMean: 'Did you mean:', clearSearch: 'Clear search' },
-  es: { eyebrow: 'RECETAS SIN FRONTERAS', title: 'Cocina pequeña. Gran apetito.', intro: 'Encuentra algo que quieras cocinar. Recetas para leer, preparar y compartir.', cta: '¿Qué cocinamos?', index: 'Encuentra tu sabor', all: 'Todas las recetas', note: 'Cada receta, con su estado real.', illustration: 'Ilustración de ingredientes generada por IA, no es una foto del plato', total: 'Total', empty: 'Aún no hay recetas en este filtro.', noExact: 'Sin coincidencias exactas — resultados más cercanos:', nothingMatches: "Aún no hay coincidencias para '{q}'", didYouMean: 'Quizás quisiste decir:', clearSearch: 'Borrar búsqueda' },
-  fr: { eyebrow: 'RECETTES SANS FRONTIÈRES', title: 'Petite cuisine. Grand appétit.', intro: 'Trouvez une recette à cuisiner. Des recettes à lire, préparer et partager.', cta: 'On cuisine quoi ?', index: 'Trouvez votre saveur', all: 'Toutes les recettes', note: 'Chaque recette, avec son statut réel.', illustration: 'Illustration d’ingrédients générée par IA, pas une photo du plat', total: 'Total', empty: 'Aucune recette dans ce filtre.', noExact: 'Aucune correspondance exacte — résultats les plus proches :', nothingMatches: "Aucune correspondance pour « {q} » pour l'instant", didYouMean: 'Vouliez-vous dire :', clearSearch: 'Effacer la recherche' },
+const DISCOVERY: Record<string, { eyebrow: string; title: string; intro: string; cta: string; index: string; all: string; note: string; illustration: string; total: string; empty: string; noExact: string; nothingMatches: string; didYouMean: string; clearSearch: string; seeAll: string }> = {
+  en: { eyebrow: 'RECIPES WITHOUT BORDERS', title: 'Small kitchen. Big appetite.', intro: 'Find something worth cooking. Recipes to read, make and share.', cta: "What's cooking?", index: 'Find your flavor', all: 'All recipes', note: 'Every recipe, honestly labeled.', illustration: 'AI-generated ingredient illustration, not a dish photograph', total: 'Total', empty: 'No recipes in this filter yet.', noExact: 'No exact match — closest matches:', nothingMatches: "Nothing matches '{q}' yet", didYouMean: 'Did you mean:', clearSearch: 'Clear search', seeAll: 'See all' },
+  es: { eyebrow: 'RECETAS SIN FRONTERAS', title: 'Cocina pequeña. Gran apetito.', intro: 'Encuentra algo que quieras cocinar. Recetas para leer, preparar y compartir.', cta: '¿Qué cocinamos?', index: 'Encuentra tu sabor', all: 'Todas las recetas', note: 'Cada receta, con su estado real.', illustration: 'Ilustración de ingredientes generada por IA, no es una foto del plato', total: 'Total', empty: 'Aún no hay recetas en este filtro.', noExact: 'Sin coincidencias exactas — resultados más cercanos:', nothingMatches: "Aún no hay coincidencias para '{q}'", didYouMean: 'Quizás quisiste decir:', clearSearch: 'Borrar búsqueda', seeAll: 'Ver todas' },
+  fr: { eyebrow: 'RECETTES SANS FRONTIÈRES', title: 'Petite cuisine. Grand appétit.', intro: 'Trouvez une recette à cuisiner. Des recettes à lire, préparer et partager.', cta: 'On cuisine quoi ?', index: 'Trouvez votre saveur', all: 'Toutes les recettes', note: 'Chaque recette, avec son statut réel.', illustration: 'Illustration d’ingrédients générée par IA, pas une photo du plat', total: 'Total', empty: 'Aucune recette dans ce filtre.', noExact: 'Aucune correspondance exacte — résultats les plus proches :', nothingMatches: "Aucune correspondance pour « {q} » pour l'instant", didYouMean: 'Vouliez-vous dire :', clearSearch: 'Effacer la recherche', seeAll: 'Tout voir' },
 };
 
 export function discoveryRecipes(rows: RecipeRow[], lang: string): RecipeRow[] {
@@ -501,8 +501,11 @@ export function Home({ recipes, lang = 'en', activeCategory = null, currentCount
           </div>
         </div>
         <p className="closest-match-note" data-closest-note hidden>{d.noExact}</p>
-        <ul className="discovery-list" data-recipe-list>
-          {filtered.map((r, i) => {
+        {(() => {
+          // One row per section with "see all" (Luis's pick 4A, 2026-11-19):
+          // the default homepage groups by category, capped at one row each;
+          // a picked category keeps the flat ranked list.
+          const renderRow = (r: RecipeRow, i: number, numbered: boolean) => {
             const catText = categoryLabel(r.category, lang);
             const searchBody = `${r.ingredients ?? ''} ${r.intro ?? ''}`.trim();
             const isCrossLocale = Boolean(currentCountry && r.country && r.country !== currentCountry);
@@ -516,7 +519,10 @@ export function Home({ recipes, lang = 'en', activeCategory = null, currentCount
                 data-search={`${r.title} ${catText ?? ''} ${searchBody}`.toLowerCase()}
                 className={r.imageId && asImageStyle(r.imageStyle) ? 'has-thumb' : undefined}
               >
-                <span className="recipe-number">{String(i + 1).padStart(2, '0')}</span>
+                {/* The grid's first track is 2.2rem; always render the span so
+                    the content column stays in place (the /recipes squeeze bug
+                    fixed in #33 was exactly this shift). */}
+                <span className="recipe-number">{numbered ? String(i + 1).padStart(2, '0') : ''}</span>
                 {r.imageId && asImageStyle(r.imageStyle) ? (
                   <span className="recipe-thumb">
                     <img src={`/img/recipe/${r.imageId}`} alt="" loading="lazy" width="96" height="96" />
@@ -568,8 +574,47 @@ export function Home({ recipes, lang = 'en', activeCategory = null, currentCount
                 </div>
               </li>
             );
-          })}
-        </ul>
+          };
+          if (activeCategory) {
+            return (
+              <ul className="discovery-list" data-recipe-list>
+                {filtered.map((r, i) => renderRow(r, i, true))}
+              </ul>
+            );
+          }
+          const SECTION_CAP = 4;
+          const groups: { key: string; cat: string | null; label: string; rows: RecipeRow[]; href: string }[] = [];
+          for (const cat of categories) {
+            groups.push({
+              key: cat,
+              cat,
+              label: categoryLabel(cat, lang) ?? cat,
+              rows: filtered.filter((r) => r.category === cat),
+              href: `/?lang=${lang}&cat=${cat}#recipes`,
+            });
+          }
+          const rest = filtered.filter((r) => !r.category || !categoryLabel(r.category, lang));
+          if (rest.length) groups.push({ key: 'more', cat: null, label: d.all, rows: rest, href: `/recipes${lq}` });
+          return groups.map((g) => (
+            <section key={g.key} className="index-group" data-recipe-group>
+              <div className="index-group-head">
+                <h3 className="index-group-title">
+                  {g.cat ? <CategoryIcon slug={g.cat} /> : null}
+                  {g.label}
+                </h3>
+                {g.rows.length > SECTION_CAP ? (
+                  <a className="see-all" href={g.href}>
+                    {d.seeAll}
+                    <ArrowUpRightIcon />
+                  </a>
+                ) : null}
+              </div>
+              <ul className="discovery-list" data-recipe-list>
+                {g.rows.slice(0, SECTION_CAP).map((r, i) => renderRow(r, i, false))}
+              </ul>
+            </section>
+          ));
+        })()}
         <div className="empty-note empty-search-card" data-search-empty data-nothing-matches={d.nothingMatches} hidden>
           <EmptySkilletIllustration />
           <p data-empty-msg>{d.empty}</p>
