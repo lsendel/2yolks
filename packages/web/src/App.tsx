@@ -328,26 +328,54 @@ export function RecipeIndex({ recipes, lang = 'en' }: { recipes: RecipeRow[]; la
           <section key={cat || 'uncategorized'} className="index-category">
             <h2>{cat ? (categoryLabel(cat, lang) ?? cat) : d.all}</h2>
             <ul className="discovery-list">
-              {(groups.get(cat) ?? []).map((r) => (
-                <li key={r.id} data-recipe-item>
-                  <div>
-                    <h3>
-                      <a className="stretched-row" href={recipePathFor(r.country, r.lang, r.slug)}>{r.title}</a>
-                    </h3>
-                    <div className="row-badges">
-                      {r.untested ? (
-                        <span className="status-label">{t.untestedBadge}</span>
-                      ) : (
-                        <span className="tested-badge"><FactIcon kind="check" />{t.testedBadge}</span>
-                      )}
-                      {r.lang !== lang ? <span className="fallback-language">{LANG_NAMES[r.lang]}</span> : null}
+              {(groups.get(cat) ?? []).map((r, i) => {
+                const catText = categoryLabel(r.category, lang);
+                const href = recipePathFor(r.country, r.lang, r.slug);
+                return (
+                  <li key={r.id} data-recipe-item className={r.imageId && asImageStyle(r.imageStyle) ? 'has-thumb' : undefined}>
+                    <span className="recipe-number">{String(i + 1).padStart(2, '0')}</span>
+                    {r.imageId && asImageStyle(r.imageStyle) ? (
+                      <span className="recipe-thumb">
+                        <img src={`/img/recipe/${r.imageId}`} alt="" loading="lazy" width="96" height="96" />
+                        <span className="thumb-label">
+                          {r.imageStyle === 'illustration'
+                            ? t.imageLabelIllustration
+                            : r.imageStyle === 'graphic'
+                              ? t.imageLabelGraphic
+                              : r.imageStyle === 'photo'
+                                ? t.imageLabelPhoto
+                                : null}
+                        </span>
+                      </span>
+                    ) : null}
+                    <div>
+                      {catText ? (
+                        <span className="eyebrow">
+                          <CategoryIcon slug={r.category} />
+                          {catText}
+                        </span>
+                      ) : null}
+                      <h3>
+                        <a className="stretched-row" href={href}>{r.title}</a>
+                      </h3>
+                      <div className="row-badges">
+                        {r.untested ? (
+                          <span className="status-label">{t.untestedBadge}</span>
+                        ) : (
+                          <span className="tested-badge"><FactIcon kind="check" />{t.testedBadge}</span>
+                        )}
+                        {r.lang !== lang ? <span className="fallback-language">{LANG_NAMES[r.lang]}</span> : null}
+                      </div>
                     </div>
-                  </div>
-                  <div className="row-end">
-                    {r.totalMinutes != null ? <span className="icon-stat"><FactIcon />{time(r.totalMinutes)}</span> : null}
-                  </div>
-                </li>
-              ))}
+                    <div className="row-end">
+                      {r.totalMinutes != null ? <span className="icon-stat"><FactIcon />{time(r.totalMinutes)}</span> : null}
+                      <a href={href} aria-label={r.title} tabIndex={-1}>
+                        <ArrowUpRightIcon />
+                      </a>
+                    </div>
+                  </li>
+                );
+              })}
             </ul>
           </section>
         ))}

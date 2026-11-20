@@ -93,3 +93,24 @@ describe('renderRecipeIndex (/recipes index page)', () => {
     expect(html).not.toContain('"numberOfItems"');
   });
 });
+
+describe('recipe index row structure (discovery-list parity with the home list)', () => {
+  const IMAGED = [
+    { id: 'r9', country: 'us', lang: 'en', slug: 'imaged-soup', title: 'Imaged Soup', category: 'soups-stews', untested: true, totalMinutes: 40, imageId: 'img-r9', imageStyle: 'photo' as const },
+  ];
+  it('renders number, category eyebrow with icon, and grid columns the CSS expects', () => {
+    const html = renderRecipeIndex({ recipes: IMAGED, lang: 'en' });
+    // .discovery-list li grid is "number | thumb? | title | row-end": the
+    // number span must exist or the title falls into the 2.2rem track.
+    expect(html).toContain('class="recipe-number"');
+    expect(html).toContain('cat-icon');
+    expect(html).toContain('class="eyebrow"');
+  });
+  it('shows the rights-cleared thumbnail with its readable honest label', () => {
+    const html = renderRecipeIndex({ recipes: IMAGED, lang: 'en' });
+    expect(html).toContain('has-thumb');
+    expect(html).toContain('/img/recipe/img-r9');
+    expect(html).toContain('thumb-label');
+    expect(html).toContain('Photo');
+  });
+});
