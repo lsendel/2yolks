@@ -8,7 +8,7 @@ import { bodyLimit } from 'hono/body-limit';
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import { eq, and, ne, desc } from 'drizzle-orm';
 import { LOCALES, getCountry, localizedCountryName, slugify, validateRecipeSubmission, RECIPE_CATEGORY_SLUGS, categoryLabel, isRecipeCategorySlug, CATEGORIES, accountStrings, fill, isAccountLang, validatorMessage, parseWarningMessage, ssrfMessage, type AccountStrings } from '@2yolks/contracts';
-import { renderAccountPage, escapeHtml as esc, CAPTURE_CLIENT_SCRIPT, CAPTURE_CHECK_STRINGS } from '@2yolks/web/server';
+import { renderAccountPage, escapeHtml as esc, CAPTURE_CLIENT_SCRIPT, CAPTURE_CHECK_STRINGS, DRAFT_PHOTO_CLIENT_SCRIPT } from '@2yolks/web/server';
 import { createDb, hasUserSharedRecipe, recipes, recipeLocales, sources, users } from './db';
 import { sendMail, type MailEnv } from './email';
 import { parseRecipeText, parseJsonLdRecipe, type ParsedRecipe } from './parse';
@@ -23,6 +23,17 @@ import {
   type Zeluto2YolksConfig,
   type ZelutoConnectionStatus,
 } from './zeluto';
+import {
+  renderDraftPhotoField,
+  extractUploadedPhoto,
+  wantsRemovePhoto,
+  activeDraftPhoto,
+  prepareDraftPhoto,
+  commitDraftPhoto,
+  deleteDraftPhoto,
+  photoErrorMessage,
+  type ValidatedDraftPhoto,
+} from './draftPhotos';
 
 type RateLimiter = { limit(opts: { key: string }): Promise<{ success: boolean }> };
 export type AccountBindings = MailEnv & {
@@ -218,9 +229,23 @@ const reportBodyLimit = bodyLimit({
     return c.html(renderAccountPage(t.titleTooLarge, `<div class="err" role="alert">${t.errTooLarge}</div>`, lang, new URL(c.req.url).pathname), 413);
   },
 });
+const photoBodyLimit = bodyLimit({
+  maxSize: 4 * 1024 * 1024,
+  onError: (c) => {
+    const lang = langOf(c as Ctx);
+    const t = accountStrings(lang);
+    if (wantsJson(c as Ctx)) return c.json({ ok: false, error: t.errTooLarge }, 413, NO_STORE);
+    return c.html(renderAccountPage(t.titleTooLarge, `<div class="err" role="alert">${t.errTooLarge}</div>`, lang, new URL(c.req.url).pathname), 413);
+  },
+});
 accountApp.use('*', async (c, next) => {
-  if (c.req.path.endsWith('/recipes/ai-assist')) return aiBodyLimit(c, next);
-  if (c.req.path.endsWith('/test-report')) return reportBodyLimit(c, next);
+  const path = c.req.path;
+  if (path.endsWith('/recipes/ai-assist')) return aiBodyLimit(c, next);
+  if (path.endsWith('/test-report')) return reportBodyLimit(c, next);
+  const ct = (c.req.header('content-type') ?? '').toLowerCase();
+  if (ct.startsWith('multipart/form-data') && (path.endsWith('/recipes/save') || /\/recipes\/[^/]+\/photo$/.test(path))) {
+    return photoBodyLimit(c, next);
+  }
   return standardBodyLimit(c, next);
 });
 
@@ -421,7 +446,7 @@ accountApp.use('/recipes/*', async (c, nextFn) => {
 export type FormState = {
   id?: string; title: string; intro: string; ingredients: string; steps: string; locale: string; category: string;
   prep: string; cook: string; servings: string; displayName: string; sourceKind: 'original' | 'adapted'; sourceUrl: string;
-  attest: boolean;
+  attest: boolean; photoUrl?: string | null;
 };
 const LANG_NAMES: Record<string, string> = { en: 'English', es: 'Español', fr: 'Français' };
 const blank = (user: { displayName: string | null } | null): FormState => ({
@@ -470,7 +495,7 @@ function captureDataIslands(): string {
 }
 
 /** Form fields that can carry an inline error (name attribute; the control id is `f-<name>`). */
-export type FormField = 'category' | 'title' | 'locale' | 'intro' | 'ingredients' | 'steps' | 'prep' | 'cook' | 'servings' | 'display_name' | 'source_kind' | 'source_url' | 'attest';
+export type FormField = 'category' | 'title' | 'locale' | 'intro' | 'ingredients' | 'steps' | 'prep' | 'cook' | 'servings' | 'dish_photo' | 'display_name' | 'source_kind' | 'source_url' | 'attest';
 export type FieldError = { field?: FormField; msg: string };
 
 /** Map a contracts-validator failure (path + raw message) to the form control it belongs to. */
@@ -628,14 +653,14 @@ ${stepNav(2)}</fieldset>
 <fieldset class="form-step" id="step-details" data-step="3"><legend class="step-heading" tabindex="-1">${t.stepDetails}</legend>
 <div class="row"><label>${t.labelPrep} <small>${t.optional}</small><input type="number" name="prep" id="f-prep" min="0" max="20000" value="${esc(s.prep)}"${inv('prep')}></label><label>${t.labelCook} <small>${t.optional}</small><input type="number" name="cook" id="f-cook" min="0" max="20000" value="${esc(s.cook)}"${inv('cook')}></label></div>${ferr('prep')}${ferr('cook')}
 <label>${t.labelServings} <small>${t.optional}</small><input type="number" name="servings" id="f-servings" min="1" max="1000" step="any" value="${esc(s.servings)}"${inv('servings')}></label>${ferr('servings')}
-<!-- PHOTO-FIELD-SLOT -->
+${renderDraftPhotoField(t, s, ferr('dish_photo'), inv('dish_photo'))}
 ${stepNav(3)}</fieldset>
 <fieldset class="form-step" id="step-credit" data-step="4"><legend class="step-heading" tabindex="-1">${t.stepCredit}</legend>
 <label>${t.labelAuthor}<input type="text" name="display_name" id="f-display_name" value="${esc(s.displayName)}" maxlength="80" required${inv('display_name')}></label>${ferr('display_name')}
 <label>${t.labelSource}<select name="source_kind" id="f-source_kind"${inv('source_kind')}><option value="original"${s.sourceKind === 'original' ? ' selected' : ''}>${t.sourceOriginal}</option><option value="adapted"${s.sourceKind === 'adapted' ? ' selected' : ''}>${t.sourceAdapted}</option></select></label>${ferr('source_kind')}
 <div class="field" data-source-link><label>${t.labelSourceLink} <small>${t.sourceLinkHint}</small><input type="url" name="source_url" id="f-source_url" value="${esc(s.sourceUrl)}" maxlength="2000" placeholder="https://"${inv('source_url')}></label>${ferr('source_url')}</div>
 <ul class="live-checks" data-live-checks><li data-check="title"></li><li data-check="ingredients"></li><li data-check="qty"></li><li data-check="cups"></li><li data-check="steps"></li><li data-check="servings"></li><li data-check="source"></li></ul>
-${finish}${inlineAuth}${stepNav(4)}</fieldset></form>${extras}</div>${preview}</div>${captureDataIslands()}<script>${CAPTURE_CLIENT_SCRIPT}</script>`;
+${finish}${inlineAuth}${stepNav(4)}</fieldset></form>${extras}</div>${preview}</div>${captureDataIslands()}<script>${CAPTURE_CLIENT_SCRIPT}</script><script>${DRAFT_PHOTO_CLIENT_SCRIPT}</script>`;
 }
 
 export function parseForm(form: Record<string, unknown>, user: { displayName: string | null } | null): FormState {
@@ -812,6 +837,7 @@ accountApp.get('/recipes/:id/edit', async (c) => {
   if (!row) return page(c, t.titleNotFound, banner('err', t.errDraftNotFound), 404);
   if (row.r.submittedAt || row.l.status === 'published') return page(c, t.titleSubmitted, banner('ok', t.okAlreadySentEdit), 409);
   const user = c.get('user')!;
+  const pendingPhoto = await activeDraftPhoto(c.env.DB, row.r.id, user.id);
   const ing = (JSON.parse(row.l.ingredientsJson) as unknown[]).map((x) => (typeof x === 'string' ? x : String((x as { name?: string }).name ?? ''))).join('\n');
   const s: FormState = {
     id: row.r.id, title: row.l.title, intro: row.l.intro ?? '', ingredients: ing, steps: (JSON.parse(row.l.stepsJson) as string[]).join('\n'),
@@ -819,6 +845,7 @@ accountApp.get('/recipes/:id/edit', async (c) => {
     category: row.r.category ?? '',
     displayName: row.r.authorName ?? user.displayName ?? '', sourceKind: row.s.license === 'user-adapted' ? 'adapted' : 'original', sourceUrl: row.s.license === 'user-adapted' ? row.s.url : '',
     attest: !!row.r.attestedAt,
+    photoUrl: pendingPhoto ? `/account/recipes/${esc(row.r.id)}/photo` : null,
   };
   const saved = c.req.query('saved') ? banner('ok', t.okSaved) : '';
   return page(c, t.formTitleEdit, rf(c, s, [], saved, removeDraftForm(t, lang, row.r.id)), 200, null, true);
@@ -828,9 +855,8 @@ accountApp.post('/recipes/save', async (c) => {
   const user = c.get('user')!;
   const lang = langOf(c);
   const t = accountStrings(lang);
-  // Parse first (the body is already capped at 256 KB) so every error page,
-  // including rate limiting, re-renders what the cook typed instead of a blank form.
-  const form = await c.req.parseBody();
+  // Parse first (bodyLimit protects size) so every error page re-renders what the cook typed.
+  const form = await c.req.parseBody() as Record<string, unknown>;
   const s = parseForm(form, user);
   const wantsSubmit = str(form['intent'], 10) === 'submit';
   const formTitle = s.id ? t.formTitleEdit : t.formTitleNew;
@@ -857,7 +883,25 @@ accountApp.post('/recipes/save', async (c) => {
       push({ field, msg: validatorMessage(t, f.path, f.message) });
     }
   }
-  if (errors.length || !result || !result.ok) return page(c, formTitle, rf(c, s, errors, '', extras), 400, null, true);
+  const uploadedPhoto = extractUploadedPhoto(form['dish_photo']);
+  let preparedPhoto: ValidatedDraftPhoto | null = null;
+  let photoErrStatus: 400 | 503 | null = null;
+  if (uploadedPhoto) {
+    const prepRes = await prepareDraftPhoto(c.env, { userId: user.id, recipeId: s.id, file: uploadedPhoto });
+    if (!prepRes.ok) {
+      push({ field: 'dish_photo', msg: photoErrorMessage(t, prepRes.reason) });
+      photoErrStatus = prepRes.status;
+    } else {
+      preparedPhoto = prepRes.photo;
+    }
+  }
+  if (errors.length || !result || !result.ok) {
+    if (s.id) {
+      const existing = await activeDraftPhoto(c.env.DB, s.id, user.id);
+      if (existing) s.photoUrl = `/account/recipes/${esc(s.id)}/photo`;
+    }
+    return page(c, formTitle, rf(c, s, errors, '', extras), photoErrStatus && errors.length === 1 ? photoErrStatus : 400, null, true);
+  }
 
   const sub = result.value;
   const loc = sub.locales[0]!;
@@ -908,6 +952,11 @@ accountApp.post('/recipes/save', async (c) => {
       return page(c, t.formTitleNew, rf(c, s, [msg]), 400, null, true);
     }
   }
+  if (preparedPhoto) {
+    await commitDraftPhoto(c.env, { userId: user.id, recipeId: id, photo: preparedPhoto, idGen: newId });
+  } else if (s.id && wantsRemovePhoto(form)) {
+    await deleteDraftPhoto(c.env, { recipeId: id, userId: user.id });
+  }
   if (wantsSubmit) {
     // One clear finish: the draft (with its attestation) is saved above, then sent in here.
     const row = await loadOwned(c, id);
@@ -915,6 +964,83 @@ accountApp.post('/recipes/save', async (c) => {
     return sendForReview(c, row);
   }
   return c.redirect(`/account/recipes/${id}/edit?saved=1${qsAmp(lang)}`, 303);
+});
+
+// Owner-only draft cover photo endpoints (never public; private, no-store).
+accountApp.get('/recipes/:id/photo', async (c) => {
+  const user = c.get('user')!;
+  const id = c.req.param('id');
+  const notFound = () => c.text('not found', 404, NO_STORE);
+  const owned = await loadOwned(c, id);
+  if (!owned || !c.env.IMAGES) return notFound();
+  const photo = await activeDraftPhoto(c.env.DB, id, user.id);
+  if (!photo) return notFound();
+  const obj = await c.env.IMAGES.get(photo.r2Key);
+  if (!obj) return notFound();
+  return new Response(obj.body, {
+    headers: {
+      'content-type': photo.mime,
+      'cache-control': 'private, no-store',
+      'x-content-type-options': 'nosniff',
+    },
+  });
+});
+
+accountApp.post('/recipes/:id/photo', async (c) => {
+  const user = c.get('user')!;
+  const lang = langOf(c);
+  const t = accountStrings(lang);
+  const json = wantsJson(c);
+  if (await limited(c.env.RL_SUBMIT, c, 'photo')) {
+    if (json) return c.json({ ok: false, error: t.errTooManyTries }, 429, NO_STORE);
+    return page(c, t.titleSlowDown, banner('err', t.errTooManyTries), 429);
+  }
+  const id = c.req.param('id');
+  const owned = await loadOwned(c, id);
+  if (!owned) {
+    if (json) return c.json({ ok: false, error: t.errDraftNotFound }, 404, NO_STORE);
+    return page(c, t.titleNotFound, banner('err', t.errDraftNotFound), 404);
+  }
+  if (owned.r.submittedAt || owned.l.status === 'published') {
+    if (json) return c.json({ ok: false, error: t.errAlreadySent }, 409, NO_STORE);
+    return page(c, t.titleSubmitted, banner('err', t.errAlreadySent), 409);
+  }
+  const form = await c.req.parseBody() as Record<string, unknown>;
+  const file = extractUploadedPhoto(form['dish_photo'] ?? form['photo']);
+  if (!file) {
+    if (json) return c.json({ ok: false, error: t.errDraftPhotoRead }, 400, NO_STORE);
+    return page(c, t.formTitleEdit, banner('err', t.errDraftPhotoRead), 400);
+  }
+  const prepRes = await prepareDraftPhoto(c.env, { userId: user.id, recipeId: id, file });
+  if (!prepRes.ok) {
+    const msg = photoErrorMessage(t, prepRes.reason);
+    if (json) return c.json({ ok: false, error: msg }, prepRes.status, NO_STORE);
+    return page(c, t.formTitleEdit, banner('err', msg), prepRes.status);
+  }
+  const saved = await commitDraftPhoto(c.env, { userId: user.id, recipeId: id, photo: prepRes.photo, idGen: newId });
+  const photoUrl = `/account/recipes/${esc(id)}/photo`;
+  if (json) return c.json({ ok: true, id: saved.id, photoUrl, mime: saved.mime, bytes: saved.bytes, width: saved.width, height: saved.height, message: t.draftPhotoSaved }, 200, NO_STORE);
+  return c.redirect(`/account/recipes/${id}/edit?saved=1${qsAmp(lang)}`, 303);
+});
+
+accountApp.post('/recipes/:id/photo/delete', async (c) => {
+  const user = c.get('user')!;
+  const lang = langOf(c);
+  const t = accountStrings(lang);
+  const json = wantsJson(c);
+  const id = c.req.param('id');
+  const owned = await loadOwned(c, id);
+  if (!owned) {
+    if (json) return c.json({ ok: false, error: t.errDraftNotFound }, 404, NO_STORE);
+    return page(c, t.titleNotFound, banner('err', t.errDraftNotFound), 404);
+  }
+  if (owned.r.submittedAt || owned.l.status === 'published') {
+    if (json) return c.json({ ok: false, error: t.errAlreadySent }, 409, NO_STORE);
+    return page(c, t.titleSubmitted, banner('err', t.errAlreadySent), 409);
+  }
+  await deleteDraftPhoto(c.env, { recipeId: id, userId: user.id });
+  if (json) return c.json({ ok: true, message: t.draftPhotoRemoved }, 200, NO_STORE);
+  return c.redirect(`/account/recipes/${id}/edit${qs(lang)}`, 303);
 });
 
 type OwnedRow = NonNullable<Awaited<ReturnType<typeof loadOwned>>>;
@@ -1094,6 +1220,7 @@ accountApp.post('/recipes/:id/delete', async (c) => {
     "UPDATE recipe_locales SET status = 'rejected' WHERE recipe_id = ? AND status = 'draft' AND EXISTS (SELECT 1 FROM recipes r WHERE r.id = ? AND r.owner_user_id = ? AND r.submitted_at IS NULL)",
   ).bind(id, id, user.id).run();
   if (r.meta.changes !== 1) return page(c, accountStrings(langOf(c)).titleNotFound, banner('err', accountStrings(langOf(c)).errDraftNotFoundOrSent), 404);
+  await deleteDraftPhoto(c.env, { recipeId: id, userId: user.id });
   return c.redirect(`/account${qs(langOf(c))}`, 303);
 });
 

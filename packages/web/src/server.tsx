@@ -46,6 +46,7 @@ import {
   CAPTURE_CLIENT_SCRIPT,
   CAPTURE_CHECK_STRINGS,
 } from './clientScript';
+import { DRAFT_PHOTO_CLIENT_SCRIPT } from './photoClientScript';
 import type { RecipePage, IngredientEntry } from '@2yolks/contracts';
 import {
   uiStrings,
@@ -1006,6 +1007,9 @@ html[data-theme="dark"] .acct .preview-badge { background: var(--lime); color: v
 .acct .preview-ing, .acct .preview-steps { margin: 0; padding-left: 1.15rem; font-size: 0.88rem; line-height: 1.45; display: grid; gap: 0.2rem; }
 .acct .paste-actions { display: flex; flex-wrap: wrap; gap: 0.55rem; align-items: center; }
 .acct .preview-back-btn { padding: 0.3rem 0.75rem; font-size: 0.82rem; }
+.acct .draft-photo-field { display: grid; gap: 0.5rem; }
+.acct .draft-photo-preview { width: 160px; max-width: 100%; aspect-ratio: 4/3; object-fit: cover; border: 1px solid var(--line-strong); display: block; }
+.acct .draft-photo-actions { display: flex; flex-wrap: wrap; gap: 0.55rem; align-items: center; }
 .acct [hidden] { display: none !important; }
 @media (min-width: 721px) {
   .acct .capture-shell { grid-template-columns: minmax(0, 1fr) 300px; }
@@ -1041,4 +1045,4 @@ export function renderAccountPage(
   return shell(`<style>${ACCOUNT_CSS}</style><main id="main" class="acct${opts?.wide ? ' acct-capture' : ''}">${bodyHtml}</main>`, { title: `${title} - 2yolks`, noindex: true, lang, nav });
 }
 
-export { CAPTURE_CLIENT_SCRIPT, CAPTURE_CHECK_STRINGS };
+export { CAPTURE_CLIENT_SCRIPT, CAPTURE_CHECK_STRINGS, DRAFT_PHOTO_CLIENT_SCRIPT };

@@ -73,6 +73,10 @@ export interface AccountStrings {
   stepBack: string; stepNext: string; stepProgress: string; stepNeedRequired: string; stepSoftWarn: string;
   previewTitle: string; previewTab: string; previewBadge: string; previewUntitled: string; previewPrep: string; previewCook: string; previewServes: string; previewEmpty: string; previewBackToForm: string;
   authStepTitle: string; authStepLead: string; authCodeSent: string; authVerifyBtn: string; authChangeEmail: string; authWorking: string; authDone: string;
+  // S5 contributor dish cover photo
+  draftPhotoLabel: string; draftPhotoHint: string; draftPhotoRemove: string; draftPhotoResizing: string;
+  draftPhotoSaved: string; draftPhotoRemoved: string;
+  errDraftPhotoInvalid: string; errDraftPhotoStorage: string; errDraftPhotoQuota: string; errDraftPhotoRead: string;
 }
 
 const en: AccountStrings = {
@@ -224,6 +228,16 @@ const en: AccountStrings = {
   authCodeSent: 'We sent a code to {email}. It works for 10 minutes.',
   authVerifyBtn: 'Confirm and continue', authChangeEmail: 'Use a different email',
   authWorking: 'One moment…', authDone: 'Email confirmed. Saving your recipe…',
+  draftPhotoLabel: 'Photo of your dish (optional)',
+  draftPhotoHint: 'JPEG, PNG or WebP (max 3 MB). Resized in your browser and kept private with your draft — published only if approved.',
+  draftPhotoRemove: 'Remove photo',
+  draftPhotoResizing: 'Preparing photo…',
+  draftPhotoSaved: 'Photo updated.',
+  draftPhotoRemoved: 'Photo removed.',
+  errDraftPhotoInvalid: 'That photo could not be verified as a valid JPEG, PNG, or WebP image under 3 MB.',
+  errDraftPhotoStorage: 'Photo storage is not configured right now.',
+  errDraftPhotoQuota: 'Your drafts have reached the photo storage limit. Remove an older photo first.',
+  errDraftPhotoRead: 'Please pick a valid photo file.',
 };
 
 const es: AccountStrings = {
@@ -375,6 +389,16 @@ const es: AccountStrings = {
   authCodeSent: 'Enviamos un código a {email}. Funciona por 10 minutos.',
   authVerifyBtn: 'Confirmar y continuar', authChangeEmail: 'Usar otro correo',
   authWorking: 'Un momento…', authDone: 'Correo confirmado. Guardando tu receta…',
+  draftPhotoLabel: 'Foto de tu plato (opcional)',
+  draftPhotoHint: 'JPEG, PNG o WebP (máx. 3 MB). Se reduce en tu navegador y queda privada en tu borrador; solo se publica si se aprueba.',
+  draftPhotoRemove: 'Quitar foto',
+  draftPhotoResizing: 'Preparando foto…',
+  draftPhotoSaved: 'Foto actualizada.',
+  draftPhotoRemoved: 'Foto eliminada.',
+  errDraftPhotoInvalid: 'No se pudo verificar esa foto como un archivo JPEG, PNG o WebP válido de menos de 3 MB.',
+  errDraftPhotoStorage: 'El almacenamiento de fotos no está disponible ahora mismo.',
+  errDraftPhotoQuota: 'Tus borradores alcanzaron el límite de almacenamiento de fotos. Quita una foto anterior primero.',
+  errDraftPhotoRead: 'Elige un archivo de foto válido.',
 };
 
 const fr: AccountStrings = {
@@ -526,6 +550,16 @@ const fr: AccountStrings = {
   authCodeSent: 'Nous avons envoyé un code à {email}. Il est valable 10 minutes.',
   authVerifyBtn: 'Confirmer et continuer', authChangeEmail: 'Utiliser une autre adresse',
   authWorking: 'Un instant…', authDone: 'E-mail confirmé. Enregistrement de votre recette…',
+  draftPhotoLabel: 'Photo de votre plat (facultatif)',
+  draftPhotoHint: 'JPEG, PNG ou WebP (max 3 Mo). Redimensionnée dans votre navigateur et gardée privée avec votre brouillon — publiée uniquement si approuvée.',
+  draftPhotoRemove: 'Supprimer la photo',
+  draftPhotoResizing: 'Préparation de la photo…',
+  draftPhotoSaved: 'Photo mise à jour.',
+  draftPhotoRemoved: 'Photo supprimée.',
+  errDraftPhotoInvalid: 'Cette photo n’a pas pu être vérifiée comme un fichier JPEG, PNG ou WebP valide de moins de 3 Mo.',
+  errDraftPhotoStorage: 'Le stockage des photos n’est pas configuré pour le moment.',
+  errDraftPhotoQuota: 'Vos brouillons ont atteint la limite de stockage photo. Supprimez d’abord une photo plus ancienne.',
+  errDraftPhotoRead: 'Choisissez un fichier photo valide.',
 };
 
 const ACCOUNT_STRINGS: Record<string, AccountStrings> = { en, es, fr };

@@ -63,9 +63,15 @@ describe('Phase 1 navigation & search chrome', () => {
     expect(bar.slice(bar.indexOf('<details'))).toContain('data-og-card');
   });
 
-  it('privacy page discloses zero-result search logging and local draft copies', () => {
-    for (const [lang, needle] of [['en', 'search words'], ['es', 'palabras buscadas'], ['fr', 'mots cherch']] as const) {
-      expect(renderPrivacy(undefined, 'https://2yolks.com', lang)).toContain(needle);
+  it('privacy page discloses zero-result search logging, local draft copies, and optional draft photos', () => {
+    for (const [lang, needle, photoNeedle] of [
+      ['en', 'search words', 'optional dish photo'],
+      ['es', 'palabras buscadas', 'foto opcional'],
+      ['fr', 'mots cherch', 'photo facultative'],
+    ] as const) {
+      const html = renderPrivacy(undefined, 'https://2yolks.com', lang);
+      expect(html).toContain(needle);
+      expect(html).toContain(photoNeedle);
     }
   });
 });

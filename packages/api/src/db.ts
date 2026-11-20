@@ -126,6 +126,33 @@ export const recipeImages = sqliteTable(
   (t) => [index('idx_recipe_images_recipe').on(t.recipeId)],
 );
 
+/** Optional contributor cover photo attached to a private draft (migration 0012). */
+export const draftPhotos = sqliteTable(
+  'draft_photos',
+  {
+    id: text('id').primaryKey(),
+    recipeId: text('recipe_id')
+      .notNull()
+      .references(() => recipes.id),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id),
+    r2Key: text('r2_key').notNull(),
+    mime: text('mime', { enum: ['image/jpeg', 'image/png', 'image/webp'] }).notNull(),
+    bytes: integer('bytes').notNull(),
+    width: integer('width').notNull(),
+    height: integer('height').notNull(),
+    status: text('status', { enum: ['pending', 'approved', 'rejected'] })
+      .notNull()
+      .default('pending'),
+    createdAt: text('created_at').notNull(),
+    moderatedAt: text('moderated_at'),
+    moderatedBy: text('moderated_by'),
+    imageId: text('image_id'),
+  },
+  (t) => [index('idx_draft_photos_user').on(t.userId, t.status)],
+);
+
 export const recipeLocales = sqliteTable(
   'recipe_locales',
   {
@@ -179,7 +206,7 @@ export const searchGapLogs = sqliteTable(
 );
 
 export function createDb(d1: D1Database) {
-  return drizzle(d1, { schema: { users, sources, recipes, recipeLocales, recipeImages, recipeSlugAliases, searchGapLogs, recipeTestReports } });
+  return drizzle(d1, { schema: { users, sources, recipes, recipeLocales, recipeImages, draftPhotos, recipeSlugAliases, searchGapLogs, recipeTestReports } });
 }
 
 const DEMO_LICENSE = 'internal-demo';

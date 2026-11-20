@@ -1108,7 +1108,8 @@ describe('Phase 2 share capture: draft-first, return-to, JSON auth & in-page pas
       expect((html.match(/class="form-step"/g) ?? []).length).toBe(5);
       const markupOnly = html.slice(html.indexOf('<main'), html.indexOf('<script type="application/json"'));
       expect(markupOnly).not.toContain('data-ai-panel');
-      expect(markupOnly).not.toContain('<input type="file"');
+      expect(markupOnly).not.toContain('data-ai-photo');
+      expect(markupOnly).toContain('data-draft-photo-input');
     }
     for (const table of ['recipes', 'users', 'sessions']) {
       expect((await DB.prepare(`SELECT count(*) AS n FROM ${table}`).first<{ n: number }>())!.n).toBe(0);
