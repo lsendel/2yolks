@@ -9,12 +9,20 @@ import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import { eq, and, ne, desc } from 'drizzle-orm';
 import { LOCALES, getCountry, localizedCountryName, slugify, validateRecipeSubmission, RECIPE_CATEGORY_SLUGS, categoryLabel, isRecipeCategorySlug, CATEGORIES, accountStrings, fill, isAccountLang, validatorMessage, parseWarningMessage, ssrfMessage, type AccountStrings } from '@2yolks/contracts';
 import { renderAccountPage, escapeHtml as esc, CAPTURE_CLIENT_SCRIPT, CAPTURE_CHECK_STRINGS } from '@2yolks/web/server';
-import { createDb, recipes, recipeLocales, sources, users } from './db';
+import { createDb, hasUserSharedRecipe, recipes, recipeLocales, sources, users } from './db';
 import { sendMail, type MailEnv } from './email';
 import { parseRecipeText, parseJsonLdRecipe, type ParsedRecipe } from './parse';
 import { safeFetchText, SsrfError } from './ssrf';
 import { assistRecipe, reserveAiBudget, sanitizeMediaPart, DEFAULT_AI_DAILY_CAP, type AiAssistRequest } from './aiRecipe';
 import { validateImage } from './imageValidation';
+import {
+  build2YolksZelutoLinks,
+  get2YolksCreatorRegistrationStatus,
+  push2YolksContactToZeluto,
+  request2YolksCreatorRegistration,
+  type Zeluto2YolksConfig,
+  type ZelutoConnectionStatus,
+} from './zeluto';
 
 type RateLimiter = { limit(opts: { key: string }): Promise<{ success: boolean }> };
 export type AccountBindings = MailEnv & {
@@ -32,6 +40,10 @@ export type AccountBindings = MailEnv & {
   /** Optional Workers rate-limit bindings (approximate, per location). Absent = skipped. */
   RL_AUTH?: RateLimiter;
   RL_SUBMIT?: RateLimiter;
+  ZELUTO_URL?: string;
+  ZELUTO_CLIENT_SECRET?: string;
+  ZELUTO_SYNC_SECRET?: string;
+  ZELUTO_BRAND_ORG_ID?: string;
 };
 
 export const SESSION_COOKIE = '__Host-2y_sid';
@@ -52,6 +64,21 @@ type Ctx = Context<{ Bindings: AccountBindings; Variables: { user: { id: string;
 const langOf = (c: Ctx): string => { const l = c.req.query('lang'); return isAccountLang(l) ? l : 'en'; };
 const qs = (lang: string): string => (lang === 'en' ? '' : `?lang=${lang}`);
 const qsAmp = (lang: string): string => (lang === 'en' ? '' : `&lang=${lang}`);
+export function safeNextPath(raw: unknown): string | null {
+  return typeof raw === 'string' &&
+    /^(?:\/account(?:\/subscribers)?|\/account\/recipes\/(?:new|[a-z0-9_-]{1,32}\/(?:edit|test-report)))$/.test(raw)
+    ? raw
+    : null;
+}
+
+function zelutoConfigFromCtx(c: Ctx): Zeluto2YolksConfig {
+  return {
+    zelutoUrl: c.env.ZELUTO_URL,
+    clientSecret: c.env.ZELUTO_CLIENT_SECRET,
+    syncSecret: c.env.ZELUTO_SYNC_SECRET,
+    brandOrgId: c.env.ZELUTO_BRAND_ORG_ID,
+  };
+}
 
 export async function sha256Hex(s: string): Promise<string> {
   const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
@@ -72,9 +99,10 @@ export const normEmail = (v: unknown): string | null => {
 };
 export const str = (v: unknown, max = 5000): string => (typeof v === 'string' ? v.replace(/\r/g, '').slice(0, max) : '');
 
-function page(c: Ctx, title: string, body: string, status: 200 | 400 | 403 | 404 | 409 | 429 | 503 = 200) {
+function page(c: Ctx, title: string, body: string, status: 200 | 400 | 403 | 404 | 409 | 429 | 503 = 200, nextOverride?: string | null) {
   const lang = langOf(c);
-  return c.html(renderAccountPage(title, body, lang, new URL(c.req.url).pathname), status, { 'cache-control': 'no-store', 'x-robots-tag': 'noindex' });
+  const next = nextOverride !== undefined ? nextOverride : safeNextPath(c.req.query('next'));
+  return c.html(renderAccountPage(title, body, lang, new URL(c.req.url).pathname, next), status, { 'cache-control': 'no-store', 'x-robots-tag': 'noindex' });
 }
 const banner = (kind: 'err' | 'ok', msg: string) => `<div class="${kind}" role="${kind === 'err' ? 'alert' : 'status'}">${msg}</div>`;
 
@@ -164,20 +192,24 @@ accountApp.use('*', async (c, next) => {
 
 // --- Views -------------------------------------------------------------------
 
-const signInForm = (t: AccountStrings, lang: string, msg = '') => `<h1>${t.signInTitle}</h1>
+const nextHidden = (next: string | null) => (next ? `<input type="hidden" name="next" value="${esc(next)}">` : '');
+
+const signInForm = (t: AccountStrings, lang: string, msg = '', next: string | null = null) => `<h1>${t.signInTitle}</h1>
 <p class="lead">${t.signInLead}</p>${msg}
-<form method="post" action="/account/code${qs(lang)}"><label>${t.signInEmailLabel}<input type="email" name="email" required autocomplete="email" maxlength="254"></label><button type="submit">${t.signInButton}</button></form>
+<form method="post" action="/account/code${qs(lang)}">${nextHidden(next)}<label>${t.signInEmailLabel}<input type="email" name="email" required autocomplete="email" maxlength="254"></label><button type="submit">${t.signInButton}</button></form>
 <p class="hint">${t.signInHint}</p>`;
 
-const codeForm = (t: AccountStrings, lang: string, email: string, msg = '') => `<h1>${t.codeTitle}</h1>
+const codeForm = (t: AccountStrings, lang: string, email: string, msg = '', next: string | null = null) => `<h1>${t.codeTitle}</h1>
 <p class="lead">${fill(t.codeLead, { email: esc(email) })}</p>${msg}
-<form method="post" action="/account/verify${qs(lang)}"><input type="hidden" name="email" value="${esc(email)}"><label>${t.codeLabel}<input type="text" name="code" inputmode="numeric" pattern="[0-9]{6}" autocomplete="one-time-code" maxlength="6" required></label><button type="submit">${t.codeButton}</button></form>`;
+<form method="post" action="/account/verify${qs(lang)}">${nextHidden(next)}<input type="hidden" name="email" value="${esc(email)}"><label>${t.codeLabel}<input type="text" name="code" inputmode="numeric" pattern="[0-9]{6}" autocomplete="one-time-code" maxlength="6" required></label><button type="submit">${t.codeButton}</button></form>`;
 
 accountApp.get('/', async (c) => {
   const lang = langOf(c);
   const t = accountStrings(lang);
+  const next = safeNextPath(c.req.query('next'));
   const user = c.get('user');
-  if (!user) return page(c, t.signInPageTitle, signInForm(t, lang));
+  if (!user) return page(c, t.signInPageTitle, signInForm(t, lang, '', next), 200, next);
+  if (next) return c.redirect(`${next}${qs(lang)}`, 303);
   const db = createDb(c.env.DB);
   const rows = await db.select({ id: recipes.id, submittedAt: recipes.submittedAt, title: recipeLocales.title, status: recipeLocales.status })
     .from(recipes).innerJoin(recipeLocales, eq(recipeLocales.recipeId, recipes.id))
@@ -187,8 +219,13 @@ accountApp.get('/', async (c) => {
     const edit = r.submittedAt || r.status === 'published' ? '' : `<a href="/account/recipes/${esc(r.id)}/edit${qs(lang)}">${t.editLink}</a>`;
     return `<li><span><strong>${esc(r.title)}</strong><br><span class="badge">${label}</span></span><span>${edit}</span></li>`;
   }).join('');
+  const isCreator = await hasUserSharedRecipe(c.env.DB, user.id);
+  const creatorSection = isCreator
+    ? `<div class="panel"><h2>Creator Subscribers &amp; Zeluto CRM</h2><p>Because you shared a recipe, your Creator workspace is unlocked.</p><p><a class="btn" href="/account/subscribers${qs(lang)}">Manage Subscribers &amp; Zeluto CRM</a></p></div>`
+    : '';
   return page(c, t.homePageTitle, `<h1>${t.homeTitle}</h1><p class="lead">${fill(t.homeLead, { email: esc(user.email) })}</p>
 <p><a class="btn" href="/account/recipes/new${qs(lang)}">${t.addRecipe}</a></p>
+${creatorSection}
 <div class="panel"><h2>${t.yourDrafts}</h2>${items ? `<ul class="mine">${items}</ul>` : `<p class="hint">${t.emptyDrafts}</p>`}</div>
 <form method="post" action="/account/logout${qs(lang)}"><button class="quiet" type="submit">${t.signOut}</button></form>`);
 });
@@ -196,11 +233,13 @@ accountApp.get('/', async (c) => {
 accountApp.post('/code', async (c) => {
   const lang = langOf(c);
   const t = accountStrings(lang);
-  if (await limited(c.env.RL_AUTH, c, 'code')) return page(c, t.titleSlowDown, signInForm(t, lang, banner('err', t.errTooManyTries)), 429);
+  const nextQuery = safeNextPath(c.req.query('next'));
+  if (await limited(c.env.RL_AUTH, c, 'code')) return page(c, t.titleSlowDown, signInForm(t, lang, banner('err', t.errTooManyTries), nextQuery), 429, nextQuery);
   const form = await c.req.parseBody();
+  const next = safeNextPath(form['next'] ?? nextQuery);
   const email = normEmail(form['email']);
-  if (!email) return page(c, t.signInPageTitle, signInForm(t, lang, banner('err', t.errInvalidEmail)), 400);
-  if (!c.env.RESEND_API_KEY) return page(c, t.signInPageTitle, signInForm(t, lang, banner('err', t.errSigninOff)), 503);
+  if (!email) return page(c, t.signInPageTitle, signInForm(t, lang, banner('err', t.errInvalidEmail), next), 400, next);
+  if (!c.env.RESEND_API_KEY) return page(c, t.signInPageTitle, signInForm(t, lang, banner('err', t.errSigninOff), next), 503, next);
   const now = Date.now();
   await cleanupExpired(c.env.DB, now);
   const code = randomCode();
@@ -209,11 +248,11 @@ accountApp.post('/code', async (c) => {
   const ins = await c.env.DB.prepare(
     'INSERT INTO auth_codes (id,email,code_hash,expires_at,attempts,used,created_at) SELECT ?,?,?,?,0,0,? WHERE (SELECT count(*) FROM auth_codes WHERE email = ? AND created_at > ?) < ?',
   ).bind(id, email, await sha256Hex(`${email}:${code}`), now + CODE_TTL_MS, now, email, now - CODE_TTL_MS, CODES_PER_EMAIL_10MIN).run();
-  if (ins.meta.changes !== 1) return page(c, t.titleSlowDown, signInForm(t, lang, banner('err', t.errTooManyCodes)), 429);
+  if (ins.meta.changes !== 1) return page(c, t.titleSlowDown, signInForm(t, lang, banner('err', t.errTooManyCodes), next), 429, next);
   // Then the site-wide daily mail budget (atomic conditional INSERT). No budget: the code is never sent, so kill it.
   if (!(await reserveMail(c.env.DB, 'code', CODES_PER_DAY))) {
     await c.env.DB.prepare('UPDATE auth_codes SET used = 1 WHERE id = ?').bind(id).run();
-    return page(c, t.titleBusy, signInForm(t, lang, banner('err', t.errBusy)), 503);
+    return page(c, t.titleBusy, signInForm(t, lang, banner('err', t.errBusy), next), 503, next);
   }
   // Only the newest code stays valid. Order by insertion (rowid), so a concurrently issued newer code is never invalidated by an older request.
   await c.env.DB.prepare('UPDATE auth_codes SET used = 1 WHERE email = ? AND used = 0 AND rowid < (SELECT rowid FROM auth_codes WHERE id = ?)').bind(email, id).run();
@@ -221,44 +260,63 @@ accountApp.post('/code', async (c) => {
   if (!sent) {
     // No refund: delivery state is ambiguous, so the budget slot and per-email slot stay used. Invalidate the code.
     await c.env.DB.prepare('UPDATE auth_codes SET used = 1 WHERE id = ?').bind(id).run();
-    return page(c, t.signInPageTitle, signInForm(t, lang, banner('err', t.errSendFailed)), 503);
+    return page(c, t.signInPageTitle, signInForm(t, lang, banner('err', t.errSendFailed), next), 503, next);
   }
-  return page(c, t.codePageTitle, codeForm(t, lang, email));
+  return page(c, t.codePageTitle, codeForm(t, lang, email, '', next), 200, next);
 });
 
 accountApp.post('/verify', async (c) => {
   const lang = langOf(c);
   const t = accountStrings(lang);
-  if (await limited(c.env.RL_AUTH, c, 'verify')) return page(c, t.titleSlowDown, signInForm(t, lang, banner('err', t.errTooManyTries)), 429);
+  const nextQuery = safeNextPath(c.req.query('next'));
+  if (await limited(c.env.RL_AUTH, c, 'verify')) return page(c, t.titleSlowDown, signInForm(t, lang, banner('err', t.errTooManyTries), nextQuery), 429, nextQuery);
   const form = await c.req.parseBody();
+  const next = safeNextPath(form['next'] ?? nextQuery);
   const email = normEmail(form['email']);
   const code = str(form['code'], 12).trim();
-  if (!email || !/^\d{6}$/.test(code)) return page(c, t.codePageTitle, codeForm(t, lang, email ?? '', banner('err', t.errEnterCode)), 400);
+  if (!email || !/^\d{6}$/.test(code)) return page(c, t.codePageTitle, codeForm(t, lang, email ?? '', banner('err', t.errEnterCode), next), 400, next);
   const now = Date.now();
   const row = await c.env.DB.prepare('SELECT id, code_hash AS hash FROM auth_codes WHERE email = ? AND used = 0 AND expires_at > ? AND attempts < ? ORDER BY rowid DESC LIMIT 1')
     .bind(email, now, MAX_ATTEMPTS).first<{ id: string; hash: string }>();
-  if (!row) return page(c, t.signInPageTitle, signInForm(t, lang, banner('err', t.errCodeExpired)), 400);
+  if (!row) return page(c, t.signInPageTitle, signInForm(t, lang, banner('err', t.errCodeExpired), next), 400, next);
   // Claim one attempt atomically; concurrent guesses cannot exceed the cap.
   const claim = await c.env.DB.prepare('UPDATE auth_codes SET attempts = attempts + 1 WHERE id = ? AND used = 0 AND attempts < ? AND expires_at > ?').bind(row.id, MAX_ATTEMPTS, now).run();
-  if (claim.meta.changes !== 1) return page(c, t.signInPageTitle, signInForm(t, lang, banner('err', t.errCodeExpired)), 400);
+  if (claim.meta.changes !== 1) return page(c, t.signInPageTitle, signInForm(t, lang, banner('err', t.errCodeExpired), next), 400, next);
   const given = await sha256Hex(`${email}:${code}`);
   let diff = given.length ^ row.hash.length;
   for (let i = 0; i < given.length; i++) diff |= given.charCodeAt(i) ^ (row.hash.charCodeAt(i) || 0);
-  if (diff !== 0) return page(c, t.codePageTitle, codeForm(t, lang, email, banner('err', t.errCodeWrong)), 400);
+  if (diff !== 0) return page(c, t.codePageTitle, codeForm(t, lang, email, banner('err', t.errCodeWrong), next), 400, next);
   // Single-use: exactly one concurrent correct submission can flip used 0 -> 1.
   const use = await c.env.DB.prepare('UPDATE auth_codes SET used = 1 WHERE id = ? AND used = 0').bind(row.id).run();
-  if (use.meta.changes !== 1) return page(c, t.signInPageTitle, signInForm(t, lang, banner('err', t.errCodeUsed)), 400);
+  if (use.meta.changes !== 1) return page(c, t.signInPageTitle, signInForm(t, lang, banner('err', t.errCodeUsed), next), 400, next);
   let user = await c.env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email).first<{ id: string }>();
   if (!user) {
     await c.env.DB.prepare('INSERT OR IGNORE INTO users (id,email,display_name,created_at) VALUES (?,?,NULL,?)').bind(newId(), email, new Date().toISOString()).run();
     user = await c.env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email).first<{ id: string }>();
-    if (!user) return page(c, t.signInPageTitle, signInForm(t, lang, banner('err', t.errGeneric)), 503);
+    if (!user) return page(c, t.signInPageTitle, signInForm(t, lang, banner('err', t.errGeneric), next), 503, next);
   }
   const token = randomToken();
   await c.env.DB.prepare('INSERT INTO sessions (id,user_id,expires_at,created_at) VALUES (?,?,?,?)')
     .bind(await sha256Hex(token), user.id, now + SESSION_DAYS * 86_400_000, now).run();
+  if (c.env.ZELUTO_CLIENT_SECRET?.trim()) {
+    const isCreator = await hasUserSharedRecipe(c.env.DB, user.id);
+    const pushRes = await push2YolksContactToZeluto(zelutoConfigFromCtx(c), {
+      email,
+      externalId: user.id,
+      externalEntityType: 'user',
+      stage: isCreator ? 'creator' : 'subscriber',
+      externalUrlPath: '/account',
+      tags: ['2yolks', isCreator ? 'creator' : 'subscriber'],
+    });
+    if (pushRes.ok && pushRes.zelutoId) {
+      await c.env.DB.prepare('UPDATE users SET zeluto_contact_id = ? WHERE id = ?')
+        .bind(pushRes.zelutoId, user.id)
+        .run()
+        .catch(() => {});
+    }
+  }
   setCookie(c, SESSION_COOKIE, token, { httpOnly: true, secure: true, sameSite: 'Lax', path: '/', maxAge: SESSION_DAYS * 86_400 });
-  return c.redirect(`/account${qs(lang)}`, 303);
+  return c.redirect(`${next ?? '/account'}${qs(lang)}`, 303);
 });
 
 accountApp.post('/logout', async (c) => {
@@ -269,9 +327,16 @@ accountApp.post('/logout', async (c) => {
 });
 
 // Everything below needs a signed-in user.
-accountApp.use('/recipes/*', async (c, next) => {
-  if (!c.get('user')) return c.redirect(`/account${qs(langOf(c))}`, 303);
-  await next();
+accountApp.use('/recipes/*', async (c, nextFn) => {
+  if (!c.get('user')) {
+    const lang = langOf(c);
+    const nextPath = c.req.method === 'GET' ? safeNextPath(new URL(c.req.url).pathname) : null;
+    const target = nextPath
+      ? `/account?${lang === 'en' ? '' : `lang=${lang}&`}next=${encodeURIComponent(nextPath)}`
+      : `/account${qs(lang)}`;
+    return c.redirect(target, 303);
+  }
+  await nextFn();
 });
 
 // --- Draft form --------------------------------------------------------------
@@ -607,6 +672,23 @@ accountApp.post('/recipes/:id/submit', async (c) => {
   const now = new Date().toISOString();
   const flip = await c.env.DB.prepare('UPDATE recipes SET submitted_at = ? WHERE id = ? AND owner_user_id = ? AND submitted_at IS NULL AND attested_at IS NOT NULL').bind(now, row.r.id, user.id).run();
   if (flip.meta.changes !== 1) return page(c, t.titleSubmitted, banner('ok', t.okAlreadySent), 409);
+  if (c.env.ZELUTO_CLIENT_SECRET?.trim()) {
+    const pushRes = await push2YolksContactToZeluto(zelutoConfigFromCtx(c), {
+      email: user.email,
+      ...(user.displayName ? { firstName: user.displayName } : {}),
+      externalId: user.id,
+      externalEntityType: 'user',
+      stage: 'creator',
+      externalUrlPath: '/account/subscribers',
+      tags: ['2yolks', 'creator'],
+    });
+    if (pushRes.ok && pushRes.zelutoId) {
+      await c.env.DB.prepare('UPDATE users SET zeluto_contact_id = ? WHERE id = ?')
+        .bind(pushRes.zelutoId, user.id)
+        .run()
+        .catch(() => {});
+    }
+  }
   // The admin queue (MCP recipes.list submitted:true) is the source of truth; the email is an extra,
   // counted against the same daily mail budget as login codes.
   if (c.env.REVIEW_NOTIFY_TO && (await reserveMail(c.env.DB, 'notice', NOTICES_PER_DAY))) {
@@ -735,4 +817,261 @@ accountApp.post('/recipes/:id/delete', async (c) => {
   ).bind(id, id, user.id).run();
   if (r.meta.changes !== 1) return page(c, accountStrings(langOf(c)).titleNotFound, banner('err', accountStrings(langOf(c)).errDraftNotFoundOrSent), 404);
   return c.redirect(`/account${qs(langOf(c))}`, 303);
+});
+
+// --- Creator Subscribers & Zeluto CRM (Strict Creator Isolation) ------------
+
+accountApp.get('/subscribers', async (c) => {
+  const lang = langOf(c);
+  const t = accountStrings(lang);
+  const user = c.get('user');
+  if (!user) {
+    return c.redirect(`/account?${lang === 'en' ? '' : `lang=${lang}&`}next=${encodeURIComponent('/account/subscribers')}`, 303);
+  }
+  const wantsJson = (c.req.header('accept') || '').includes('application/json');
+  const isCreator = await hasUserSharedRecipe(c.env.DB, user.id);
+  if (!isCreator) {
+    if (wantsJson) {
+      return c.json({ error: 'creator_required', message: 'Share a recipe to become a Creator and unlock subscribers CRM.' }, 403);
+    }
+    return page(
+      c,
+      'Creator Subscribers',
+      `<h1>Creator Subscribers</h1>${banner('err', 'Share at least one recipe to become a Creator and unlock your isolated subscriber workspace.')}<p><a class="btn" href="/account/recipes/new${qs(lang)}">Share a Recipe</a></p>`,
+      403,
+    );
+  }
+
+  let creatorRow = await c.env.DB.prepare(
+    'SELECT zeluto_org_id, zeluto_connection_status, zeluto_contact_id FROM users WHERE id = ? LIMIT 1',
+  )
+    .bind(user.id)
+    .first<{
+      zeluto_org_id: string | null;
+      zeluto_connection_status: string | null;
+      zeluto_contact_id: string | null;
+    }>();
+
+  let status = (creatorRow?.zeluto_connection_status || 'not_registered') as ZelutoConnectionStatus;
+  let zelutoOrgId = creatorRow?.zeluto_org_id ?? null;
+  let emailSendReady = false;
+  let rejectionReason: string | null = null;
+  const zCfg = zelutoConfigFromCtx(c);
+
+  if (zCfg.clientSecret?.trim() && (status === 'pending_approval' || status === 'approved')) {
+    const live = await get2YolksCreatorRegistrationStatus(zCfg, user.id);
+    if (live.ok && live.status) {
+      status = live.status;
+      if (live.zelutoOrganizationId) zelutoOrgId = live.zelutoOrganizationId;
+      emailSendReady = Boolean(live.emailSendReady);
+      rejectionReason = live.rejectionReason ?? null;
+      if (status !== creatorRow?.zeluto_connection_status || zelutoOrgId !== (creatorRow?.zeluto_org_id ?? null)) {
+        await c.env.DB.prepare('UPDATE users SET zeluto_connection_status = ?, zeluto_org_id = ? WHERE id = ?')
+          .bind(status, zelutoOrgId, user.id)
+          .run();
+      }
+    }
+  }
+
+  const subRows = await c.env.DB.prepare(
+    `SELECT cs.id, sub.id AS subscriber_user_id, sub.email, sub.display_name, cs.zeluto_contact_id, cs.unsubscribed_at, cs.created_at
+     FROM creator_subscribers cs
+     JOIN users sub ON sub.id = cs.subscriber_user_id
+     WHERE cs.creator_user_id = ?
+     ORDER BY cs.created_at DESC
+     LIMIT 200`,
+  )
+    .bind(user.id)
+    .all<Record<string, unknown>>();
+
+  const approved = status === 'approved' && Boolean(zelutoOrgId);
+  const links = build2YolksZelutoLinks(zCfg, approved ? zelutoOrgId : null);
+  const subscribers = (subRows.results ?? []).map((r) => ({
+    id: String(r.id),
+    subscriberUserId: String(r.subscriber_user_id),
+    email: String(r.email),
+    displayName: r.display_name ? String(r.display_name) : null,
+    zelutoContactId: r.zeluto_contact_id ? String(r.zeluto_contact_id) : null,
+    unsubscribedAt: r.unsubscribed_at ? String(r.unsubscribed_at) : null,
+    createdAt: String(r.created_at),
+  }));
+
+  if (wantsJson) {
+    return c.json({
+      ok: true,
+      isCreator: true,
+      zelutoStatus: status,
+      zelutoOrgId: approved ? zelutoOrgId : null,
+      emailSendReady: approved ? emailSendReady : false,
+      subscribersUrl: links.subscribersUrl,
+      workspaceUrl: links.workspaceUrl,
+      deliverySetupUrl: links.deliverySetupUrl,
+      rejectionReason,
+      subscribers,
+    });
+  }
+
+  const subList = subscribers.length
+    ? `<ul class="mine">${subscribers
+        .map(
+          (s) =>
+            `<li><span><strong>${esc(s.displayName || s.email)}</strong> (${esc(s.email)})</span><span class="badge">${s.unsubscribedAt ? 'Unsubscribed' : 'Subscribed'}</span></li>`,
+        )
+        .join('')}</ul>`
+    : '<p class="hint">No creator subscribers yet.</p>';
+
+  const zelutoPanel = approved
+    ? `<div class="panel"><h2>Zeluto Creator Workspace</h2>
+        <p><a class="btn" href="${esc(links.subscribersUrl!)}" target="_blank" rel="noopener noreferrer">Open My Subscribers in Zeluto &#8599;</a></p>
+        ${
+          !emailSendReady
+            ? `${banner('err', `Read-only CRM access: configure your own Resend API key &amp; verified domain in Zeluto before sending emails back. <a href="${esc(links.deliverySetupUrl!)}" target="_blank" rel="noopener noreferrer">Configure Resend in Zeluto &#8599;</a>`)}`
+            : `<p>Resend configured. <a href="${esc(links.deliverySetupUrl!)}" target="_blank" rel="noopener noreferrer">Manage Resend &#8599;</a></p>`
+        }
+      </div>`
+    : status === 'pending_approval'
+      ? `<div class="panel"><h2>Zeluto Creator Workspace</h2><p class="badge">Pending Zeluto Super-Admin Approval</p><p class="hint">Your creator CRM workspace request is awaiting approval by a Zeluto Platform Super-Administrator.</p></div>`
+      : `<div class="panel"><h2>Zeluto Creator Workspace</h2><p>Connect an isolated Zeluto workspace to view your creator subscribers and send updates using your own Resend key &amp; domain.</p>
+          <form method="post" action="/account/zeluto/register${qs(lang)}"><button class="btn" type="submit">Request Zeluto Creator Workspace</button></form>
+        </div>`;
+
+  return page(
+    c,
+    'Creator Subscribers',
+    `<h1>Creator Subscribers</h1>
+<p class="lead">Only readers subscribed to your shared recipes appear here.</p>
+${zelutoPanel}
+<div class="panel"><h2>Your Subscribers (${subscribers.length})</h2>${subList}</div>
+<p><a href="/account${qs(lang)}">${t.backToRecipes}</a></p>`,
+  );
+});
+
+accountApp.post('/zeluto/register', async (c) => {
+  const lang = langOf(c);
+  const user = c.get('user');
+  const wantsJson = (c.req.header('accept') || '').includes('application/json');
+  if (!user) {
+    return wantsJson ? c.json({ error: 'unauthorized' }, 401) : c.redirect(`/account?next=%2Faccount%2Fsubscribers`, 303);
+  }
+  const isCreator = await hasUserSharedRecipe(c.env.DB, user.id);
+  if (!isCreator) {
+    if (wantsJson) {
+      return c.json({ error: 'creator_required', message: 'Share a recipe first to become a Creator.' }, 403);
+    }
+    return page(c, 'Creator CRM', banner('err', 'Share a recipe first to unlock Creator Zeluto CRM.'), 403);
+  }
+  const zCfg = zelutoConfigFromCtx(c);
+  const reg = await request2YolksCreatorRegistration(zCfg, {
+    creatorId: user.id,
+    creatorName: user.displayName || user.email,
+    adminEmail: user.email,
+  });
+  if (!reg.ok) {
+    return wantsJson
+      ? c.json({ error: reg.error ?? 'registration_failed' }, 502)
+      : page(c, 'Creator CRM', banner('err', esc(reg.error ?? 'Failed to register with Zeluto')), 400);
+  }
+  const status = reg.status ?? 'pending_approval';
+  await c.env.DB.prepare('UPDATE users SET zeluto_connection_status = ?, zeluto_org_id = ? WHERE id = ?')
+    .bind(status, reg.zelutoOrganizationId ?? null, user.id)
+    .run();
+  const approved = status === 'approved' && Boolean(reg.zelutoOrganizationId);
+  const links = build2YolksZelutoLinks(zCfg, approved ? reg.zelutoOrganizationId : null);
+  if (wantsJson) {
+    return c.json(
+      {
+        ok: true,
+        status,
+        zelutoOrgId: approved ? reg.zelutoOrganizationId : null,
+        subscribersUrl: links.subscribersUrl,
+        deliverySetupUrl: links.deliverySetupUrl,
+      },
+      approved ? 200 : 202,
+    );
+  }
+  return c.redirect(`/account/subscribers${qs(lang)}`, 303);
+});
+
+accountApp.post('/creators/:creatorId/subscribe', async (c) => {
+  const user = c.get('user');
+  if (!user) return c.json({ error: 'unauthorized' }, 401);
+  const creatorId = c.req.param('creatorId').trim();
+  if (!creatorId || creatorId === user.id) {
+    return c.json({ error: 'invalid_creator' }, 400);
+  }
+  const creatorHasShared = await hasUserSharedRecipe(c.env.DB, creatorId);
+  if (!creatorHasShared) {
+    return c.json({ error: 'creator_not_found', message: 'User is not a recipe Creator yet.' }, 403);
+  }
+  const creatorRow = await c.env.DB.prepare(
+    'SELECT id, zeluto_org_id, zeluto_connection_status FROM users WHERE id = ? LIMIT 1',
+  )
+    .bind(creatorId)
+    .first<{ id: string; zeluto_org_id: string | null; zeluto_connection_status: string | null }>();
+  if (!creatorRow) return c.json({ error: 'creator_not_found' }, 404);
+
+  const nowIso = new Date().toISOString();
+  const subRowId = `cs_${newId()}`;
+  await c.env.DB.prepare(
+    `INSERT INTO creator_subscribers (id, creator_user_id, subscriber_user_id, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(creator_user_id, subscriber_user_id) DO UPDATE SET
+       unsubscribed_at = NULL,
+       zeluto_pushed_at = NULL,
+       updated_at = excluded.updated_at`,
+  )
+    .bind(subRowId, creatorId, user.id, nowIso, nowIso)
+    .run();
+
+  const saved = await c.env.DB.prepare(
+    'SELECT id, zeluto_contact_id FROM creator_subscribers WHERE creator_user_id = ? AND subscriber_user_id = ? LIMIT 1',
+  )
+    .bind(creatorId, user.id)
+    .first<{ id: string; zeluto_contact_id: string | null }>();
+  const effectiveId = saved?.id ?? subRowId;
+  let zelutoContactId = saved?.zeluto_contact_id ?? null;
+  let syncedToCreatorWorkspace = false;
+
+  if (
+    c.env.ZELUTO_CLIENT_SECRET?.trim() &&
+    creatorRow.zeluto_connection_status === 'approved' &&
+    creatorRow.zeluto_org_id
+  ) {
+    const pushRes = await push2YolksContactToZeluto(
+      zelutoConfigFromCtx(c),
+      {
+        email: user.email,
+        ...(user.displayName ? { firstName: user.displayName } : {}),
+        externalId: effectiveId,
+        externalEntityType: 'creator_subscriber',
+        stage: 'subscriber',
+        externalUrlPath: '/account/subscribers',
+        tags: ['2yolks', 'creator-subscriber', `creator:${creatorId}`],
+      },
+      creatorRow.zeluto_org_id,
+    );
+    if (pushRes.ok) {
+      syncedToCreatorWorkspace = true;
+      if (pushRes.zelutoId) {
+        zelutoContactId = pushRes.zelutoId;
+        await c.env.DB.prepare(
+          'UPDATE creator_subscribers SET zeluto_contact_id = ?, zeluto_pushed_at = ?, updated_at = ? WHERE id = ?',
+        )
+          .bind(pushRes.zelutoId, new Date().toISOString(), new Date().toISOString(), effectiveId)
+          .run();
+      }
+    }
+  }
+
+  return c.json(
+    {
+      ok: true,
+      subscriptionId: effectiveId,
+      creatorUserId: creatorId,
+      subscriberUserId: user.id,
+      zelutoContactId,
+      syncedToCreatorWorkspace,
+    },
+    201,
+  );
 });

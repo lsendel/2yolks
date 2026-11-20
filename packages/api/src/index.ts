@@ -21,6 +21,7 @@ import { recipeSlugAliases,  createDb, recipes, recipeLocales, recipeImages, sou
 import { appApi } from './appapi';
 import { mcpApp, getMcpManifest } from './mcp';
 import { accountApp, type AccountBindings } from './account';
+import { build2YolksZelutoLinks, zeluto2YolksSyncApp } from './zeluto';
 
 type Bindings = {
   DB: D1Database;
@@ -899,6 +900,25 @@ app.post('/api/v1/submissions', async (c) => {
     })),
   );
   return c.json({ id, status: 'draft' }, 201);
+});
+
+// --- Internal Zeluto Dagster Sync + Super-Admin Links -----------------------
+app.route('/api/internal/zeluto-sync', zeluto2YolksSyncApp);
+
+app.get('/api/admin/zeluto', (c) => {
+  const expected = (c.env.ADMIN_MCP_API_KEY || '').trim();
+  if (!expected) return c.json({ error: 'admin_not_configured' }, 503);
+  const m = /^Bearer\s+(.+)$/i.exec((c.req.header('authorization') || '').trim());
+  if (!m?.[1] || m[1].trim() !== expected) return c.json({ error: 'unauthorized' }, 401);
+  const links = build2YolksZelutoLinks({
+    zelutoUrl: c.env.ZELUTO_URL,
+    brandOrgId: c.env.ZELUTO_BRAND_ORG_ID,
+  });
+  return c.json({
+    ok: true,
+    brandWorkspaceUrl: links.brandWorkspaceUrl,
+    platformAdminRegistrationsUrl: links.platformAdminUrl,
+  });
 });
 
 // --- Admin MCP (agent content tools) -----------------------------------------

@@ -75,8 +75,32 @@ export const users = sqliteTable('users', {
   id: text('id').primaryKey(),
   email: text('email').notNull().unique(),
   displayName: text('display_name'),
+  zelutoContactId: text('zeluto_contact_id'),
+  zelutoOrgId: text('zeluto_org_id'),
+  zelutoConnectionStatus: text('zeluto_connection_status').notNull().default('not_registered'),
+  marketingOptIn: integer('marketing_opt_in').notNull().default(1),
+  unsubscribedAt: text('unsubscribed_at'),
   createdAt: text('created_at').notNull(),
 });
+
+export const creatorSubscribers = sqliteTable('creator_subscribers', {
+  id: text('id').primaryKey(),
+  creatorUserId: text('creator_user_id').notNull().references(() => users.id),
+  subscriberUserId: text('subscriber_user_id').notNull().references(() => users.id),
+  zelutoContactId: text('zeluto_contact_id'),
+  zelutoPushedAt: text('zeluto_pushed_at'),
+  unsubscribedAt: text('unsubscribed_at'),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+});
+
+export async function hasUserSharedRecipe(db: D1Database, userId: string): Promise<boolean> {
+  const row = await db
+    .prepare('SELECT 1 AS ok FROM recipes WHERE owner_user_id = ? AND submitted_at IS NOT NULL LIMIT 1')
+    .bind(userId)
+    .first<{ ok: number }>();
+  return row?.ok === 1;
+}
 
 export const recipeImages = sqliteTable(
   'recipe_images',

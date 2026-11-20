@@ -950,8 +950,9 @@ html[data-theme="dark"] .acct .ai-panel { border-color: var(--line-strong); bord
  * The account UI is localized en/es/fr: `lang` sets the document language and
  * the header/footer chrome, `path` is the current request path used to build
  * the language-switch links (query string replaced, lang preserved). */
-export function renderAccountPage(title: string, bodyHtml: string, lang = 'en', path = '/account'): string {
-  const nav = ['en', 'es', 'fr'].map((l) => ({ href: `${path}?lang=${l}`, label: l === 'en' ? 'English' : l === 'es' ? 'Español' : 'Français', current: l === lang }));
+export function renderAccountPage(title: string, bodyHtml: string, lang = 'en', path = '/account', next: string | null = null): string {
+  const nextQ = next ? `&next=${encodeURIComponent(next)}` : '';
+  const nav = ['en', 'es', 'fr'].map((l) => ({ href: `${path}?lang=${l}${nextQ}`, label: l === 'en' ? 'English' : l === 'es' ? 'Español' : 'Français', current: l === lang }));
   return shell(`<style>${ACCOUNT_CSS}</style><main id="main" class="acct">${bodyHtml}</main>`, { title: `${title} - 2yolks`, noindex: true, lang, nav });
 }
 
