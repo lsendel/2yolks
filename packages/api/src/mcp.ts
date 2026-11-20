@@ -18,6 +18,7 @@ import { parseFieldsArg, requestedFormat, shapeToolText } from './mcp-toon';
 import {
   getCountry,
   localesFor,
+  recipePathFor,
   slugify,
   validateRecipeSubmission,
   SLUG_PATTERN,
@@ -36,8 +37,10 @@ import {
 import type { IngredientEntry, StructuredIngredient } from '@2yolks/contracts';
 import { MAX_IMAGE_BASE64, MAX_IMAGE_BYTES, decodeBase64, validateImage } from './imageValidation';
 import { translateStructuredRecipeWithGemini } from './aiRecipe';
+import { sendAuthorReviewNotice } from './account';
+import type { MailEnv } from './email';
 
-export type McpBindings = {
+export type McpBindings = MailEnv & {
   DB: D1Database;
   /** R2 bucket for rights-tracked recipe images (migration 0004). Unset =
    * recipes.set_image answers 503 and /img/recipe/* 404s. */
@@ -46,6 +49,7 @@ export type McpBindings = {
   MCP_READ_KEY?: string;
   MCP_NAMED_KEYS?: string;
   GEMINI_API_KEY?: string;
+  CANONICAL_ORIGIN?: string;
   // Fail-closed gate for translations.mark_reviewed. The human-vs-agent
   // translation publication policy is unresolved, so review stays disabled
   // until that policy decision enables it explicitly.
@@ -328,6 +332,28 @@ const TOOLS: ToolDef[] = [
       type: 'object',
       properties: { id: { type: 'string' }, decision: { type: 'string', enum: ['approve', 'reject'] }, confirmed: { type: 'boolean' } },
       required: ['id', 'decision'],
+    },
+  },
+  {
+    name: 'recipes.request_changes',
+    description:
+      'Admin-only: return a submitted user recipe draft to the author with a note asking for changes. Clears submitted_at and attested_at so edits require fresh permission confirmation before resending, audits, and sends a budgeted author email notice. Requires confirmed: true (dry-run otherwise).',
+    role: 'admin',
+    inputSchema: {
+      type: 'object',
+      properties: { id: { type: 'string' }, note: { type: 'string' }, confirmed: { type: 'boolean' } },
+      required: ['id', 'note'],
+    },
+  },
+  {
+    name: 'recipes.decline',
+    description:
+      'Admin-only: decline a submitted user recipe with a written reason. Marks draft locales rejected, rejects and deletes any pending private cover photo, keeps the entry visible to the author so they can make a fresh copy, audits, and sends a budgeted author email notice. Requires confirmed: true (dry-run otherwise).',
+    role: 'admin',
+    inputSchema: {
+      type: 'object',
+      properties: { id: { type: 'string' }, reason: { type: 'string' }, confirmed: { type: 'boolean' } },
+      required: ['id', 'reason'],
     },
   },
   {
@@ -780,6 +806,7 @@ type CallCtx = {
   translationReviewEnabled?: boolean;
   images?: R2Bucket;
   geminiApiKey?: string;
+  mailEnv?: MailEnv & { CANONICAL_ORIGIN?: string };
 };
 type CallResult = { status: number; data: unknown };
 
@@ -801,6 +828,8 @@ const RECIPE_ID_TOOLS = new Set([
   'recipes.translate_locale',
   'translations.mark_reviewed',
   'recipes.publish',
+  'recipes.request_changes',
+  'recipes.decline',
   'recipes.unpublish',
   'recipes.set_image',
   'recipes.get_draft_photo',
@@ -842,7 +871,7 @@ async function callRecipesList(db: D1Database, role: Role, args: Record<string, 
   const rows = await db
     .prepare(
       `SELECT rl.recipe_id AS id, rl.country, rl.lang, rl.slug, rl.title, rl.status,
-              r.submitted_at, r.attested_at, r.owner_user_id IS NOT NULL AS user_submitted,
+              r.submitted_at, r.attested_at, r.review_status, r.owner_user_id IS NOT NULL AS user_submitted,
               r.origin_country, s.id AS source_id, s.name AS source_name, s.license,
               s.cleared_at IS NOT NULL AS source_cleared${photoSel}
        FROM recipe_locales rl
@@ -1504,12 +1533,21 @@ async function callStatusChange(
     return { status: 400, data: { error: 'country and lang must be given together' } };
   }
   const tool = `${kind === 'recipe' ? 'recipes' : 'blog'}.${target === 'published' ? 'publish' : 'unpublish'}`;
+  let ownerUserId: string | null = null;
+  let notifyLang: string | null = null;
+  let wasAlreadyPublished = false;
   if (kind === 'recipe') {
     const recipe = await ctx.db
-      .prepare('SELECT r.id, s.cleared_at FROM recipes r JOIN sources s ON s.id = r.source_id WHERE r.id = ?')
+      .prepare('SELECT r.id, r.owner_user_id, r.notify_lang, s.cleared_at FROM recipes r JOIN sources s ON s.id = r.source_id WHERE r.id = ?')
       .bind(id)
-      .first<{ id: string; cleared_at: string | null }>();
+      .first<{ id: string; owner_user_id: string | null; notify_lang: string | null; cleared_at: string | null }>();
     if (!recipe) return { status: 404, data: { error: 'recipe not found', id } };
+    ownerUserId = recipe.owner_user_id;
+    notifyLang = recipe.notify_lang;
+    if (target === 'published' && ownerUserId) {
+      const already = await ctx.db.prepare("SELECT 1 AS x FROM recipe_locales WHERE recipe_id = ? AND status = 'published' LIMIT 1").bind(id).first();
+      wasAlreadyPublished = Boolean(already);
+    }
     if (target === 'published' && !recipe.cleared_at) {
       return {
         status: 409,
@@ -1605,8 +1643,16 @@ async function callStatusChange(
     );
   }
   // Content mutation and audit row commit in one atomic batch.
+  const now = new Date().toISOString();
   statements.push(
     ctx.db.prepare(`UPDATE ${table} SET status = ? WHERE ${fk} = ? AND status = '${from}'${scope}`).bind(...bind),
+    ...(kind === 'recipe' && target === 'published' && ownerUserId
+      ? [
+          ctx.db
+            .prepare("UPDATE recipes SET review_status = 'published', review_note = NULL, reviewed_at = ?, reviewed_by = ? WHERE id = ?")
+            .bind(now, ctx.actor, id),
+        ]
+      : []),
     ...(promotedPhoto?.stmts ?? []),
     auditStmt(ctx, tool, id, {
       locales_changed: matchedCount,
@@ -1626,6 +1672,21 @@ async function callStatusChange(
   if (promotedPhoto?.privateR2Key && ctx.images) {
     await ctx.images.delete(promotedPhoto.privateR2Key).catch(() => {});
   }
+  let reviewNotice: string | null = null;
+  if (kind === 'recipe' && target === 'published' && ownerUserId && !wasAlreadyPublished) {
+    const liveLoc = await ctx.db
+      .prepare("SELECT country, lang, slug, title FROM recipe_locales WHERE recipe_id = ? AND status = 'published' ORDER BY CASE WHEN lang = ? THEN 0 ELSE 1 END, country, lang LIMIT 1")
+      .bind(id, notifyLang ?? 'en')
+      .first<{ country: string; lang: string; slug: string; title: string }>();
+    reviewNotice = await notifyAuthor(ctx, {
+      recipeId: id,
+      userId: ownerUserId,
+      lang: notifyLang,
+      kind: 'published',
+      title: liveLoc?.title,
+      livePath: liveLoc ? recipePathFor(liveLoc.country, liveLoc.lang, liveLoc.slug) : null,
+    });
+  }
   return {
     status: 200,
     data: {
@@ -1633,6 +1694,7 @@ async function callStatusChange(
       status: target,
       locales_changed: matchedCount,
       ...(promotedPhoto?.imageId ? { approved_photo_image_id: promotedPhoto.imageId } : pendingDraftPhoto ? { pending_draft_photo: true } : {}),
+      ...(reviewNotice ? { review_notice: reviewNotice } : {}),
     },
   };
 }
@@ -2172,6 +2234,146 @@ async function callModerateDraftPhoto(ctx: CallCtx, args: Record<string, unknown
   return { status: 200, data: { id, status: 'rejected', photo_id: existing.id } };
 }
 
+// --- Contributor review feedback & author notices (S8, migration 0013) -------
+
+async function notifyAuthor(
+  ctx: CallCtx,
+  opts: {
+    recipeId: string;
+    userId: string;
+    lang: string | null;
+    kind: 'needs_changes' | 'declined' | 'published';
+    note?: string | null;
+    title?: string;
+    livePath?: string | null;
+  },
+): Promise<'sent' | 'skipped_budget' | 'skipped_no_mail' | 'failed' | null> {
+  const userRow = await ctx.db.prepare('SELECT email FROM users WHERE id = ?').bind(opts.userId).first<{ email: string }>();
+  if (!userRow?.email) return null;
+  let title = opts.title ?? '';
+  if (!title) {
+    const loc = await ctx.db.prepare('SELECT title FROM recipe_locales WHERE recipe_id = ? LIMIT 1').bind(opts.recipeId).first<{ title: string }>();
+    title = loc?.title ?? 'Recipe';
+  }
+  const noticeStatus = await sendAuthorReviewNotice(ctx.mailEnv ?? {}, ctx.db, {
+    email: userRow.email,
+    lang: opts.lang,
+    kind: opts.kind,
+    title,
+    recipeId: opts.recipeId,
+    note: opts.note,
+    livePath: opts.livePath,
+  });
+  await ctx.db
+    .prepare('UPDATE recipes SET review_notice = ?, review_notice_at = ? WHERE id = ?')
+    .bind(noticeStatus, new Date().toISOString(), opts.recipeId)
+    .run();
+  return noticeStatus;
+}
+
+async function checkReviewableUserRecipe(db: D1Database, id: string): Promise<
+  | { ok: true; ownerUserId: string; notifyLang: string | null }
+  | { ok: false; err: CallResult }
+> {
+  const r = await db
+    .prepare('SELECT id, owner_user_id, submitted_at, removed_by_user_at, notify_lang FROM recipes WHERE id = ?')
+    .bind(id)
+    .first<{ id: string; owner_user_id: string | null; submitted_at: string | null; removed_by_user_at: string | null; notify_lang: string | null }>();
+  if (!r || !r.owner_user_id) {
+    return { ok: false, err: { status: 404, data: { error: 'submitted user recipe not found', id } } };
+  }
+  if (r.removed_by_user_at) {
+    return { ok: false, err: { status: 409, data: { error: 'recipe was removed by author', id } } };
+  }
+  if (!r.submitted_at) {
+    return { ok: false, err: { status: 409, data: { error: 'recipe is not currently submitted for review', id } } };
+  }
+  const pub = await db.prepare("SELECT 1 AS x FROM recipe_locales WHERE recipe_id = ? AND status = 'published' LIMIT 1").bind(id).first();
+  if (pub) {
+    return { ok: false, err: { status: 409, data: { error: 'recipe is already published', id } } };
+  }
+  const rej = await db.prepare("SELECT 1 AS x FROM recipe_locales WHERE recipe_id = ? AND status = 'rejected' LIMIT 1").bind(id).first();
+  if (rej) {
+    return { ok: false, err: { status: 409, data: { error: 'recipe was already declined', id } } };
+  }
+  return { ok: true, ownerUserId: r.owner_user_id, notifyLang: r.notify_lang };
+}
+
+async function callRequestChanges(ctx: CallCtx, args: Record<string, unknown>): Promise<CallResult> {
+  const id = str(args['id'], 64);
+  const note = str(args['note'], 1500)?.trim() ?? '';
+  if (!id || !note) return { status: 400, data: { error: 'id and non-empty note are required' } };
+  const target = await checkReviewableUserRecipe(ctx.db, id);
+  if (!target.ok) return target.err;
+  if (ctx.dryRun) {
+    return { status: 200, data: { dry_run: true, ok: true, id, would_set: 'needs_changes', note } };
+  }
+  const now = new Date().toISOString();
+  await ctx.db.batch([
+    ctx.db
+      .prepare(
+        "UPDATE recipes SET review_status = 'needs_changes', review_note = ?, reviewed_at = ?, reviewed_by = ?, submitted_at = NULL, attested_at = NULL WHERE id = ? AND owner_user_id IS NOT NULL AND submitted_at IS NOT NULL",
+      )
+      .bind(note, now, ctx.actor, id),
+    auditStmt(ctx, 'recipes.request_changes', id, { note }),
+  ]);
+  const reviewNotice = await notifyAuthor(ctx, {
+    recipeId: id,
+    userId: target.ownerUserId,
+    lang: target.notifyLang,
+    kind: 'needs_changes',
+    note,
+  });
+  return {
+    status: 200,
+    data: { id, review_status: 'needs_changes', review_note: note, ...(reviewNotice ? { review_notice: reviewNotice } : {}) },
+  };
+}
+
+async function callDeclineRecipe(ctx: CallCtx, args: Record<string, unknown>): Promise<CallResult> {
+  const id = str(args['id'], 64);
+  const reason = str(args['reason'], 1500)?.trim() ?? '';
+  if (!id || !reason) return { status: 400, data: { error: 'id and non-empty reason are required' } };
+  const target = await checkReviewableUserRecipe(ctx.db, id);
+  if (!target.ok) return target.err;
+  if (ctx.dryRun) {
+    return { status: 200, data: { dry_run: true, ok: true, id, would_set: 'declined', reason } };
+  }
+  const pendingPhotos = await ctx.db
+    .prepare("SELECT r2_key FROM draft_photos WHERE recipe_id = ? AND status = 'pending'")
+    .bind(id)
+    .all<{ r2_key: string }>();
+  const now = new Date().toISOString();
+  await ctx.db.batch([
+    ctx.db
+      .prepare(
+        "UPDATE recipes SET review_status = 'declined', review_note = ?, reviewed_at = ?, reviewed_by = ? WHERE id = ? AND owner_user_id IS NOT NULL AND submitted_at IS NOT NULL",
+      )
+      .bind(reason, now, ctx.actor, id),
+    ctx.db
+      .prepare("UPDATE recipe_locales SET status = 'rejected' WHERE recipe_id = ? AND status = 'draft'")
+      .bind(id),
+    ctx.db
+      .prepare("UPDATE draft_photos SET status = 'rejected', moderated_at = ?, moderated_by = ? WHERE recipe_id = ? AND status = 'pending'")
+      .bind(now, ctx.actor, id),
+    auditStmt(ctx, 'recipes.decline', id, { reason }),
+  ]);
+  if (ctx.images && pendingPhotos.results.length) {
+    await Promise.all(pendingPhotos.results.map((p) => ctx.images!.delete(p.r2_key).catch(() => {})));
+  }
+  const reviewNotice = await notifyAuthor(ctx, {
+    recipeId: id,
+    userId: target.ownerUserId,
+    lang: target.notifyLang,
+    kind: 'declined',
+    note: reason,
+  });
+  return {
+    status: 200,
+    data: { id, review_status: 'declined', review_note: reason, ...(reviewNotice ? { review_notice: reviewNotice } : {}) },
+  };
+}
+
 async function dispatch(ctx: CallCtx, name: string, args: Record<string, unknown>): Promise<CallResult> {
   switch (name) {
     case 'recipes.list':
@@ -2194,6 +2396,10 @@ async function dispatch(ctx: CallCtx, name: string, args: Record<string, unknown
       return callMarkReviewed(ctx, args);
     case 'recipes.publish':
       return callStatusChange(ctx, args, 'recipe', 'published');
+    case 'recipes.request_changes':
+      return callRequestChanges(ctx, args);
+    case 'recipes.decline':
+      return callDeclineRecipe(ctx, args);
     case 'recipes.unpublish':
       return callStatusChange(ctx, args, 'recipe', 'draft');
     case 'recipes.list_test_reports':
@@ -2266,6 +2472,11 @@ async function handleRpc(c: Context<{ Bindings: McpBindings }>) {
     translationReviewEnabled: Boolean(c.env.MCP_TRANSLATION_REVIEW),
     images: c.env.IMAGES,
     geminiApiKey: c.env.GEMINI_API_KEY,
+    mailEnv: {
+      RESEND_API_KEY: c.env.RESEND_API_KEY,
+      RESEND_FROM: c.env.RESEND_FROM,
+      CANONICAL_ORIGIN: c.env.CANONICAL_ORIGIN,
+    },
   };
 
   // Write semantics are identical on both wire shapes: an explicit

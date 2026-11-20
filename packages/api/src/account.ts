@@ -6,8 +6,8 @@ import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
-import { eq, and, ne, desc } from 'drizzle-orm';
-import { LOCALES, getCountry, localizedCountryName, slugify, validateRecipeSubmission, RECIPE_CATEGORY_SLUGS, categoryLabel, isRecipeCategorySlug, CATEGORIES, accountStrings, fill, isAccountLang, validatorMessage, parseWarningMessage, ssrfMessage, type AccountStrings } from '@2yolks/contracts';
+import { eq, and, ne, desc, isNull, or } from 'drizzle-orm';
+import { LOCALES, getCountry, localizedCountryName, slugify, recipePathFor, validateRecipeSubmission, RECIPE_CATEGORY_SLUGS, categoryLabel, isRecipeCategorySlug, CATEGORIES, accountStrings, fill, isAccountLang, validatorMessage, parseWarningMessage, ssrfMessage, type AccountStrings } from '@2yolks/contracts';
 import { renderAccountPage, escapeHtml as esc, CAPTURE_CLIENT_SCRIPT, CAPTURE_CHECK_STRINGS, DRAFT_PHOTO_CLIENT_SCRIPT } from '@2yolks/web/server';
 import { createDb, hasUserSharedRecipe, recipes, recipeLocales, sources, users } from './db';
 import { sendMail, type MailEnv } from './email';
@@ -288,6 +288,37 @@ const codeForm = (t: AccountStrings, lang: string, email: string, msg = '', next
 <p class="lead">${fill(t.codeLead, { email: esc(email) })}</p>${msg}
 <form method="post" action="/account/verify${qsNext(lang, next)}">${nextField(next)}<input type="hidden" name="email" value="${esc(email)}"><label>${t.codeLabel}<input type="text" name="code" inputmode="numeric" pattern="[0-9]{6}" autocomplete="one-time-code" maxlength="6" required></label><button type="submit">${t.codeButton}</button></form>`;
 
+type RecipeLifecycle = 'draft' | 'in_review' | 'needs_changes' | 'declined' | 'published';
+
+function recipeLifecycle(r: { status: string; reviewStatus: string | null; submittedAt: string | null }): RecipeLifecycle {
+  if (r.status === 'published' || r.reviewStatus === 'published') return 'published';
+  if (r.reviewStatus === 'declined') return 'declined';
+  if (r.reviewStatus === 'needs_changes') return 'needs_changes';
+  if (r.submittedAt || r.reviewStatus === 'in_review') return 'in_review';
+  return 'draft';
+}
+
+function renderTimeline(t: AccountStrings, state: RecipeLifecycle): string {
+  const step = (cls: string, label: string, current = false) =>
+    `<li class="status-step ${cls}"${current ? ' aria-current="step"' : ''}>${label}</li>`;
+  if (state === 'draft') {
+    return `<ol class="status-timeline">${step('is-current', t.timelineDraft, true)}${step('is-pending', t.timelineReview)}${step('is-pending', t.timelineLive)}</ol>`;
+  }
+  if (state === 'in_review') {
+    return `<ol class="status-timeline">${step('is-done', t.timelineDraft)}${step('is-current', t.timelineReview, true)}${step('is-pending', t.timelineLive)}</ol>`;
+  }
+  if (state === 'needs_changes') {
+    return `<ol class="status-timeline">${step('is-done', t.timelineDraft)}${step('is-attention', t.timelineReview, true)}${step('is-pending', t.timelineLive)}</ol>`;
+  }
+  if (state === 'declined') {
+    return `<ol class="status-timeline">${step('is-done', t.timelineDraft)}${step('is-declined', t.timelineReview, true)}${step('is-pending', t.timelineLive)}</ol>`;
+  }
+  return `<ol class="status-timeline">${step('is-done', t.timelineDraft)}${step('is-done', t.timelineReview)}${step('is-done', t.timelineLive, true)}</ol>`;
+}
+
+const copyDeclinedForm = (t: AccountStrings, lang: string, id: string) =>
+  `<form method="post" action="/account/recipes/${esc(id)}/copy${qs(lang)}" class="actions"><button type="submit" class="quiet">${t.makeCopy}</button></form>`;
+
 accountApp.get('/', async (c) => {
   const lang = langOf(c);
   const t = accountStrings(lang);
@@ -296,13 +327,62 @@ accountApp.get('/', async (c) => {
   if (!user) return page(c, t.signInPageTitle, signInForm(t, lang, '', next), 200, next);
   if (next && next !== '/account') return c.redirect(`${next}${qs(lang)}`, 303);
   const db = createDb(c.env.DB);
-  const rows = await db.select({ id: recipes.id, submittedAt: recipes.submittedAt, title: recipeLocales.title, status: recipeLocales.status })
+  const rawRows = await db.select({
+    id: recipes.id,
+    submittedAt: recipes.submittedAt,
+    reviewStatus: recipes.reviewStatus,
+    reviewNote: recipes.reviewNote,
+    title: recipeLocales.title,
+    country: recipeLocales.country,
+    lang: recipeLocales.lang,
+    slug: recipeLocales.slug,
+    status: recipeLocales.status,
+  })
     .from(recipes).innerJoin(recipeLocales, eq(recipeLocales.recipeId, recipes.id))
-    .where(and(eq(recipes.ownerUserId, user.id), ne(recipeLocales.status, 'rejected'))).orderBy(desc(recipes.createdAt));
-  const items = rows.map((r) => {
-    const label = r.status === 'published' ? t.statusPublished : r.submittedAt ? t.statusSubmitted : t.statusDraft;
-    const edit = r.submittedAt || r.status === 'published' ? '' : `<a href="/account/recipes/${esc(r.id)}/edit${qs(lang)}">${t.editLink}</a>`;
-    return `<li><span><strong>${esc(r.title)}</strong><br><span class="badge">${label}</span></span><span>${edit}</span></li>`;
+    .where(and(
+      eq(recipes.ownerUserId, user.id),
+      isNull(recipes.removedByUserAt),
+      or(ne(recipeLocales.status, 'rejected'), eq(recipes.reviewStatus, 'declined')),
+    ))
+    .orderBy(desc(recipes.createdAt));
+
+  // Deduplicate multi-locale recipes cleanly: prefer published locale, then active UI lang, else first row.
+  const byId = new Map<string, typeof rawRows[number]>();
+  for (const row of rawRows) {
+    const cur = byId.get(row.id);
+    if (!cur) { byId.set(row.id, row); continue; }
+    if (cur.status !== 'published' && (row.status === 'published' || (row.lang === lang && cur.lang !== lang))) {
+      byId.set(row.id, row);
+    }
+  }
+
+  const items = [...byId.values()].map((r) => {
+    const state = recipeLifecycle(r);
+    const badgeCls =
+      state === 'published' ? 'badge--live'
+      : state === 'declined' ? 'badge--declined'
+      : state === 'needs_changes' ? 'badge--changes'
+      : state === 'in_review' ? 'badge--review'
+      : 'badge--draft';
+    const label =
+      state === 'published' ? t.statusPublished
+      : state === 'declined' ? t.statusDeclined
+      : state === 'needs_changes' ? t.statusNeedsChanges
+      : state === 'in_review' ? t.statusSubmitted
+      : t.statusDraft;
+    const note =
+      (state === 'needs_changes' || state === 'declined') && r.reviewNote
+        ? `<p class="review-note${state === 'declined' ? ' review-note--declined' : ''}">${esc(r.reviewNote)}</p>`
+        : state === 'in_review'
+          ? `<p class="hint">${t.inReviewNote}</p>`
+          : '';
+    const action =
+      state === 'published' ? `<a href="${esc(recipePathFor(r.country, r.lang, r.slug))}">${t.viewLiveRecipe}</a>`
+      : state === 'declined' ? copyDeclinedForm(t, lang, r.id)
+      : state === 'needs_changes' ? `<a href="/account/recipes/${esc(r.id)}/edit${qs(lang)}">${t.editAndResend}</a>`
+      : state === 'in_review' ? ''
+      : `<a href="/account/recipes/${esc(r.id)}/edit${qs(lang)}">${t.editLink}</a>`;
+    return `<li><div class="mine-main"><strong>${esc(r.title)}</strong> <span class="badge ${badgeCls}">${label}</span>${renderTimeline(t, state)}${note}</div><div class="mine-actions">${action}</div></li>`;
   }).join('');
   const isCreator = await hasUserSharedRecipe(c.env.DB, user.id);
   const creatorSection = isCreator
@@ -705,8 +785,59 @@ export async function loadOwned(c: { env: { DB: D1Database }; get(key: 'user'): 
   const db = createDb(c.env.DB);
   const rows = await db.select({ r: recipes, l: recipeLocales, s: sources })
     .from(recipes).innerJoin(recipeLocales, eq(recipeLocales.recipeId, recipes.id)).innerJoin(sources, eq(sources.id, recipes.sourceId))
-    .where(and(eq(recipes.id, id), eq(recipes.ownerUserId, user.id), ne(recipeLocales.status, 'rejected'))).limit(1);
-  return rows[0] ?? null;
+    .where(and(
+      eq(recipes.id, id),
+      eq(recipes.ownerUserId, user.id),
+      isNull(recipes.removedByUserAt),
+      or(ne(recipeLocales.status, 'rejected'), eq(recipes.reviewStatus, 'declined')),
+    ));
+  return rows.find((x) => x.l.status === 'published') ?? rows[0] ?? null;
+}
+
+/**
+ * Send one budgeted, localized author status email (never unbudgeted, never blocks review writes).
+ * Uses the shared rolling 24h 'notice' quota (NOTICES_PER_DAY = 8).
+ */
+export async function sendAuthorReviewNotice(
+  env: MailEnv & { CANONICAL_ORIGIN?: string },
+  db: D1Database,
+  opts: {
+    email: string;
+    lang: string | null | undefined;
+    kind: 'needs_changes' | 'declined' | 'published';
+    title: string;
+    recipeId: string;
+    note?: string | null;
+    livePath?: string | null;
+  },
+): Promise<'sent' | 'skipped_budget' | 'skipped_no_mail' | 'failed'> {
+  if (!env.RESEND_API_KEY) return 'skipped_no_mail';
+  if (!(await reserveMail(db, 'notice', NOTICES_PER_DAY))) return 'skipped_budget';
+  const noticeLang = isAccountLang(opts.lang) ? opts.lang : 'en';
+  const t = accountStrings(noticeLang);
+  const origin = (env.CANONICAL_ORIGIN || 'https://2yolks.com').replace(/\/+$/, '');
+  const editUrl = `${origin}/account/recipes/${opts.recipeId}/edit${qs(noticeLang)}`;
+  const accountUrl = `${origin}/account${qs(noticeLang)}`;
+  const liveUrl = opts.livePath ? `${origin}${opts.livePath}` : accountUrl;
+  const note = opts.note ?? '';
+  let subject = '';
+  let text = '';
+  if (opts.kind === 'needs_changes') {
+    subject = fill(t.mailNeedsChangesSubject, { title: opts.title });
+    text = fill(t.mailNeedsChangesBody, { title: opts.title, note, editUrl });
+  } else if (opts.kind === 'declined') {
+    subject = fill(t.mailDeclinedSubject, { title: opts.title });
+    text = fill(t.mailDeclinedBody, { title: opts.title, note, accountUrl });
+  } else {
+    subject = fill(t.mailPublishedSubject, { title: opts.title });
+    text = fill(t.mailPublishedBody, { title: opts.title, liveUrl });
+  }
+  try {
+    const ok = await sendMail(env, { to: opts.email, subject: subject.slice(0, 180), text });
+    return ok ? 'sent' : 'failed';
+  } catch {
+    return 'failed';
+  }
 }
 
 const rf = (c: Ctx, s: FormState, errors: ReadonlyArray<string | FieldError> = [], note = '', extras = '') => {
@@ -835,7 +966,14 @@ accountApp.get('/recipes/:id/edit', async (c) => {
   const t = accountStrings(lang);
   const row = await loadOwned(c, c.req.param('id'));
   if (!row) return page(c, t.titleNotFound, banner('err', t.errDraftNotFound), 404);
-  if (row.r.submittedAt || row.l.status === 'published') return page(c, t.titleSubmitted, banner('ok', t.okAlreadySentEdit), 409);
+  if (row.r.reviewStatus === 'declined' || row.l.status === 'rejected') {
+    const noteHtml = row.r.reviewNote ? `<p class="review-note review-note--declined">${esc(row.r.reviewNote)}</p>` : '';
+    return page(c, t.statusDeclined, `${banner('err', t.declinedBanner)}${noteHtml}<p>${t.declinedEditNote}</p>${copyDeclinedForm(t, lang, row.r.id)}`, 409);
+  }
+  if (row.r.submittedAt || row.l.status === 'published' || row.r.reviewStatus === 'published') {
+    const liveBtn = row.l.status === 'published' ? `<p><a class="btn" href="${esc(recipePathFor(row.l.country, row.l.lang, row.l.slug))}">${t.viewLiveRecipe}</a></p>` : '';
+    return page(c, t.titleSubmitted, `${banner('ok', t.okAlreadySentEdit)}${liveBtn}`, 409);
+  }
   const user = c.get('user')!;
   const pendingPhoto = await activeDraftPhoto(c.env.DB, row.r.id, user.id);
   const ing = (JSON.parse(row.l.ingredientsJson) as unknown[]).map((x) => (typeof x === 'string' ? x : String((x as { name?: string }).name ?? ''))).join('\n');
@@ -847,8 +985,14 @@ accountApp.get('/recipes/:id/edit', async (c) => {
     attest: !!row.r.attestedAt,
     photoUrl: pendingPhoto ? `/account/recipes/${esc(row.r.id)}/photo` : null,
   };
-  const saved = c.req.query('saved') ? banner('ok', t.okSaved) : '';
-  return page(c, t.formTitleEdit, rf(c, s, [], saved, removeDraftForm(t, lang, row.r.id)), 200, null, true);
+  const notes: string[] = [];
+  if (c.req.query('saved')) notes.push(banner('ok', t.okSaved));
+  if (c.req.query('copied')) notes.push(banner('ok', t.copyCreated));
+  if (row.r.reviewStatus === 'needs_changes') {
+    const lead = row.r.reviewNote ? `<p>${fill(t.needsChangesLead, { note: esc(row.r.reviewNote) })}</p>` : '';
+    notes.push(`<div class="review-callout" role="note"><strong>${t.needsChangesBanner}</strong>${lead}</div>`);
+  }
+  return page(c, t.formTitleEdit, rf(c, s, [], notes.join(''), removeDraftForm(t, lang, row.r.id)), 200, null, true);
 });
 
 accountApp.post('/recipes/save', async (c) => {
@@ -910,7 +1054,10 @@ accountApp.post('/recipes/save', async (c) => {
   if (id) {
     const owned = await loadOwned(c, id);
     if (!owned) return page(c, t.titleNotFound, banner('err', t.errDraftNotFound), 404);
-    if (owned.r.submittedAt || owned.l.status === 'published') return page(c, t.titleSubmitted, banner('err', t.errAlreadySent), 409);
+    if (owned.r.reviewStatus === 'declined' || owned.l.status === 'rejected') {
+      return page(c, t.statusDeclined, `${banner('err', t.declinedBanner)}${copyDeclinedForm(t, lang, id)}`, 409);
+    }
+    if (owned.r.submittedAt || owned.l.status === 'published' || owned.r.reviewStatus === 'published') return page(c, t.titleSubmitted, banner('err', t.errAlreadySent), 409);
   } else {
     id = newId();
   }
@@ -922,14 +1069,14 @@ accountApp.post('/recipes/save', async (c) => {
   const prep = x['prepMinutes'] ?? null, cook = x['cookMinutes'] ?? null, serv = x['baseServings'] ?? null;
   const ing = JSON.stringify(loc.ingredients), stp = JSON.stringify(loc.steps);
   if (s.id) {
-    // One transaction (D1 batch). Every statement re-checks "owned, not submitted, not published"
-    // so a concurrent submit cannot be overwritten; nothing is deleted, rows are updated in place.
-    const open = "EXISTS (SELECT 1 FROM recipes r WHERE r.id = ? AND r.owner_user_id = ? AND r.submitted_at IS NULL) AND NOT EXISTS (SELECT 1 FROM recipe_locales q WHERE q.recipe_id = ? AND q.status = 'published')";
+    // One transaction (D1 batch). Every statement re-checks "owned, not submitted, not published/declined/removed"
+    // so a concurrent submit or decision cannot be overwritten; nothing is deleted, rows are updated in place.
+    const open = "EXISTS (SELECT 1 FROM recipes r WHERE r.id = ? AND r.owner_user_id = ? AND r.submitted_at IS NULL AND r.removed_by_user_at IS NULL AND (r.review_status IS NULL OR r.review_status = 'needs_changes')) AND NOT EXISTS (SELECT 1 FROM recipe_locales q WHERE q.recipe_id = ? AND q.status IN ('published', 'rejected'))";
     const guard = [id, user.id, id];
     const res = await D.batch([
       D.prepare(`UPDATE sources SET name = ?, url = ?, license = ? WHERE id = (SELECT source_id FROM recipes WHERE id = ?) AND ${open}`).bind(sub.source.name, sub.source.url, sub.source.license, id, ...guard),
       D.prepare(`UPDATE recipe_locales SET country = ?, lang = ?, title = ?, slug = ?, intro = ?, ingredients_json = ?, steps_json = ? WHERE recipe_id = ? AND ${open}`).bind(loc.country, loc.lang, loc.title, slug, loc.intro ?? null, ing, stp, id, ...guard),
-      D.prepare(`UPDATE recipes SET origin_country = ?, prep_minutes = ?, cook_minutes = ?, base_servings = ?, attested_at = ?, author_name = ?, category = ? WHERE id = ? AND owner_user_id = ? AND submitted_at IS NULL`).bind(sub.originCountry ?? null, prep, cook, serv, s.attest ? now : null, s.displayName, s.category || null, id, user.id),
+      D.prepare(`UPDATE recipes SET origin_country = ?, prep_minutes = ?, cook_minutes = ?, base_servings = ?, attested_at = ?, author_name = ?, category = ? WHERE id = ? AND owner_user_id = ? AND submitted_at IS NULL AND removed_by_user_at IS NULL AND (review_status IS NULL OR review_status = 'needs_changes')`).bind(sub.originCountry ?? null, prep, cook, serv, s.attest ? now : null, s.displayName, s.category || null, id, user.id),
       D.prepare('UPDATE users SET display_name = ? WHERE id = ?').bind(s.displayName, user.id),
     ]);
     if (res[1]!.meta.changes !== 1) return page(c, t.titleSubmitted, banner('err', t.errAlreadySentNoSave), 409);
@@ -937,7 +1084,7 @@ accountApp.post('/recipes/save', async (c) => {
     const sourceId = `src-${id}`;
     // The draft-count cap is checked inside the inserts themselves (same transaction), so
     // concurrent creates cannot overshoot it. Nothing is written when the cap is hit.
-    const room = "(SELECT count(*) FROM recipes r JOIN recipe_locales l ON l.recipe_id = r.id WHERE r.owner_user_id = ? AND l.status <> 'rejected') < ? AND (SELECT count(*) FROM recipes WHERE owner_user_id = ?) < ?";
+    const room = "(SELECT count(*) FROM recipes r JOIN recipe_locales l ON l.recipe_id = r.id WHERE r.owner_user_id = ? AND r.removed_by_user_at IS NULL AND l.status <> 'rejected') < ? AND (SELECT count(*) FROM recipes WHERE owner_user_id = ?) < ?";
     const res = await D.batch([
       D.prepare(`INSERT INTO sources (id,name,url,license,cleared_at,notes) SELECT ?,?,?,?,NULL,? WHERE ${room}`).bind(sourceId, sub.source.name, sub.source.url, sub.source.license, 'user submission - rights review pending', user.id, MAX_DRAFTS_PER_USER, user.id, MAX_ROWS_PER_USER),
       D.prepare(`INSERT INTO recipes (id,source_id,origin_country,image_key,created_at,prep_minutes,cook_minutes,base_servings,owner_user_id,attested_at,author_name,category) SELECT ?,?,?,NULL,?,?,?,?,?,?,?,? WHERE ${room}`).bind(id, sourceId, sub.originCountry ?? null, now, prep, cook, serv, user.id, s.attest ? now : null, s.displayName, s.category || null, user.id, MAX_DRAFTS_PER_USER, user.id, MAX_ROWS_PER_USER),
@@ -1001,7 +1148,7 @@ accountApp.post('/recipes/:id/photo', async (c) => {
     if (json) return c.json({ ok: false, error: t.errDraftNotFound }, 404, NO_STORE);
     return page(c, t.titleNotFound, banner('err', t.errDraftNotFound), 404);
   }
-  if (owned.r.submittedAt || owned.l.status === 'published') {
+  if (owned.r.submittedAt || owned.l.status === 'published' || owned.r.reviewStatus === 'published' || owned.r.reviewStatus === 'declined' || owned.l.status === 'rejected') {
     if (json) return c.json({ ok: false, error: t.errAlreadySent }, 409, NO_STORE);
     return page(c, t.titleSubmitted, banner('err', t.errAlreadySent), 409);
   }
@@ -1034,7 +1181,7 @@ accountApp.post('/recipes/:id/photo/delete', async (c) => {
     if (json) return c.json({ ok: false, error: t.errDraftNotFound }, 404, NO_STORE);
     return page(c, t.titleNotFound, banner('err', t.errDraftNotFound), 404);
   }
-  if (owned.r.submittedAt || owned.l.status === 'published') {
+  if (owned.r.submittedAt || owned.l.status === 'published' || owned.r.reviewStatus === 'published' || owned.r.reviewStatus === 'declined' || owned.l.status === 'rejected') {
     if (json) return c.json({ ok: false, error: t.errAlreadySent }, 409, NO_STORE);
     return page(c, t.titleSubmitted, banner('err', t.errAlreadySent), 409);
   }
@@ -1050,10 +1197,13 @@ async function sendForReview(c: Ctx, row: OwnedRow) {
   const user = c.get('user')!;
   const lang = langOf(c);
   const t = accountStrings(lang);
-  if (row.r.submittedAt || row.l.status === 'published') return page(c, t.titleSubmitted, banner('ok', t.okAlreadySent), 409);
+  if (row.r.reviewStatus === 'declined' || row.l.status === 'rejected') return page(c, t.statusDeclined, banner('err', t.declinedBanner), 409);
+  if (row.r.submittedAt || row.l.status === 'published' || row.r.reviewStatus === 'published') return page(c, t.titleSubmitted, banner('ok', t.okAlreadySent), 409);
   if (!row.r.attestedAt) return page(c, t.titlePermissionNeeded, banner('err', t.errPermissionNeeded), 409);
   const now = new Date().toISOString();
-  const flip = await c.env.DB.prepare('UPDATE recipes SET submitted_at = ? WHERE id = ? AND owner_user_id = ? AND submitted_at IS NULL AND attested_at IS NOT NULL').bind(now, row.r.id, user.id).run();
+  const flip = await c.env.DB.prepare(
+    "UPDATE recipes SET submitted_at = ?, review_status = 'in_review', notify_lang = ? WHERE id = ? AND owner_user_id = ? AND removed_by_user_at IS NULL AND submitted_at IS NULL AND attested_at IS NOT NULL AND (review_status IS NULL OR review_status = 'needs_changes')",
+  ).bind(now, lang, row.r.id, user.id).run();
   if (flip.meta.changes !== 1) return page(c, t.titleSubmitted, banner('ok', t.okAlreadySent), 409);
   if (c.env.ZELUTO_CLIENT_SECRET?.trim()) {
     const pushRes = await push2YolksContactToZeluto(zelutoConfigFromCtx(c), {
@@ -1212,16 +1362,51 @@ accountApp.post('/recipes/:id/test-report', async (c) => {
   return page(c, t.reportSentPageTitle, `<h1>${t.reportSentTitle}</h1><p class="lead">${fill(t.reportSentLead, { title: esc(row.title) })}</p><p><a class="btn" href="/account${qs(lang)}">${t.backToRecipes}</a></p>`);
 });
 
-// "Remove" never deletes data: the locale is marked rejected (hidden from the owner's list), rows stay for review/audit.
+// "Remove" never deletes data: marks removed_by_user_at (hidden from My kitchen) + locale rejected; rows stay for review/audit.
 accountApp.post('/recipes/:id/delete', async (c) => {
   const user = c.get('user')!;
   const id = c.req.param('id');
-  const r = await c.env.DB.prepare(
-    "UPDATE recipe_locales SET status = 'rejected' WHERE recipe_id = ? AND status = 'draft' AND EXISTS (SELECT 1 FROM recipes r WHERE r.id = ? AND r.owner_user_id = ? AND r.submitted_at IS NULL)",
-  ).bind(id, id, user.id).run();
-  if (r.meta.changes !== 1) return page(c, accountStrings(langOf(c)).titleNotFound, banner('err', accountStrings(langOf(c)).errDraftNotFoundOrSent), 404);
+  const now = new Date().toISOString();
+  const res = await c.env.DB.batch([
+    c.env.DB.prepare(
+      "UPDATE recipe_locales SET status = 'rejected' WHERE recipe_id = ? AND status = 'draft' AND EXISTS (SELECT 1 FROM recipes r WHERE r.id = ? AND r.owner_user_id = ? AND r.submitted_at IS NULL AND r.removed_by_user_at IS NULL AND (r.review_status IS NULL OR r.review_status = 'needs_changes'))",
+    ).bind(id, id, user.id),
+    c.env.DB.prepare(
+      "UPDATE recipes SET removed_by_user_at = ? WHERE id = ? AND owner_user_id = ? AND submitted_at IS NULL AND removed_by_user_at IS NULL AND (review_status IS NULL OR review_status = 'needs_changes')",
+    ).bind(now, id, user.id),
+  ]);
+  if (res[0]!.meta.changes !== 1) return page(c, accountStrings(langOf(c)).titleNotFound, banner('err', accountStrings(langOf(c)).errDraftNotFoundOrSent), 404);
   await deleteDraftPhoto(c.env, { recipeId: id, userId: user.id });
   return c.redirect(`/account${qs(langOf(c))}`, 303);
+});
+
+accountApp.post('/recipes/:id/copy', async (c) => {
+  const user = c.get('user')!;
+  const lang = langOf(c);
+  const t = accountStrings(lang);
+  if (await limited(c.env.RL_SUBMIT, c, 'copy')) return page(c, t.titleSlowDown, banner('err', t.errTooManyTries), 429);
+  const row = await loadOwned(c, c.req.param('id'));
+  if (!row) return page(c, t.titleNotFound, banner('err', t.errDraftNotFound), 404);
+  if (row.r.reviewStatus !== 'declined') return page(c, t.titleSubmitted, banner('err', t.errAlreadySent), 409);
+
+  const copyId = newId();
+  const copySourceId = `src-${copyId}`;
+  const base = (() => { try { return slugify(row.l.title).slice(0, 100).replace(/-+$/, ''); } catch { return ''; } })() || 'recipe';
+  const slug = `${base}-${copyId}`;
+  const now = new Date().toISOString();
+  const D = c.env.DB;
+  const room = "(SELECT count(*) FROM recipes r JOIN recipe_locales l ON l.recipe_id = r.id WHERE r.owner_user_id = ? AND r.removed_by_user_at IS NULL AND l.status <> 'rejected') < ? AND (SELECT count(*) FROM recipes WHERE owner_user_id = ?) < ?";
+  const res = await D.batch([
+    D.prepare(`INSERT INTO sources (id,name,url,license,cleared_at,notes) SELECT ?,?,?,?,NULL,? WHERE ${room}`).bind(copySourceId, row.s.name, row.s.url, row.s.license, 'user submission - rights review pending', user.id, MAX_DRAFTS_PER_USER, user.id, MAX_ROWS_PER_USER),
+    D.prepare(`INSERT INTO recipes (id,source_id,origin_country,image_key,created_at,prep_minutes,cook_minutes,base_servings,owner_user_id,attested_at,author_name,category) SELECT ?,?,?,NULL,?,?,?,?,?,NULL,?,? WHERE ${room}`).bind(copyId, copySourceId, row.r.originCountry ?? null, now, row.r.prepMinutes ?? null, row.r.cookMinutes ?? null, row.r.baseServings ?? null, user.id, row.r.authorName ?? user.displayName ?? null, row.r.category ?? null, user.id, MAX_DRAFTS_PER_USER, user.id, MAX_ROWS_PER_USER),
+    D.prepare("INSERT INTO recipe_locales (recipe_id,country,lang,title,slug,intro,ingredients_json,steps_json,status) SELECT ?,?,?,?,?,?,?,?,'draft' WHERE EXISTS (SELECT 1 FROM recipes WHERE id = ?)").bind(copyId, row.l.country, row.l.lang, row.l.title, slug, row.l.intro ?? null, row.l.ingredientsJson, row.l.stepsJson, copyId),
+  ]);
+  if (res[1]!.meta.changes !== 1) {
+    const life = await D.prepare('SELECT count(*) AS n FROM recipes WHERE owner_user_id = ?').bind(user.id).first<{ n: number }>();
+    const msg = (life?.n ?? 0) >= MAX_ROWS_PER_USER ? t.errRowLimit : fill(t.errDraftLimit, { max: MAX_DRAFTS_PER_USER });
+    return page(c, t.statusDeclined, banner('err', msg), 400);
+  }
+  return c.redirect(`/account/recipes/${copyId}/edit?copied=1${qsAmp(lang)}`, 303);
 });
 
 // --- Creator Subscribers & Zeluto CRM (Strict Creator Isolation) ------------

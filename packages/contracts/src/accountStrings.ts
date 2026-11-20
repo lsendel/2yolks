@@ -77,6 +77,15 @@ export interface AccountStrings {
   draftPhotoLabel: string; draftPhotoHint: string; draftPhotoRemove: string; draftPhotoResizing: string;
   draftPhotoSaved: string; draftPhotoRemoved: string;
   errDraftPhotoInvalid: string; errDraftPhotoStorage: string; errDraftPhotoQuota: string; errDraftPhotoRead: string;
+  // S8 review status timeline & feedback
+  statusNeedsChanges: string; statusDeclined: string;
+  timelineDraft: string; timelineReview: string; timelineLive: string;
+  inReviewNote: string; editAndResend: string; makeCopy: string; copyCreated: string; viewLiveRecipe: string;
+  needsChangesBanner: string; needsChangesLead: string;
+  declinedBanner: string; declinedEditNote: string;
+  mailNeedsChangesSubject: string; mailNeedsChangesBody: string;
+  mailDeclinedSubject: string; mailDeclinedBody: string;
+  mailPublishedSubject: string; mailPublishedBody: string;
 }
 
 const en: AccountStrings = {
@@ -145,7 +154,7 @@ const en: AccountStrings = {
   finishHint: 'Send it in for review now, or save a private draft and come back later. We check the recipe and its rights before anything is published. Publishing is never automatic.',
   errAttestToSubmit: 'Tick the permission box to send this recipe in for review.',
   sentInPageTitle: 'Sent in', sentInTitle: 'Thanks, it is with us',
-  sentInLead: 'We will review "{title}" and its rights before anything goes live. Nothing is published automatically.',
+  sentInLead: 'We will review "{title}" and its rights before anything goes live. Nothing is published automatically. Track progress in My kitchen — we will also email you once it is reviewed.',
   backToRecipes: 'Back to your recipes',
   reportPageTitle: 'You cooked it', reportTitle: 'You cooked this recipe?',
   reportLead: 'Tell us how "{title}" went in your kitchen. A moderator reads every report before the recipe is marked tested.',
@@ -238,6 +247,26 @@ const en: AccountStrings = {
   errDraftPhotoStorage: 'Photo storage is not configured right now.',
   errDraftPhotoQuota: 'Your drafts have reached the photo storage limit. Remove an older photo first.',
   errDraftPhotoRead: 'Please pick a valid photo file.',
+  statusNeedsChanges: 'Needs changes',
+  statusDeclined: 'Not published',
+  timelineDraft: 'Draft',
+  timelineReview: 'In review',
+  timelineLive: 'Live',
+  inReviewNote: 'Editing is paused while a reviewer checks your recipe and rights.',
+  editAndResend: 'Edit and resend',
+  makeCopy: 'Make a copy',
+  copyCreated: 'Copied into a fresh draft. Review it and tick the permission box when you are ready to send it in again.',
+  viewLiveRecipe: 'View live recipe',
+  needsChangesBanner: 'Changes requested by reviewer',
+  needsChangesLead: 'Reviewer note: {note}. Update your recipe below, re-tick the permission box, and send it in again.',
+  declinedBanner: 'This submission was not published.',
+  declinedEditNote: 'Declined recipes cannot be edited directly. Make a fresh draft copy below if you want to rework and submit a new version.',
+  mailNeedsChangesSubject: '2yolks: please update "{title}"',
+  mailNeedsChangesBody: 'We reviewed your recipe "{title}" and need a quick change before it can go live:\n\n{note}\n\nEdit and resend it here:\n{editUrl}\n',
+  mailDeclinedSubject: '2yolks update on "{title}"',
+  mailDeclinedBody: 'Thank you for sending in "{title}". We decided not to publish this submission:\n\n{note}\n\nYou can still make a fresh copy in My kitchen:\n{accountUrl}\n',
+  mailPublishedSubject: 'Your 2yolks recipe "{title}" is live',
+  mailPublishedBody: 'Good news — "{title}" passed review and is now live on 2yolks:\n\n{liveUrl}\n',
 };
 
 const es: AccountStrings = {
@@ -306,7 +335,7 @@ const es: AccountStrings = {
   finishHint: 'Envíala a revisión ahora, o guarda un borrador privado y vuelve más tarde. Revisamos la receta y sus derechos antes de publicar nada. La publicación nunca es automática.',
   errAttestToSubmit: 'Marca la casilla de permiso para enviar esta receta a revisión.',
   sentInPageTitle: 'Enviada', sentInTitle: 'Gracias, ya la tenemos',
-  sentInLead: 'Revisaremos "{title}" y sus derechos antes de que nada se publique. Nada se publica automáticamente.',
+  sentInLead: 'Revisaremos "{title}" y sus derechos antes de que nada se publique. Nada se publica automáticamente. Sigue el estado en Mi cocina; también te enviaremos un correo cuando se revise.',
   backToRecipes: 'Volver a tus recetas',
   reportPageTitle: 'La cocinaste', reportTitle: '¿Cocinaste esta receta?',
   reportLead: 'Cuéntanos cómo salió "{title}" en tu cocina. Un moderador lee cada reporte antes de marcar la receta como probada.',
@@ -399,6 +428,26 @@ const es: AccountStrings = {
   errDraftPhotoStorage: 'El almacenamiento de fotos no está disponible ahora mismo.',
   errDraftPhotoQuota: 'Tus borradores alcanzaron el límite de almacenamiento de fotos. Quita una foto anterior primero.',
   errDraftPhotoRead: 'Elige un archivo de foto válido.',
+  statusNeedsChanges: 'Necesita cambios',
+  statusDeclined: 'No publicada',
+  timelineDraft: 'Borrador',
+  timelineReview: 'En revisión',
+  timelineLive: 'Publicada',
+  inReviewNote: 'La edición está pausada mientras revisamos tu receta y sus derechos.',
+  editAndResend: 'Editar y reenviar',
+  makeCopy: 'Hacer una copia',
+  copyCreated: 'Copiada en un borrador nuevo. Revísala y vuelve a marcar la casilla de permiso cuando estés listo para enviarla.',
+  viewLiveRecipe: 'Ver receta publicada',
+  needsChangesBanner: 'Cambios solicitados en revisión',
+  needsChangesLead: 'Nota de revisión: {note}. Actualiza tu receta abajo, marca de nuevo la casilla de permiso y reenvíala.',
+  declinedBanner: 'Esta receta enviada no se publicó.',
+  declinedEditNote: 'Las recetas no publicadas no se pueden editar directamente. Crea una copia nueva abajo si quieres rehacerla y enviarla otra vez.',
+  mailNeedsChangesSubject: '2yolks: por favor ajusta "{title}"',
+  mailNeedsChangesBody: 'Revisamos tu receta "{title}" y necesitamos un pequeño cambio antes de publicarla:\n\n{note}\n\nEdítala y reenvíala aquí:\n{editUrl}\n',
+  mailDeclinedSubject: 'Actualización de 2yolks sobre "{title}"',
+  mailDeclinedBody: 'Gracias por enviar "{title}". Decidimos no publicar esta entrega:\n\n{note}\n\nPuedes hacer una copia nueva desde Mi cocina:\n{accountUrl}\n',
+  mailPublishedSubject: 'Tu receta "{title}" ya está en 2yolks',
+  mailPublishedBody: '¡Buenas noticias! "{title}" pasó la revisión y ya está publicada en 2yolks:\n\n{liveUrl}\n',
 };
 
 const fr: AccountStrings = {
@@ -467,7 +516,7 @@ const fr: AccountStrings = {
   finishHint: 'Envoyez-la en relecture maintenant, ou enregistrez un brouillon privé et revenez plus tard. Nous vérifions la recette et ses droits avant toute publication. La publication n’est jamais automatique.',
   errAttestToSubmit: 'Cochez la case d’autorisation pour envoyer cette recette en relecture.',
   sentInPageTitle: 'Envoyée', sentInTitle: 'Merci, nous l’avons bien reçue',
-  sentInLead: 'Nous relirons « {title} » et ses droits avant toute mise en ligne. Rien n’est publié automatiquement.',
+  sentInLead: 'Nous relirons « {title} » et ses droits avant toute mise en ligne. Rien n’est publié automatiquement. Suivez l’avancement dans Ma cuisine — nous vous écrirons aussi dès qu’elle sera relue.',
   backToRecipes: 'Retour à vos recettes',
   reportPageTitle: 'Vous l’avez cuisinée', reportTitle: 'Vous avez cuisiné cette recette ?',
   reportLead: 'Dites-nous comment « {title} » s’est passée dans votre cuisine. Un modérateur lit chaque signalement avant de marquer la recette comme testée.',
@@ -560,6 +609,26 @@ const fr: AccountStrings = {
   errDraftPhotoStorage: 'Le stockage des photos n’est pas configuré pour le moment.',
   errDraftPhotoQuota: 'Vos brouillons ont atteint la limite de stockage photo. Supprimez d’abord une photo plus ancienne.',
   errDraftPhotoRead: 'Choisissez un fichier photo valide.',
+  statusNeedsChanges: 'Modifications demandées',
+  statusDeclined: 'Non publiée',
+  timelineDraft: 'Brouillon',
+  timelineReview: 'En relecture',
+  timelineLive: 'En ligne',
+  inReviewNote: 'La modification est en pause pendant la relecture de votre recette et de ses droits.',
+  editAndResend: 'Modifier et renvoyer',
+  makeCopy: 'Créer une copie',
+  copyCreated: 'Copiée dans un nouveau brouillon. Relisez-la et cochez de nouveau la case d’autorisation quand elle est prête.',
+  viewLiveRecipe: 'Voir la recette publiée',
+  needsChangesBanner: 'Modifications demandées par la relecture',
+  needsChangesLead: 'Note de relecture : {note}. Mettez la recette à jour ci-dessous, cochez de nouveau la case d’autorisation puis renvoyez-la.',
+  declinedBanner: 'Cette proposition n’a pas été publiée.',
+  declinedEditNote: 'Une recette non publiée ne peut pas être modifiée directement. Créez une nouvelle copie ci-dessous si vous souhaitez en préparer une nouvelle version.',
+  mailNeedsChangesSubject: '2yolks : merci d’ajuster « {title} »',
+  mailNeedsChangesBody: 'Nous avons relu votre recette « {title} » et avons besoin d’un ajustement avant sa publication :\n\n{note}\n\nModifiez-la et renvoyez-la ici :\n{editUrl}\n',
+  mailDeclinedSubject: 'Nouvelles de 2yolks pour « {title} »',
+  mailDeclinedBody: 'Merci d’avoir proposé « {title} ». Nous avons choisi de ne pas publier cette version :\n\n{note}\n\nVous pouvez créer une nouvelle copie depuis Ma cuisine :\n{accountUrl}\n',
+  mailPublishedSubject: 'Votre recette « {title} » est en ligne sur 2yolks',
+  mailPublishedBody: 'Bonne nouvelle : « {title} » a été relue et est maintenant publiée sur 2yolks :\n\n{liveUrl}\n',
 };
 
 const ACCOUNT_STRINGS: Record<string, AccountStrings> = { en, es, fr };
