@@ -167,10 +167,16 @@ describe('email-code auth', () => {
     expect((await post('/account/recipes/save', recipeForm(), { cookie, origin: 'https://evil.example' })).status).toBe(403);
     expect((await post('/account/logout', {}, { cookie, origin: 'https://evil.example' })).status).toBe(403);
   });
-  it('requires a session for recipe routes', async () => {
-    expect((await get('/account/recipes/new')).status).toBe(303);
-    expect((await post('/account/recipes/save', recipeForm())).status).toBe(303);
+  it('allows anonymous capture preview while requiring a session for private recipe routes', async () => {
+    expect((await get('/account/recipes/new')).status).toBe(200);
+    const editRes = await get('/account/recipes/abc123/edit');
+    expect(editRes.status).toBe(303);
+    expect(editRes.headers.get('location')).toBe('/account?next=%2Faccount%2Frecipes%2Fabc123%2Fedit');
+    const saveRes = await post('/account/recipes/save', recipeForm());
+    expect(saveRes.status).toBe(303);
+    expect(saveRes.headers.get('location')).toBe('/account?next=%2Faccount%2Frecipes%2Fnew');
     expect((await post('/account/recipes/import', { url: 'https://example.com' })).status).toBe(303);
+    expect((await post('/account/recipes/save', recipeForm(), { origin: ORIGIN, e: {}, cookie: undefined })).status).toBe(303);
   });
 });
 
@@ -925,7 +931,7 @@ describe('share flow: one clear finish (attest + send in one POST)', () => {
     const res = await post('/account/recipes/save', recipeForm({ attest: '', intent: 'submit' }), { cookie });
     expect(res.status).toBe(400);
     const html = await res.text();
-    expect(html).toContain('<title>Add a recipe - 2yolks</title>');
+    expect(html).toContain('<title>Share a recipe - 2yolks</title>');
     expect(html).toMatch(/<input type="checkbox" name="attest" value="1" id="f-attest"[^>]*aria-invalid="true" aria-describedby="err-attest"/);
     expect(html).toContain('<p class="field-err" id="err-attest">Tick the permission box to send this recipe in for review.</p>');
     expect(html).toContain('<a href="#f-attest">'); // summary links to the field
@@ -1066,5 +1072,136 @@ describe('validator paths map to form controls', () => {
     expect(f('locales[0].lang', 'x')).toBe('locale');
     expect(f('category', 'x')).toBe('category');
     expect(f('locales', 'x')).toBeUndefined();
+  });
+});
+
+describe('Phase 2 share capture: draft-first, return-to, JSON auth & in-page paste', () => {
+  it('safeNextPath rejects open-redirect vectors and allows only clean /account/ paths', async () => {
+    const { safeNextPath } = await import('./account');
+    expect(safeNextPath('/account')).toBe('/account');
+    expect(safeNextPath('/account/subscribers')).toBe('/account/subscribers');
+    expect(safeNextPath('/account/recipes/new')).toBe('/account/recipes/new');
+    expect(safeNextPath('/account/recipes/abc123/edit')).toBe('/account/recipes/abc123/edit');
+    expect(safeNextPath('/account/recipes/rp1/test-report')).toBe('/account/recipes/rp1/test-report');
+    for (const bad of [
+      null, undefined, '', '/account/', '/recipes/new',
+      '//evil.example/account/recipes/new', '/account//recipes/new',
+      '/account/\\evil', 'https://evil.example/account/recipes/new',
+      '/account/recipes/../admin', '/account/recipes/new?x=1',
+      '/account/recipes/new#frag', '/account/recipes/%2e%2e/x',
+      '/account/recipes/new\nSet-Cookie: a=b', `/account/${'a'.repeat(160)}`,
+    ]) {
+      expect(safeNextPath(bad), String(bad)).toBeNull();
+    }
+  });
+
+  it('serves the full capture form anonymously without creating DB rows or exposing AI controls', async () => {
+    for (const [lang, heading] of [['en', 'Share a recipe'], ['es', 'Comparte una receta'], ['fr', 'Partager une recette']] as const) {
+      const res = await get(`/account/recipes/new?lang=${lang}`);
+      expect(res.status, lang).toBe(200);
+      const html = await res.text();
+      expect(html, lang).toContain(`<h1>${heading}</h1>`);
+      expect(html, lang).toContain('data-signed-in="0"');
+      expect(html, lang).toContain('data-start-tiles');
+      expect(html, lang).toContain('data-live-preview');
+      expect(html, lang).toContain('data-inline-auth');
+      expect((html.match(/class="form-step"/g) ?? []).length).toBe(5);
+      const markupOnly = html.slice(html.indexOf('<main'), html.indexOf('<script type="application/json"'));
+      expect(markupOnly).not.toContain('data-ai-panel');
+      expect(markupOnly).not.toContain('<input type="file"');
+    }
+    for (const table of ['recipes', 'users', 'sessions']) {
+      expect((await DB.prepare(`SELECT count(*) AS n FROM ${table}`).first<{ n: number }>())!.n).toBe(0);
+    }
+  });
+
+  it('allows anonymous parse-only paste in both JSON and HTML modes while enforcing RL_SUBMIT', async () => {
+    const jsonRes = await app.request(`${ORIGIN}/account/recipes/paste`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json', origin: ORIGIN },
+      body: new URLSearchParams({ text: 'Salsa Roja\nIngredients\n4 tomatoes\n2 chiles\nInstructions\nChar and blend.' }).toString(),
+    }, env());
+    expect(jsonRes.status).toBe(200);
+    const body = (await jsonRes.json()) as { ok: boolean; parsed: Record<string, string>; warnings: string[] };
+    expect(body.ok).toBe(true);
+    expect(body.parsed['title']).toBe('Salsa Roja');
+    expect(body.parsed['ingredients']).toBe('4 tomatoes\n2 chiles');
+    expect(body.parsed['steps']).toBe('Char and blend.');
+    expect(body.warnings).toEqual([]);
+    expect((await DB.prepare('SELECT count(*) AS n FROM recipes').first<{ n: number }>())!.n).toBe(0);
+
+    const limitedRes = await app.request(`${ORIGIN}/account/recipes/paste`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json', origin: ORIGIN },
+      body: 'text=hi',
+    }, env({ RL_SUBMIT: { limit: async () => ({ success: false }) } }));
+    expect(limitedRes.status).toBe(429);
+  });
+
+  it('HTML ?next= preserves return-to through sign-in and drops unsafe targets', async () => {
+    const signPage = await (await get('/account?next=%2Faccount%2Frecipes%2Fnew&lang=es')).text();
+    expect(signPage).toContain('name="next" value="/account/recipes/new"');
+    expect(signPage).toContain('href="/account?lang=fr&amp;next=%2Faccount%2Frecipes%2Fnew"');
+
+    const codePage = await post('/account/code?lang=es', { email: 'ret@example.com', next: '/account/recipes/new' });
+    expect(codePage.status).toBe(200);
+    expect(await codePage.text()).toContain('name="next" value="/account/recipes/new"');
+    const esCode = /\b(\d{6})\b/.exec(sent[sent.length - 1]!.text)![1]!;
+
+    const ver = await post('/account/verify?lang=es', { email: 'ret@example.com', code: esCode, next: '/account/recipes/new' });
+    expect(ver.status).toBe(303);
+    expect(ver.headers.get('location')).toBe('/account/recipes/new?lang=es');
+    const cookie = ver.headers.get('set-cookie')!.split(';')[0]!;
+
+    // Already signed in visiting /account?next=... jumps directly; evil next is ignored
+    const bounce = await get('/account?next=%2Faccount%2Frecipes%2Fnew', cookie);
+    expect(bounce.status).toBe(303);
+    expect(bounce.headers.get('location')).toBe('/account/recipes/new');
+
+    const evil = await post('/account/verify', { email: 'ret@example.com', code: '123456', next: '//evil.example' });
+    expect(evil.status).toBe(400);
+    const evilVer = await get('/account?next=%2F%2Fevil.example', cookie);
+    expect(evilVer.status).toBe(200);
+  });
+
+  it('JSON /account/code and /account/verify issue the session cookie for inline auth', async () => {
+    const bad = await app.request(`${ORIGIN}/account/code`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json', origin: ORIGIN },
+      body: JSON.stringify({ email: 'not-an-email' }),
+    }, env());
+    expect(bad.status).toBe(400);
+    expect(((await bad.json()) as { ok: boolean }).ok).toBe(false);
+
+    const okCode = await app.request(`${ORIGIN}/account/code`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json', origin: ORIGIN },
+      body: JSON.stringify({ email: 'inline@example.com', next: '/account/recipes/new' }),
+    }, env());
+    expect(okCode.status).toBe(200);
+    expect(((await okCode.json()) as { ok: boolean; email: string }).email).toBe('inline@example.com');
+
+    const wrong = await app.request(`${ORIGIN}/account/verify`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json', origin: ORIGIN },
+      body: JSON.stringify({ email: 'inline@example.com', code: '000000' }),
+    }, env());
+    expect(wrong.status).toBe(400);
+
+    const okVer = await app.request(`${ORIGIN}/account/verify`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json', origin: ORIGIN },
+      body: JSON.stringify({ email: 'inline@example.com', code: lastCode(), next: '/account/recipes/new' }),
+    }, env());
+    expect(okVer.status).toBe(200);
+    const vBody = (await okVer.json()) as { ok: boolean; next: string };
+    expect(vBody.ok).toBe(true);
+    expect(vBody.next).toBe('/account/recipes/new');
+    const cookie = okVer.headers.get('set-cookie')!.split(';')[0]!;
+    expect(cookie).toMatch(/__Host-2y_sid=[0-9a-f]{64}/);
+
+    const saved = await post('/account/recipes/save', recipeForm({ intent: 'submit' }), { cookie });
+    expect(saved.status).toBe(200);
+    expect(await saved.text()).toContain('Thanks, it is with us');
   });
 });

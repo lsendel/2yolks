@@ -65,6 +65,14 @@ export interface AccountStrings {
   // honest AI: no-key fallback, session expiry
   aiErrTranslateUnavailable: string; aiErrMediaUnavailable: string; aiFallbackNote: string;
   aiErrSession: string; aiSignInLink: string;
+  // share a recipe: draft first, sign in last (S1), start tiles (S2), mobile stepper (S3), live preview (S6)
+  formPromise: string; aiSignInNote: string;
+  startHeading: string; tilePhotoTitle: string; tilePhotoHint: string; tilePasteTitle: string; tilePasteHint: string; tileTypeTitle: string; tileTypeHint: string;
+  pasteWorking: string; pasteUndo: string;
+  stepIndexLabel: string; stepBasics: string; stepIngredients: string; stepSteps: string; stepDetails: string; stepCredit: string;
+  stepBack: string; stepNext: string; stepProgress: string; stepNeedRequired: string; stepSoftWarn: string;
+  previewTitle: string; previewTab: string; previewBadge: string; previewUntitled: string; previewPrep: string; previewCook: string; previewServes: string; previewEmpty: string; previewBackToForm: string;
+  authStepTitle: string; authStepLead: string; authCodeSent: string; authVerifyBtn: string; authChangeEmail: string; authWorking: string; authDone: string;
 }
 
 const en: AccountStrings = {
@@ -98,7 +106,7 @@ const en: AccountStrings = {
   addRecipe: 'Add a recipe', yourDrafts: 'Your drafts',
   emptyDrafts: 'Nothing yet. Start from a form, pasted text or a link.', signOut: 'Sign out',
   statusPublished: 'Published', statusSubmitted: 'Submitted for review', statusDraft: 'Private draft', editLink: 'Edit',
-  formTitleNew: 'Add a recipe', formTitleEdit: 'Edit your draft',
+  formTitleNew: 'Share a recipe', formTitleEdit: 'Edit your draft',
   formLead: 'Drafts are private to you until you send one in and we review it.',
   fixThese: 'Fix these first:',
   startFaster: 'Start faster',
@@ -197,6 +205,25 @@ const en: AccountStrings = {
   aiFallbackNote: 'Basic tidy-up only: the AI service isn’t available right now, so any photo or voice note was not read.',
   aiErrSession: 'Your session ended. Your draft is saved on this device, so nothing is lost.',
   aiSignInLink: 'Sign in again (opens a new tab)',
+  formPromise: 'Start now — you only need an email when you send it in.',
+  aiSignInNote: 'Sign in to use the AI helper',
+  startHeading: 'How do you want to start?',
+  tilePhotoTitle: 'Snap your dish or a recipe card', tilePhotoHint: 'The AI helper reads it and fills the form.',
+  tilePasteTitle: 'Paste text', tilePasteHint: 'From a note, an email or a document.',
+  tileTypeTitle: 'Type it', tileTypeHint: 'Fill in the form, step by step.',
+  pasteWorking: 'Reading your text…', pasteUndo: 'Undo',
+  stepIndexLabel: 'Form sections', stepBasics: 'Basics', stepIngredients: 'Ingredients', stepSteps: 'Steps', stepDetails: 'Details', stepCredit: 'Credit & send',
+  stepBack: 'Back', stepNext: 'Next', stepProgress: 'Step {n} of {total}',
+  stepNeedRequired: 'Fill this in to continue.',
+  stepSoftWarn: 'Worth a look before you go on. Press Next again to continue anyway.',
+  previewTitle: 'Preview', previewTab: 'Preview', previewBadge: 'Draft — not yet tested', previewUntitled: 'Your recipe name',
+  previewPrep: 'Prep {n} min', previewCook: 'Cook {n} min', previewServes: 'Serves {n}',
+  previewEmpty: 'Start typing and your recipe card appears here.', previewBackToForm: 'Back to the form',
+  authStepTitle: 'Last step: confirm your email',
+  authStepLead: 'We email you a 6-digit code. Your recipe stays right here on this page while you check.',
+  authCodeSent: 'We sent a code to {email}. It works for 10 minutes.',
+  authVerifyBtn: 'Confirm and continue', authChangeEmail: 'Use a different email',
+  authWorking: 'One moment…', authDone: 'Email confirmed. Saving your recipe…',
 };
 
 const es: AccountStrings = {
@@ -230,7 +257,7 @@ const es: AccountStrings = {
   addRecipe: 'Añadir una receta', yourDrafts: 'Tus borradores',
   emptyDrafts: 'Nada todavía. Empieza desde un formulario, texto pegado o un enlace.', signOut: 'Cerrar sesión',
   statusPublished: 'Publicada', statusSubmitted: 'Enviada a revisión', statusDraft: 'Borrador privado', editLink: 'Editar',
-  formTitleNew: 'Añadir una receta', formTitleEdit: 'Editar tu borrador',
+  formTitleNew: 'Comparte una receta', formTitleEdit: 'Editar tu borrador',
   formLead: 'Los borradores son privados hasta que envíes uno y lo revisemos.',
   fixThese: 'Corrige esto primero:',
   startFaster: 'Empieza más rápido',
@@ -329,6 +356,25 @@ const es: AccountStrings = {
   aiFallbackNote: 'Solo un orden básico: el servicio de IA no está disponible ahora mismo, así que no se leyó ninguna foto ni nota de voz.',
   aiErrSession: 'Tu sesión terminó. Tu borrador está guardado en este dispositivo, así que no se pierde nada.',
   aiSignInLink: 'Volver a iniciar sesión (abre una pestaña nueva)',
+  formPromise: 'Empieza ya: solo necesitas un correo cuando la envíes.',
+  aiSignInNote: 'Inicia sesión para usar el asistente de IA',
+  startHeading: '¿Cómo quieres empezar?',
+  tilePhotoTitle: 'Fotografía tu plato o una ficha de receta', tilePhotoHint: 'El asistente de IA la lee y rellena el formulario.',
+  tilePasteTitle: 'Pegar texto', tilePasteHint: 'De una nota, un correo o un documento.',
+  tileTypeTitle: 'Escribirla', tileTypeHint: 'Rellena el formulario paso a paso.',
+  pasteWorking: 'Leyendo tu texto…', pasteUndo: 'Deshacer',
+  stepIndexLabel: 'Secciones del formulario', stepBasics: 'Lo básico', stepIngredients: 'Ingredientes', stepSteps: 'Pasos', stepDetails: 'Detalles', stepCredit: 'Autoría y envío',
+  stepBack: 'Atrás', stepNext: 'Siguiente', stepProgress: 'Paso {n} de {total}',
+  stepNeedRequired: 'Rellena esto para continuar.',
+  stepSoftWarn: 'Vale la pena revisarlo antes de seguir. Pulsa Siguiente otra vez para continuar de todos modos.',
+  previewTitle: 'Vista previa', previewTab: 'Vista previa', previewBadge: 'Borrador — aún no probada', previewUntitled: 'El nombre de tu receta',
+  previewPrep: 'Preparación {n} min', previewCook: 'Cocción {n} min', previewServes: 'Para {n}',
+  previewEmpty: 'Empieza a escribir y aquí aparecerá la ficha de tu receta.', previewBackToForm: 'Volver al formulario',
+  authStepTitle: 'Último paso: confirma tu correo',
+  authStepLead: 'Te enviamos un código de 6 dígitos. Tu receta se queda aquí, en esta página, mientras lo revisas.',
+  authCodeSent: 'Enviamos un código a {email}. Funciona por 10 minutos.',
+  authVerifyBtn: 'Confirmar y continuar', authChangeEmail: 'Usar otro correo',
+  authWorking: 'Un momento…', authDone: 'Correo confirmado. Guardando tu receta…',
 };
 
 const fr: AccountStrings = {
@@ -362,7 +408,7 @@ const fr: AccountStrings = {
   addRecipe: 'Ajouter une recette', yourDrafts: 'Vos brouillons',
   emptyDrafts: 'Rien pour l’instant. Partez d’un formulaire, d’un texte collé ou d’un lien.', signOut: 'Déconnexion',
   statusPublished: 'Publiée', statusSubmitted: 'Envoyée en relecture', statusDraft: 'Brouillon privé', editLink: 'Modifier',
-  formTitleNew: 'Ajouter une recette', formTitleEdit: 'Modifier votre brouillon',
+  formTitleNew: 'Partager une recette', formTitleEdit: 'Modifier votre brouillon',
   formLead: 'Les brouillons restent privés jusqu’à ce que vous en envoyiez un et que nous le relisions.',
   fixThese: 'À corriger d’abord :',
   startFaster: 'Pour aller plus vite',
@@ -461,6 +507,25 @@ const fr: AccountStrings = {
   aiFallbackNote: 'Mise en forme basique seulement : le service d’IA est indisponible pour le moment, aucune photo ni note vocale n’a été lue.',
   aiErrSession: 'Votre session a expiré. Votre brouillon est enregistré sur cet appareil, rien n’est perdu.',
   aiSignInLink: 'Se reconnecter (ouvre un nouvel onglet)',
+  formPromise: 'Commencez maintenant : un e-mail suffit, au moment de l’envoyer.',
+  aiSignInNote: 'Connectez-vous pour utiliser l’assistant IA',
+  startHeading: 'Comment voulez-vous commencer ?',
+  tilePhotoTitle: 'Photographiez votre plat ou une fiche recette', tilePhotoHint: 'L’assistant IA la lit et remplit le formulaire.',
+  tilePasteTitle: 'Coller du texte', tilePasteHint: 'D’une note, d’un e-mail ou d’un document.',
+  tileTypeTitle: 'La saisir', tileTypeHint: 'Remplissez le formulaire étape par étape.',
+  pasteWorking: 'Lecture de votre texte…', pasteUndo: 'Annuler',
+  stepIndexLabel: 'Sections du formulaire', stepBasics: 'L’essentiel', stepIngredients: 'Ingrédients', stepSteps: 'Étapes', stepDetails: 'Détails', stepCredit: 'Crédit et envoi',
+  stepBack: 'Retour', stepNext: 'Suivant', stepProgress: 'Étape {n} sur {total}',
+  stepNeedRequired: 'Remplissez ce champ pour continuer.',
+  stepSoftWarn: 'À vérifier avant de continuer. Appuyez de nouveau sur Suivant pour passer quand même.',
+  previewTitle: 'Aperçu', previewTab: 'Aperçu', previewBadge: 'Brouillon — pas encore testée', previewUntitled: 'Le nom de votre recette',
+  previewPrep: 'Préparation {n} min', previewCook: 'Cuisson {n} min', previewServes: 'Pour {n}',
+  previewEmpty: 'Commencez à écrire : la fiche de votre recette apparaît ici.', previewBackToForm: 'Retour au formulaire',
+  authStepTitle: 'Dernière étape : confirmez votre e-mail',
+  authStepLead: 'Nous vous envoyons un code à 6 chiffres. Votre recette reste ici, sur cette page, pendant que vous vérifiez.',
+  authCodeSent: 'Nous avons envoyé un code à {email}. Il est valable 10 minutes.',
+  authVerifyBtn: 'Confirmer et continuer', authChangeEmail: 'Utiliser une autre adresse',
+  authWorking: 'Un instant…', authDone: 'E-mail confirmé. Enregistrement de votre recette…',
 };
 
 const ACCOUNT_STRINGS: Record<string, AccountStrings> = { en, es, fr };

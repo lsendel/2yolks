@@ -953,17 +953,92 @@ html[data-theme="dark"] .acct [aria-invalid="true"] { border-color: #ffb4ab; out
 .acct .finish-actions { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center; }
 .acct .draft-notice { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center; }
 .acct .draft-notice button { padding: 0.3rem 0.8rem; }
-@media (max-width: 640px) { .acct .row { grid-template-columns: 1fr; } .acct { margin: 1rem 0.5rem; padding: 1.25rem 0.85rem 1.75rem; } }
+.acct.acct-capture { max-width: 72rem; }
+.acct .capture-shell { display: grid; gap: 1.75rem; align-items: start; }
+.acct .capture-main { min-width: 0; }
+.acct .start-section { margin: 0 0 1.25rem; }
+.acct .start-heading { font-weight: 700; margin: 0 0 0.6rem; font-size: 0.95rem; }
+.acct .start-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.65rem; }
+.acct .start-tile { display: grid; gap: 0.25rem; text-align: left; align-content: start; padding: 0.85rem 0.95rem; background: var(--card); color: var(--ink); border: 1px solid var(--line-strong); font-weight: 400; width: 100%; }
+.acct .start-tile strong { font-weight: 750; font-size: 0.95rem; }
+.acct .start-tile span { font-size: 0.82rem; color: var(--muted); line-height: 1.35; }
+.acct .start-tile[aria-pressed="true"] { border-color: var(--plum); border-width: 2px; background: #f4f7e4; }
+html[data-theme="dark"] .acct .start-tile { background: var(--card); color: var(--ink); border-color: var(--line-strong); }
+html[data-theme="dark"] .acct .start-tile[aria-pressed="true"] { border-color: var(--lime); background: #2c2435; }
+.acct .step-index { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0 0 1rem; padding: 0.55rem 0; border-bottom: 1px solid var(--line); }
+.acct .step-index a { font-size: 0.82rem; font-weight: 650; text-decoration: none; color: var(--ink); border: 1px solid var(--line); padding: 0.28rem 0.6rem; background: var(--card); }
+.acct .step-index a:hover, .acct .step-index a[aria-current="step"] { border-color: var(--plum); background: var(--plum); color: var(--lime); }
+html[data-theme="dark"] .acct .step-index a:hover, html[data-theme="dark"] .acct .step-index a[aria-current="step"] { border-color: var(--lime); background: var(--lime); color: var(--plum); }
+.acct .stepper-bar { display: flex; align-items: center; gap: 0.75rem; margin: 0 0 1rem; padding: 0.65rem 0.85rem; border: 1px solid var(--line); background: var(--card); }
+.acct .stepper-bar[hidden] { display: none; }
+.acct .stepper-progress-text { font-size: 0.84rem; font-weight: 700; white-space: nowrap; }
+.acct .stepper-track { flex: 1; height: 6px; background: var(--line); overflow: hidden; }
+.acct .stepper-fill { height: 100%; background: var(--plum); width: 20%; transition: width 0.18s ease; }
+html[data-theme="dark"] .acct .stepper-fill { background: var(--lime); }
+.acct .stepper-preview-btn { padding: 0.35rem 0.75rem; font-size: 0.84rem; }
+.acct fieldset.form-step { border: 0; margin: 0; padding: 0; display: grid; gap: 0.9rem; min-width: 0; }
+.acct legend.step-heading { font-family: var(--font-display); font-size: 1.2rem; font-weight: 700; padding: 0.4rem 0 0.2rem; margin: 0 0 0.25rem; border-bottom: 1px solid var(--line); width: 100%; }
+.acct legend.step-heading:focus { outline: none; }
+.acct .step-nav { display: none; gap: 0.6rem; flex-wrap: wrap; align-items: center; margin-top: 0.35rem; }
+.acct .step-msg { flex-basis: 100%; font-size: 0.88rem; font-weight: 600; color: #9a6700; }
+html[data-theme="dark"] .acct .step-msg { color: #ffd166; }
+.acct .capture-stepper-on .step-index { display: none; }
+.acct .capture-stepper-on fieldset.form-step { display: none; }
+.acct .capture-stepper-on fieldset.form-step.is-active { display: grid; }
+.acct .capture-stepper-on .step-nav { display: flex; }
+.acct .inline-auth { border-left: 5px solid var(--lime); display: grid; gap: 0.75rem; margin-top: 0.5rem; }
+.acct .inline-auth[hidden] { display: none; }
+.acct .inline-auth-actions { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center; }
+.acct .capture-preview-col { border: 1px solid var(--line); background: var(--card); padding: 1.15rem 1.25rem; }
+.acct .capture-preview-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; margin-bottom: 0.75rem; }
+.acct .capture-preview-head h2 { margin: 0; font-size: 1.05rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+.acct .preview-card { display: grid; gap: 0.65rem; }
+.acct .preview-badge { justify-self: start; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; padding: 0.16rem 0.5rem; background: var(--plum); color: var(--lime); }
+html[data-theme="dark"] .acct .preview-badge { background: var(--lime); color: var(--plum); }
+.acct .preview-photo { width: 100%; aspect-ratio: 4/3; object-fit: cover; border: 1px solid var(--line); display: block; }
+.acct .preview-photo[hidden] { display: none; }
+.acct .preview-eyebrow { margin: 0; font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 700; color: var(--muted); }
+.acct .preview-title { margin: 0; font-family: var(--font-display); font-size: 1.45rem; line-height: 1.15; }
+.acct .preview-facts { display: flex; flex-wrap: wrap; gap: 0.4rem; font-size: 0.8rem; }
+.acct .preview-facts span { border: 1px solid var(--line); padding: 0.16rem 0.45rem; color: var(--muted); font-weight: 600; }
+.acct .preview-intro { margin: 0; font-size: 0.92rem; line-height: 1.5; color: var(--muted); }
+.acct .preview-card h4 { margin: 0.35rem 0 0.25rem; font-size: 0.88rem; text-transform: uppercase; letter-spacing: 0.05em; }
+.acct .preview-ing, .acct .preview-steps { margin: 0; padding-left: 1.15rem; font-size: 0.88rem; line-height: 1.45; display: grid; gap: 0.2rem; }
+.acct .paste-actions { display: flex; flex-wrap: wrap; gap: 0.55rem; align-items: center; }
+.acct .preview-back-btn { padding: 0.3rem 0.75rem; font-size: 0.82rem; }
+.acct [hidden] { display: none !important; }
+@media (min-width: 721px) {
+  .acct .capture-shell { grid-template-columns: minmax(0, 1fr) 300px; }
+  .acct .capture-preview-col { position: sticky; top: 4.75rem; max-height: calc(100vh - 6rem); overflow-y: auto; }
+}
+@media (min-width: 980px) {
+  .acct .capture-shell { grid-template-columns: minmax(0, 1fr) 340px; }
+}
+@media (max-width: 720px) {
+  .acct .capture-preview-col { display: none; }
+  .acct .capture-preview-mobile .capture-preview-col { display: block; }
+  .acct .capture-preview-mobile form[data-capture-form],
+  .acct .capture-preview-mobile .start-section,
+  .acct .capture-preview-mobile [data-mode-panel] { display: none; }
+}
+@media (max-width: 640px) { .acct .row { grid-template-columns: 1fr; } .acct .start-tiles { grid-template-columns: 1fr; } .acct { margin: 1rem 0.5rem; padding: 1.25rem 0.85rem 1.75rem; } }
 `;
 
 /** Private, never-indexed page in the After hours shell (account + submissions).
  * The account UI is localized en/es/fr: `lang` sets the document language and
  * the header/footer chrome, `path` is the current request path used to build
  * the language-switch links (query string replaced, lang preserved). */
-export function renderAccountPage(title: string, bodyHtml: string, lang = 'en', path = '/account', next: string | null = null): string {
-  const nextQ = next ? `&next=${encodeURIComponent(next)}` : '';
-  const nav = ['en', 'es', 'fr'].map((l) => ({ href: `${path}?lang=${l}${nextQ}`, label: l === 'en' ? 'English' : l === 'es' ? 'Español' : 'Français', current: l === lang }));
-  return shell(`<style>${ACCOUNT_CSS}</style><main id="main" class="acct">${bodyHtml}</main>`, { title: `${title} - 2yolks`, noindex: true, lang, nav });
+export function renderAccountPage(
+  title: string,
+  bodyHtml: string,
+  lang = 'en',
+  path = '/account',
+  next: string | null = null,
+  opts?: { wide?: boolean },
+): string {
+  const nextAmp = next ? `&next=${encodeURIComponent(next)}` : '';
+  const nav = ['en', 'es', 'fr'].map((l) => ({ href: `${path}?lang=${l}${nextAmp}`, label: l === 'en' ? 'English' : l === 'es' ? 'Español' : 'Français', current: l === lang }));
+  return shell(`<style>${ACCOUNT_CSS}</style><main id="main" class="acct${opts?.wide ? ' acct-capture' : ''}">${bodyHtml}</main>`, { title: `${title} - 2yolks`, noindex: true, lang, nav });
 }
 
 export { CAPTURE_CLIENT_SCRIPT, CAPTURE_CHECK_STRINGS };

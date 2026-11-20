@@ -829,6 +829,78 @@ ${CAPTURE_HELPERS_JS}
     var hasErr = !!urlEl && urlEl.getAttribute('aria-invalid') === 'true';
     wrap.hidden = field('source_kind').value !== 'adapted' && !hasErr;
   }
+  function qsa(root, sel) {
+    return root && typeof root.querySelectorAll === 'function' ? Array.prototype.slice.call(root.querySelectorAll(sel)) : [];
+  }
+  function checkState(key) {
+    var li = box.querySelector('[data-check="' + key + '"]');
+    return li ? li.className : '';
+  }
+
+  // --- S6 Live preview (textContent + createElement only; never innerHTML) ---
+  var previewWrap = document.querySelector('[data-live-preview]');
+  function updatePreview() {
+    if (!previewWrap) return;
+    var pTitle = previewWrap.querySelector('[data-preview-title]');
+    var pCat = previewWrap.querySelector('[data-preview-category]');
+    var pFacts = previewWrap.querySelector('[data-preview-facts]');
+    var pIntro = previewWrap.querySelector('[data-preview-intro]');
+    var pEmpty = previewWrap.querySelector('[data-preview-empty]');
+    var pIngWrap = previewWrap.querySelector('[data-preview-ing-wrap]');
+    var pIngs = previewWrap.querySelector('[data-preview-ings]');
+    var pStepWrap = previewWrap.querySelector('[data-preview-step-wrap]');
+    var pSteps = previewWrap.querySelector('[data-preview-steps]');
+    var rawTitle = field('title') ? (field('title').value || '').trim() : '';
+    if (pTitle) pTitle.textContent = rawTitle || pTitle.getAttribute('data-empty-title') || '';
+    var catVal = field('category') ? field('category').value : '';
+    var labels = CATLABELS[lang()] || CATLABELS.en;
+    var catText = catVal && labels && labels[catVal] ? labels[catVal] : '';
+    if (pCat) { pCat.textContent = catText; pCat.hidden = !catText; }
+    if (pFacts) {
+      while (pFacts.firstChild) pFacts.removeChild(pFacts.firstChild);
+      [['prep', 'data-tpl-prep'], ['cook', 'data-tpl-cook'], ['servings', 'data-tpl-serves']].forEach(function (pair) {
+        var el = field(pair[0]);
+        var val = el ? (el.value || '').trim() : '';
+        if (!val || !(Number(val) > 0)) return;
+        var span = document.createElement('span');
+        span.textContent = (pFacts.getAttribute(pair[1]) || '{n}').replace('{n}', val);
+        pFacts.appendChild(span);
+      });
+    }
+    var intro = field('intro') ? (field('intro').value || '').trim() : '';
+    if (pIntro) { pIntro.textContent = intro; pIntro.hidden = !intro; }
+    var ings = field('ingredients') ? lines(field('ingredients').value || '') : [];
+    if (pIngs && pIngWrap) {
+      while (pIngs.firstChild) pIngs.removeChild(pIngs.firstChild);
+      ings.forEach(function (line) {
+        var li = document.createElement('li');
+        li.textContent = line;
+        pIngs.appendChild(li);
+      });
+      pIngWrap.hidden = ings.length === 0;
+    }
+    var stepsList = field('steps') ? lines(field('steps').value || '') : [];
+    if (pSteps && pStepWrap) {
+      while (pSteps.firstChild) pSteps.removeChild(pSteps.firstChild);
+      stepsList.forEach(function (line) {
+        var li = document.createElement('li');
+        li.textContent = line;
+        pSteps.appendChild(li);
+      });
+      pStepWrap.hidden = stepsList.length === 0;
+    }
+    if (pEmpty) pEmpty.hidden = Boolean(rawTitle || intro || ings.length || stepsList.length);
+  }
+  if (previewWrap && W && W.addEventListener) {
+    W.addEventListener('2y-photo-change', function (ev) {
+      var pPhoto = previewWrap.querySelector('[data-preview-photo]');
+      if (!pPhoto) return;
+      var url = ev && ev.detail && ev.detail.url ? String(ev.detail.url) : '';
+      if (url) { pPhoto.src = url; pPhoto.hidden = false; }
+      else { pPhoto.removeAttribute('src'); pPhoto.hidden = true; }
+    });
+  }
+
   function run() {
     var T = ALL[lang()];
     localizeChrome();
@@ -857,6 +929,7 @@ ${CAPTURE_HELPERS_JS}
     var urlOk = false;
     if (url) { try { var u = new URL(url); urlOk = u.protocol === 'https:' && u.hostname.indexOf('.') > 0; } catch (e) { urlOk = false; } }
     set('source', !adapted ? 'ok' : urlOk ? 'ok' : url ? 'todo' : 'idle', !adapted ? T.source_ok : T.source_todo);
+    updatePreview();
   }
 
   var FIELDS = ['category', 'title', 'locale', 'intro', 'ingredients', 'steps', 'prep', 'cook', 'servings', 'display_name', 'source_kind', 'source_url'];
@@ -911,18 +984,21 @@ ${CAPTURE_HELPERS_JS}
       });
       n.appendChild(b);
     });
-    var anchor = document.querySelector('[data-ai-panel]') || form;
+    var anchor = document.querySelector('[data-start-section]') || document.querySelector('[data-capture-shell]') || document.querySelector('[data-ai-panel]') || form;
     anchor.parentNode.insertBefore(n, anchor);
   }
+  var hadAutosaveNotice = false;
   if (!justSaved) {
     var TS = ALL[lang()];
     var savedCopy = readSaved(KEY);
     var serverCopy = readForm();
     var decision = captureDecide(savedCopy, serverCopy, FIELDS, Date.now(), MAX_AGE);
     if (decision === 'restore') {
+      hadAutosaveNotice = true;
       writeForm(savedCopy.f);
       showDraftNotice(TS.restored, [[TS.discard, function () { writeForm(serverCopy); drop(KEY); }]]);
     } else if (decision === 'offer') {
+      hadAutosaveNotice = true;
       showDraftNotice(TS.unsaved, [
         [TS.restore, function () { writeForm(savedCopy.f); persistNow(); }],
         [TS.discard, function () { drop(KEY); }]
@@ -935,6 +1011,206 @@ ${CAPTURE_HELPERS_JS}
   if (W && W.addEventListener) W.addEventListener('pagehide', function () { if (saveTimer) persistNow(); });
   if (document.addEventListener) document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'hidden' && saveTimer) persistNow(); });
   run();
+
+  // --- S2 Start tiles & in-page paste ---------------------------------------
+  var startTiles = qsa(document, '[data-start-tile]');
+  var modePanels = qsa(document, '[data-mode-panel]');
+  function selectStartTile(mode, focusTarget) {
+    startTiles.forEach(function (b) {
+      b.setAttribute('aria-pressed', b.getAttribute('data-start-tile') === mode ? 'true' : 'false');
+    });
+    modePanels.forEach(function (p) {
+      p.hidden = p.getAttribute('data-mode-panel') !== mode;
+    });
+    if (!focusTarget) return;
+    if (mode === 'type') {
+      var tEl = field('title');
+      if (tEl && typeof tEl.focus === 'function') tEl.focus();
+      return;
+    }
+    var opened = modePanels.filter(function (p) { return p.getAttribute('data-mode-panel') === mode; })[0];
+    var inp = opened && typeof opened.querySelector === 'function' ? opened.querySelector('textarea, input, a') : null;
+    if (inp && typeof inp.focus === 'function') inp.focus();
+  }
+  if (startTiles.length) {
+    selectStartTile('type', false);
+    startTiles.forEach(function (b) {
+      b.addEventListener('click', function () {
+        selectStartTile(b.getAttribute('data-start-tile') || 'type', true);
+      });
+    });
+  }
+
+  var pasteForm = document.querySelector('[data-paste-form]');
+  if (pasteForm && typeof fetch === 'function') {
+    var pasteTa = pasteForm.querySelector('textarea[name="text"]');
+    var pasteSubmit = pasteForm.querySelector('[data-paste-submit]');
+    var pasteUndo = pasteForm.querySelector('[data-paste-undo]');
+    var pasteStatus = pasteForm.querySelector('[data-paste-status]');
+    var pasteUndoSnap = null;
+    function setPasteStatus(kind, text) {
+      if (!pasteStatus) return;
+      pasteStatus.hidden = !text;
+      pasteStatus.className = kind;
+      pasteStatus.textContent = text;
+    }
+    if (pasteUndo) {
+      pasteUndo.addEventListener('click', function () {
+        if (!pasteUndoSnap) return;
+        writeForm(pasteUndoSnap);
+        persistSoon();
+        pasteUndoSnap = null;
+        pasteUndo.hidden = true;
+        setPasteStatus('', '');
+      });
+    }
+    pasteForm.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var action = pasteForm.getAttribute('action') || '/account/recipes/paste';
+      var workingText = pasteForm.getAttribute('data-msg-working') || 'Reading…';
+      var errText = pasteForm.getAttribute('data-msg-err-generic') || 'Something went wrong.';
+      if (pasteSubmit) pasteSubmit.disabled = true;
+      setPasteStatus('ok', workingText);
+      fetch(action, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' },
+        body: 'text=' + encodeURIComponent(pasteTa ? pasteTa.value : '')
+      })
+        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); })
+        .then(function (res) {
+          if (!res.ok || !res.body || !res.body.ok) {
+            setPasteStatus('err', (res.body && res.body.error) || errText);
+            return;
+          }
+          pasteUndoSnap = readForm();
+          var d = res.body.parsed || {};
+          ['title', 'intro', 'ingredients', 'steps', 'prep', 'cook', 'servings'].forEach(function (k) {
+            if (typeof d[k] === 'string' && d[k] && field(k)) field(k).value = d[k];
+          });
+          changed();
+          if (pasteUndo) pasteUndo.hidden = false;
+          var warns = Array.isArray(res.body.warnings) ? res.body.warnings : [];
+          setPasteStatus(warns.length ? 'err' : 'ok', warns.length ? warns.join(' ') : (res.body.message || ''));
+        })
+        .catch(function () { setPasteStatus('err', errText); })
+        .then(function () { if (pasteSubmit) pasteSubmit.disabled = false; });
+    });
+  }
+
+  // --- S3 Mobile stepper & preview toggle ----------------------------------
+  var shell = document.querySelector('[data-capture-shell]');
+  var stepperBar = document.querySelector('[data-stepper-bar]');
+  var stepList = qsa(form, '[data-step]');
+  var stepJumps = qsa(document, '[data-step-jump]');
+  var previewToggle = document.querySelector('[data-preview-toggle]');
+  var previewBack = document.querySelector('[data-preview-back]');
+  var activeStep = 0;
+  var softWarnedStep = -1;
+  var mq = W && typeof W.matchMedia === 'function' ? W.matchMedia('(max-width: 720px)') : null;
+  function stepOfEl(el) {
+    var cur = el;
+    while (cur && cur !== form) {
+      if (typeof cur.getAttribute === 'function' && cur.getAttribute('data-step') != null) {
+        var n = Number(cur.getAttribute('data-step'));
+        return isNaN(n) ? -1 : n;
+      }
+      cur = cur.parentNode;
+    }
+    return -1;
+  }
+  function setPreviewMobile(on) {
+    if (!shell) return;
+    if (shell.classList) shell.classList.toggle('capture-preview-mobile', !!on);
+    if (previewToggle) previewToggle.setAttribute('aria-pressed', on ? 'true' : 'false');
+    if (previewBack) previewBack.hidden = !on;
+    if (on && W && typeof W.scrollTo === 'function') W.scrollTo(0, 0);
+  }
+  function showStep(idx, moveFocus) {
+    if (!stepList.length) return;
+    if (idx < 0) idx = 0;
+    if (idx >= stepList.length) idx = stepList.length - 1;
+    activeStep = idx;
+    softWarnedStep = -1;
+    stepList.forEach(function (fs, i) {
+      if (fs.classList) fs.classList.toggle('is-active', i === idx);
+      else fs.className = i === idx ? 'form-step is-active' : 'form-step';
+      var m = fs.querySelector ? fs.querySelector('[data-step-msg]') : null;
+      if (m) { m.textContent = ''; m.hidden = true; }
+    });
+    stepJumps.forEach(function (a, i) {
+      if (i === idx) a.setAttribute('aria-current', 'step');
+      else a.removeAttribute('aria-current');
+    });
+    if (stepperBar) {
+      var pTxt = stepperBar.querySelector('[data-step-progress]');
+      var pFill = stepperBar.querySelector('[data-step-fill]');
+      var tpl = form.getAttribute('data-step-progress-tpl') || 'Step {n} of {total}';
+      if (pTxt) pTxt.textContent = tpl.replace('{n}', String(idx + 1)).replace('{total}', String(stepList.length));
+      if (pFill && pFill.style) pFill.style.width = Math.round(((idx + 1) * 100) / stepList.length) + '%';
+    }
+    if (moveFocus) {
+      var leg = stepList[idx].querySelector ? stepList[idx].querySelector('.step-heading') : null;
+      if (leg && typeof leg.focus === 'function') leg.focus();
+    }
+  }
+  function stepHasMissing(idx) {
+    if (idx === 0) return !(field('title') && (field('title').value || '').trim()) ? field('title') : null;
+    if (idx === 1) return !(field('ingredients') && lines(field('ingredients').value || '').length) ? field('ingredients') : null;
+    if (idx === 2) return !(field('steps') && lines(field('steps').value || '').length) ? field('steps') : null;
+    return null;
+  }
+  function stepHasSoftWarn(idx) {
+    if (idx === 0) return checkState('title') === 'todo';
+    if (idx === 1) return checkState('qty') === 'todo' || checkState('cups') === 'todo';
+    if (idx === 3) return checkState('servings') === 'todo';
+    return false;
+  }
+  function applyStepperMode() {
+    var on = !!(mq && mq.matches && stepList.length);
+    if (shell && shell.classList) shell.classList.toggle('capture-stepper-on', on);
+    if (stepperBar) stepperBar.hidden = !on;
+    if (!on) setPreviewMobile(false);
+  }
+  if (stepList.length) {
+    showStep(0, false);
+    applyStepperMode();
+    if (mq) {
+      if (typeof mq.addEventListener === 'function') mq.addEventListener('change', applyStepperMode);
+      else if (typeof mq.addListener === 'function') mq.addListener(applyStepperMode);
+    }
+    stepList.forEach(function (fs, idx) {
+      var prev = fs.querySelector ? fs.querySelector('[data-step-prev]') : null;
+      var next = fs.querySelector ? fs.querySelector('[data-step-next]') : null;
+      var msgEl = fs.querySelector ? fs.querySelector('[data-step-msg]') : null;
+      if (prev) prev.addEventListener('click', function () { showStep(idx - 1, true); });
+      if (next) next.addEventListener('click', function () {
+        var missing = stepHasMissing(idx);
+        if (missing) {
+          if (msgEl) { msgEl.textContent = form.getAttribute('data-step-need-required') || ''; msgEl.hidden = false; }
+          if (typeof missing.focus === 'function') missing.focus();
+          return;
+        }
+        if (stepHasSoftWarn(idx) && softWarnedStep !== idx) {
+          softWarnedStep = idx;
+          if (msgEl) { msgEl.textContent = form.getAttribute('data-step-soft-warn') || ''; msgEl.hidden = false; }
+          return;
+        }
+        showStep(idx + 1, true);
+      });
+    });
+    stepJumps.forEach(function (a) {
+      a.addEventListener('click', function () {
+        var idx = Number(a.getAttribute('data-step-jump'));
+        if (!isNaN(idx)) showStep(idx, false);
+      });
+    });
+    if (previewToggle) previewToggle.addEventListener('click', function () {
+      var on = !(shell && shell.classList && shell.classList.contains('capture-preview-mobile'));
+      setPreviewMobile(on);
+    });
+    if (previewBack) previewBack.addEventListener('click', function () { setPreviewMobile(false); });
+  }
 
   // One clear finish: "Send in for review" needs the permission box. Say so
   // right next to it before a round trip (the server enforces it regardless).
@@ -960,6 +1236,120 @@ ${CAPTURE_HELPERS_JS}
     attestEl.setAttribute('aria-describedby', 'err-attest');
   }
   if (attestEl) attestEl.addEventListener('change', function () { if (attestEl.checked) attestError(false); });
+
+  // --- S1 Inline sign-in when saving or sending while signed out ------------
+  var inlineAuth = form.querySelector('[data-inline-auth]');
+  var pendingIntent = null;
+  if (inlineAuth) {
+    var emailStep = inlineAuth.querySelector('[data-inline-auth-email-step]');
+    var codeStep = inlineAuth.querySelector('[data-inline-auth-code-step]');
+    var authEmail = inlineAuth.querySelector('[data-auth-email]');
+    var authCode = inlineAuth.querySelector('[data-auth-code]');
+    var authCodeLead = inlineAuth.querySelector('[data-auth-code-lead]');
+    var authSendBtn = inlineAuth.querySelector('[data-auth-send]');
+    var authVerifyBtn = inlineAuth.querySelector('[data-auth-verify]');
+    var authChangeBtn = inlineAuth.querySelector('[data-auth-change]');
+    var authStatus = inlineAuth.querySelector('[data-inline-auth-status]');
+    var authSending = false;
+    function authMsg(k, fb) { return inlineAuth.getAttribute('data-msg-' + k) || fb; }
+    function setAuthStatus(kind, text) {
+      if (!authStatus) return;
+      authStatus.hidden = !text;
+      authStatus.className = kind;
+      authStatus.textContent = text;
+    }
+    function submitWithIntent(intentVal) {
+      var hi = form.querySelector('input[type="hidden"][name="intent"]');
+      if (!hi) {
+        hi = document.createElement('input');
+        hi.type = 'hidden';
+        hi.name = 'intent';
+        form.appendChild(hi);
+      }
+      hi.value = intentVal || 'save';
+      persistNow();
+      if (session) { try { session.setItem(PENDING_KEY, KEY); } catch (err) {} }
+      form.submit();
+    }
+    function requestInlineCode() {
+      if (authSending) return;
+      var em = authEmail ? (authEmail.value || '').trim() : '';
+      if (!em || em.indexOf('@') < 1) {
+        setAuthStatus('err', authMsg('err-email', 'Enter a valid email address.'));
+        if (authEmail && typeof authEmail.focus === 'function') authEmail.focus();
+        return;
+      }
+      authSending = true;
+      if (authSendBtn) authSendBtn.disabled = true;
+      setAuthStatus('ok', authMsg('working', 'Working…'));
+      fetch(inlineAuth.getAttribute('data-code-endpoint') || '/account/code', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({ email: em, next: '/account/recipes/new' })
+      })
+        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); })
+        .then(function (res) {
+          if (!res.ok || !res.body || !res.body.ok) {
+            setAuthStatus('err', (res.body && res.body.error) || authMsg('err-generic', 'Something went wrong.'));
+            return;
+          }
+          setAuthStatus('', '');
+          if (emailStep) emailStep.hidden = true;
+          if (codeStep) codeStep.hidden = false;
+          if (authCodeLead) authCodeLead.textContent = authMsg('sent', 'We sent a code to {email}.').replace('{email}', res.body.email || em);
+          if (authCode) { authCode.value = ''; if (typeof authCode.focus === 'function') authCode.focus(); }
+        })
+        .catch(function () { setAuthStatus('err', authMsg('err-generic', 'Something went wrong.')); })
+        .then(function () { authSending = false; if (authSendBtn) authSendBtn.disabled = false; });
+    }
+    function verifyInlineCode() {
+      if (authSending) return;
+      var em = authEmail ? (authEmail.value || '').trim() : '';
+      var cd = authCode ? (authCode.value || '').trim() : '';
+      if (!/^\\d{6}$/.test(cd)) {
+        setAuthStatus('err', authMsg('err-code', 'Enter the 6-digit code.'));
+        if (authCode && typeof authCode.focus === 'function') authCode.focus();
+        return;
+      }
+      authSending = true;
+      if (authVerifyBtn) authVerifyBtn.disabled = true;
+      setAuthStatus('ok', authMsg('working', 'Working…'));
+      fetch(inlineAuth.getAttribute('data-verify-endpoint') || '/account/verify', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({ email: em, code: cd, next: '/account/recipes/new' })
+      })
+        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); })
+        .then(function (res) {
+          if (!res.ok || !res.body || !res.body.ok) {
+            if (res.body && res.body.restart) {
+              if (codeStep) codeStep.hidden = true;
+              if (emailStep) emailStep.hidden = false;
+            }
+            setAuthStatus('err', (res.body && res.body.error) || authMsg('err-generic', 'Something went wrong.'));
+            return;
+          }
+          form.setAttribute('data-signed-in', '1');
+          setAuthStatus('ok', authMsg('done', 'Email confirmed. Saving your recipe…'));
+          submitWithIntent(pendingIntent);
+        })
+        .catch(function () { setAuthStatus('err', authMsg('err-generic', 'Something went wrong.')); })
+        .then(function () { authSending = false; if (authVerifyBtn) authVerifyBtn.disabled = false; });
+    }
+    if (authSendBtn) authSendBtn.addEventListener('click', requestInlineCode);
+    if (authVerifyBtn) authVerifyBtn.addEventListener('click', verifyInlineCode);
+    if (authChangeBtn) authChangeBtn.addEventListener('click', function () {
+      if (codeStep) codeStep.hidden = true;
+      if (emailStep) emailStep.hidden = false;
+      setAuthStatus('', '');
+      if (authEmail && typeof authEmail.focus === 'function') authEmail.focus();
+    });
+    if (authEmail) authEmail.addEventListener('keydown', function (ev) { if (ev.key === 'Enter') { ev.preventDefault(); requestInlineCode(); } });
+    if (authCode) authCode.addEventListener('keydown', function (ev) { if (ev.key === 'Enter') { ev.preventDefault(); verifyInlineCode(); } });
+  }
+
   form.addEventListener('submit', function (e) {
     var btn = e.submitter;
     if (btn && btn.value === 'submit' && attestEl && !attestEl.checked) {
@@ -968,15 +1358,41 @@ ${CAPTURE_HELPERS_JS}
       attestEl.focus();
       return;
     }
+    if (form.getAttribute('data-signed-in') === '0' && inlineAuth && typeof fetch === 'function') {
+      if (typeof form.checkValidity === 'function' && !form.checkValidity()) {
+        e.preventDefault();
+        var bad = form.querySelector(':invalid');
+        if (bad) {
+          var sIdx = stepOfEl(bad);
+          if (sIdx >= 0) showStep(sIdx, false);
+        }
+        if (typeof form.reportValidity === 'function') form.reportValidity();
+        return;
+      }
+      e.preventDefault();
+      pendingIntent = (btn && btn.value) ? btn.value : 'save';
+      persistNow();
+      inlineAuth.hidden = false;
+      if (stepList.length) showStep(stepList.length - 1, false);
+      var emIn = inlineAuth.querySelector('[data-auth-email]');
+      if (emIn && typeof emIn.focus === 'function') emIn.focus();
+      if (typeof inlineAuth.scrollIntoView === 'function') {
+        try { inlineAuth.scrollIntoView({ block: 'center' }); } catch (err) {}
+      }
+      return;
+    }
     persistNow();
     if (session) { try { session.setItem(PENDING_KEY, KEY); } catch (err) {} }
   });
 
-  // Server-side validation errors: bring the first offending field into view.
+  // Server-side validation errors: bring the first offending field (and its step) into view.
   var firstInvalid = form.querySelector('[aria-invalid="true"]');
   if (firstInvalid) {
+    var errStep = stepOfEl(firstInvalid);
+    if (errStep >= 0) showStep(errStep, false);
     try { firstInvalid.focus({ preventScroll: true }); firstInvalid.scrollIntoView({ block: 'center' }); } catch (e) { firstInvalid.focus(); }
   }
+  if (hadAutosaveNotice && startTiles.length) selectStartTile('type', false);
 
   // Multimodal AI Kitchen Co-Editor (photo + voice note + rough notes -> structured draft & polish)
   var aiPanel = document.querySelector('[data-ai-panel]');
