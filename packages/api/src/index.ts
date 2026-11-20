@@ -102,6 +102,7 @@ app.get('/api/v1/countries/:code/recipes', async (c) => {
       title: recipeLocales.title,
       lang: recipeLocales.lang,
       id: recipeLocales.recipeId,
+      category: recipes.category,
     })
     .from(recipeLocales)
     .innerJoin(recipes, eq(recipeLocales.recipeId, recipes.id))
@@ -113,7 +114,27 @@ app.get('/api/v1/countries/:code/recipes', async (c) => {
         published(db, demoAllowed(c)),
       ),
     );
-  return c.json({ country: country.code, lang, recipes: rows });
+  // Additive for the native app: per-row dish category (registered slug or
+  // null) and the latest rights-cleared hero image, same gates as the SSR
+  // list. Uncleared or unlabeled styles are null, never guessed; clients
+  // render their own honest label from the style.
+  const heroByRecipe = await heroImagesByRecipe(db);
+  const origin = c.env.CANONICAL_ORIGIN ?? new URL(c.req.url).origin;
+  return c.json({
+    country: country.code,
+    lang,
+    recipes: rows.map((r) => {
+      const hero = heroByRecipe.get(r.id);
+      return {
+        slug: r.slug,
+        title: r.title,
+        lang: r.lang,
+        id: r.id,
+        category: r.category,
+        heroImage: hero ? { url: `${origin}/img/recipe/${hero.id}`, style: hero.style } : null,
+      };
+    }),
+  });
 });
 
 // --- Discovery --------------------------------------------------------------
