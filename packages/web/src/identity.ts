@@ -552,6 +552,33 @@ ol.steps li::before{content:counter(step,decimal-leading-zero);position:absolute
 .community-tag{font-size:.82rem;color:var(--lime);margin:.6rem 0 0;font-weight:600;}
 .footer-fine{max-width:1130px;padding:1rem 1.5rem 2rem;margin:auto;color:#d4c8dc;font-size:.82rem;border-top:1px solid #4d3e56;}
 
+/* Phase 5 Growth Loops: Section heads, Remix CTA & Pantry Picker (S4, S9, Q6, S12) */
+ul.ingredients li.ing-section-head{list-style:none;padding:.85rem 0 .25rem;border-bottom:1px solid var(--line);font-size:.82rem;text-transform:uppercase;letter-spacing:.06em;color:var(--brand);}
+.remix-callout{margin:2rem 0 0;padding:1.25rem 1.4rem;border:1px solid var(--line);border-left:5px solid var(--yolk-gold);background:var(--card);display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:1rem;}
+.remix-copy{flex:1 1 240px;min-width:0;}
+.remix-copy h2{margin:0 0 .25rem;font-size:1.22rem;}
+.remix-copy p{margin:0;color:var(--muted);font-size:.92rem;}
+.remix-cta-link{display:inline-flex;align-items:center;gap:.4rem;padding:.65rem 1.1rem;background:var(--plum);color:var(--lime);font-weight:750;text-decoration:none;min-height:44px;}
+.remix-cta-link:hover{background:var(--brand-strong);color:var(--lime);text-decoration:none;}
+.remix-cta-link .social-icon{width:16px;height:16px;}
+.pantry-picker{margin-top:.85rem;padding-top:.85rem;border-top:1px solid #4d3e56;display:grid;gap:.55rem;min-width:0;}
+.pantry-head{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:.25rem .75rem;}
+.pantry-head h2{margin:0;font-size:1.05rem;color:var(--lime);}
+.pantry-head span{font-size:.82rem;color:#d8cedf;}
+.pantry-selected{display:flex;flex-wrap:wrap;gap:.35rem;}
+.pantry-selected-pill{background:var(--lime);color:var(--plum);border:1px solid var(--lime);font:inherit;font-size:.8rem;font-weight:750;padding:.24rem .6rem;cursor:pointer;}
+.pantry-staples{display:flex;flex-wrap:wrap;gap:.35rem;}
+.discovery .pantry-chip{cursor:pointer;min-height:36px;padding:.28rem .68rem;font-size:.82rem;}
+.discovery .pantry-chip[aria-pressed="true"]{background:var(--lime);border-color:var(--lime);color:var(--plum);font-weight:750;}
+.pantry-add-row{display:flex;flex-wrap:wrap;gap:.45rem;align-items:stretch;}
+.pantry-add-row input{flex:1 1 180px;min-width:0;min-height:40px;padding:.4rem .75rem;background:#2b1f35;border:1px solid #6e5f78;color:#faf7f4;font:inherit;font-size:.9rem;}
+.pantry-add-row button.pantry-add-btn{background:#3b2d43;color:var(--lime);border:1px solid #87798e;font:inherit;font-weight:650;padding:.4rem .85rem;cursor:pointer;min-height:40px;}
+.pantry-status{margin:0;font-size:.84rem;color:var(--yolk-gold);font-weight:600;}
+.pantry-match-pill{display:inline-flex;align-items:center;gap:.25rem;font-size:.74rem;font-weight:750;padding:.14rem .45rem;background:rgb(224 250 128 / .16);color:var(--lime);border:1px solid rgb(224 250 128 / .45);margin:.25rem 0 0;align-self:flex-start;}
+.empty-gap-prompts{margin-top:.85rem;padding-top:.85rem;border-top:1px solid #4d3e56;display:grid;gap:.45rem;justify-items:center;}
+.empty-gap-prompts p{margin:0;font-size:.88rem;color:#d8cedf;}
+.empty-gap-chips{display:flex;flex-wrap:wrap;gap:.4rem;justify-content:center;}
+
 /* Dark & Light Explicit Theme Overrides + OS Preference (D1, D10) */
 @media (prefers-color-scheme: dark){
   html:not([data-theme="light"]){color-scheme:dark;--bg:#1b1322;--card:#261b2e;--ink:#f7f3fa;--muted:#c7b9d1;--line:#473852;--line-strong:#776385;--brand:#e0fa80;--brand-strong:#c9e85b;}
@@ -565,6 +592,7 @@ ol.steps li::before{content:counter(step,decimal-leading-zero);position:absolute
   html:not([data-theme="light"]) .related-recipes{border-top-color:var(--lime);}
   html:not([data-theme="light"]) .related-card:hover{border-color:var(--lime);}
   html:not([data-theme="light"]) .related-arrow{color:var(--lime);}
+  html:not([data-theme="light"]) .remix-cta-link{background:var(--lime);color:var(--plum);}
 }
 html[data-theme="dark"]{color-scheme:dark;--bg:#1b1322;--card:#261b2e;--ink:#f7f3fa;--muted:#c7b9d1;--line:#473852;--line-strong:#776385;--brand:#e0fa80;--brand-strong:#c9e85b;}
 html[data-theme="dark"] .recipe-page .time-meta,html[data-theme="dark"] .recipe-page .untested,html[data-theme="dark"] .recipe-page .machine-note,html[data-theme="dark"] .recipe-page .tested-banner{border-left-color:var(--lime);}
@@ -578,6 +606,7 @@ html[data-theme="dark"] ul.ingredients input{accent-color:var(--lime);}
 html[data-theme="dark"] .related-recipes{border-top-color:var(--lime);}
 html[data-theme="dark"] .related-card:hover{border-color:var(--lime);}
 html[data-theme="dark"] .related-arrow{color:var(--lime);}
+html[data-theme="dark"] .remix-cta-link{background:var(--lime);color:var(--plum);}
 
 html[data-theme="light"] body{background:#faf8f3;}
 html[data-theme="light"] main:not(.discovery){box-shadow:none;border-top-color:var(--plum);}
@@ -625,7 +654,14 @@ html[data-theme="light"] .search-main-row,html[data-theme="light"] .search-filte
 html[data-theme="light"] .search-main-row input{color:var(--plum);}
 html[data-theme="light"] .search-main-row button,html[data-theme="light"] .apply-filters-btn{background:var(--plum);color:var(--lime);border-color:var(--plum);}
 html[data-theme="light"] .search-filters label,html[data-theme="light"] .search-count,html[data-theme="light"] .hub-intro,html[data-theme="light"] .hub-directory-card p,html[data-theme="light"] .saved-sync-banner p,html[data-theme="light"] .discovery-index .crumbs a,html[data-theme="light"] .discovery-index .crumbs [aria-current="page"]{color:#4d3e56;}
-html[data-theme="light"] .hub-hero h1,html[data-theme="light"] .hub-directory-card h2 a,html[data-theme="light"] .saved-section h2,html[data-theme="light"] .recent-links-list a,html[data-theme="light"] .cat-heading-link{color:var(--plum);}
+html[data-theme="light"] .hub-hero h1,html[data-theme="light"] .hub-directory-card h2 a,html[data-theme="light"] .saved-section h2,html[data-theme="light"] .recent-links-list a,html[data-theme="light"] .cat-heading-link,html[data-theme="light"] .pantry-head h2{color:var(--plum);}
+html[data-theme="light"] .pantry-picker,html[data-theme="light"] .empty-gap-prompts{border-color:#d7d0cc;}
+html[data-theme="light"] .pantry-head span,html[data-theme="light"] .empty-gap-prompts p{color:#4d3e56;}
+html[data-theme="light"] .pantry-add-row input{background:#faf8f3;border-color:#827384;color:var(--plum);}
+html[data-theme="light"] .pantry-add-row button.pantry-add-btn{background:#efeae0;color:var(--plum);border-color:#827384;}
+html[data-theme="light"] .pantry-selected-pill,html[data-theme="light"] .discovery .pantry-chip[aria-pressed="true"]{background:var(--plum);border-color:var(--plum);color:var(--lime);}
+html[data-theme="light"] .pantry-match-pill{background:#f2eedc;color:var(--plum);border-color:#827384;}
+html[data-theme="light"] .pantry-status{color:#9a6700;}
 
 /* Responsive & Mobile First-Screen Optimization (N2, N3, D6) */
 @media(max-width:720px){
@@ -700,7 +736,7 @@ html[data-theme="light"] .hub-hero h1,html[data-theme="light"] .hub-directory-ca
 }
 @media print{
   body,.site-header,.site-footer,main,main.wide.discovery{background:white !important;color:black !important;padding-bottom:0 !important;box-shadow:none !important;border:0 !important;}
-  .share,.site-header,.site-footer,.recipe-actions,.scaler,.unit-toggle,.cook-mode,.langs,.crumbs-nav,.related-recipes,.copy-ing-btn,.ing-progress,.theme-toggle,.view-toggle,.mobile-tab-bar,.search-sheet,.save-btn,.step-timer-chip,.ing-icon{display:none !important;}
+  .share,.site-header,.site-footer,.recipe-actions,.scaler,.unit-toggle,.cook-mode,.langs,.crumbs-nav,.related-recipes,.remix-callout,.copy-ing-btn,.ing-progress,.theme-toggle,.view-toggle,.mobile-tab-bar,.search-sheet,.save-btn,.step-timer-chip,.ing-icon{display:none !important;}
   main{max-width:none;}
   .recipe-page{border:0;padding:0;}
   .recipe-body-grid{display:block;}

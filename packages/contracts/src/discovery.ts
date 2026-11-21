@@ -56,8 +56,15 @@ export interface SearchQuery {
   difficulty?: DifficultyLevel | null;
   tested?: boolean;
   method?: 'no-oven' | null;
+  have?: readonly string[] | null;
   page?: number;
   pageSize?: number;
+}
+
+export interface PantryMatchInfo {
+  matched: string[];
+  matchCount: number;
+  requestedCount: number;
 }
 
 export interface SearchResult<T extends SearchableRecipe = SearchableRecipe> {
@@ -71,6 +78,7 @@ export interface SearchResult<T extends SearchableRecipe = SearchableRecipe> {
   suggestions: T[];
   unfilteredCount: number;
   activeFilterCount: number;
+  pantryMatches?: Record<string, PantryMatchInfo>;
 }
 
 export interface SuggestCategoryHit {
@@ -618,6 +626,58 @@ function scoreMatches<T extends SearchableRecipe>(
   return out;
 }
 
+export const MAX_PANTRY_ITEMS = 5;
+
+export interface PantryStaple {
+  key: string;
+  label: { en: string; es: string; fr: string };
+  synonyms: readonly string[];
+}
+
+export const PANTRY_STAPLES: readonly PantryStaple[] = [
+  { key: 'eggs', label: { en: 'Eggs', es: 'Huevos', fr: 'Oeufs' }, synonyms: ['egg', 'eggs', 'huevo', 'huevos', 'oeuf', 'oeufs'] },
+  { key: 'chicken', label: { en: 'Chicken', es: 'Pollo', fr: 'Poulet' }, synonyms: ['chicken', 'pollo', 'poulet'] },
+  { key: 'rice', label: { en: 'Rice', es: 'Arroz', fr: 'Riz' }, synonyms: ['rice', 'arroz', 'riz'] },
+  { key: 'garlic', label: { en: 'Garlic', es: 'Ajo', fr: 'Ail' }, synonyms: ['garlic', 'ajo', 'ail'] },
+  { key: 'tomatoes', label: { en: 'Tomatoes', es: 'Tomates', fr: 'Tomates' }, synonyms: ['tomato', 'tomatoes', 'tomate', 'tomates', 'jitomate', 'jitomates'] },
+  { key: 'onion', label: { en: 'Onion', es: 'Cebolla', fr: 'Oignon' }, synonyms: ['onion', 'onions', 'cebolla', 'cebollas', 'oignon', 'oignons'] },
+  { key: 'potatoes', label: { en: 'Potatoes', es: 'Papas', fr: 'Pommes de terre' }, synonyms: ['potato', 'potatoes', 'papa', 'papas', 'patata', 'patatas', 'pomme de terre', 'pommes de terre'] },
+  { key: 'beans', label: { en: 'Beans', es: 'Frijoles', fr: 'Haricots' }, synonyms: ['bean', 'beans', 'frijol', 'frijoles', 'haricot', 'haricots'] },
+  { key: 'pasta', label: { en: 'Pasta', es: 'Pasta', fr: 'Pates' }, synonyms: ['pasta', 'spaghetti', 'noodles', 'fideos', 'pates'] },
+  { key: 'cheese', label: { en: 'Cheese', es: 'Queso', fr: 'Fromage' }, synonyms: ['cheese', 'queso', 'fromage', 'cheddar', 'mozzarella', 'parmesan', 'cotija'] },
+  { key: 'lemon', label: { en: 'Lemon / Lime', es: 'Limon', fr: 'Citron' }, synonyms: ['lemon', 'lime', 'limon', 'lima', 'citron'] },
+  { key: 'spinach', label: { en: 'Spinach', es: 'Espinacas', fr: 'Epinards' }, synonyms: ['spinach', 'espinaca', 'espinacas', 'epinard', 'epinards'] },
+];
+
+export function parseHaveParam(raw: string | readonly string[] | null | undefined): string[] {
+  if (!raw) return [];
+  const parts = (Array.isArray(raw) ? raw : [raw])
+    .flatMap((chunk) => String(chunk).split(','))
+    .map((s) => s.trim().replace(/\s+/g, ' '))
+    .filter((s) => s.length >= 2 && s.length <= 32 && /^[A-Za-z\u00C0-\u024F][A-Za-z\u00C0-\u024F0-9\s'-]*$/.test(s));
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const item of parts) {
+    const k = normSearchText(item);
+    if (!k || seen.has(k)) continue;
+    seen.add(k);
+    out.push(item);
+    if (out.length >= MAX_PANTRY_ITEMS) break;
+  }
+  return out;
+}
+
+function pantryTermsFor(item: string): string[] {
+  const norm = normSearchText(item);
+  if (!norm) return [];
+  const staple = PANTRY_STAPLES.find(
+    (s) => s.key === norm || s.synonyms.some((syn) => normSearchText(syn) === norm),
+  );
+  if (!staple) return [norm];
+  const terms = new Set<string>([norm, ...staple.synonyms.map((s) => normSearchText(s))]);
+  return [...terms].filter(Boolean);
+}
+
 export function searchCatalog<T extends SearchableRecipe>(
   rows: readonly T[],
   query: SearchQuery,
@@ -627,6 +687,7 @@ export function searchCatalog<T extends SearchableRecipe>(
   const qNorm = normSearchText(rawQ);
   const pageSize = query.pageSize && query.pageSize > 0 ? Math.min(60, query.pageSize) : SEARCH_PAGE_SIZE;
   const requestedPage = query.page && query.page >= 1 ? Math.floor(query.page) : 1;
+  const haveItems = parseHaveParam(query.have ?? undefined);
 
   const activeFilterCount =
     (query.cat ? 1 : 0) +
@@ -641,6 +702,7 @@ export function searchCatalog<T extends SearchableRecipe>(
   let matched: T[] = [];
   let usedFuzzy = false;
   let unfilteredCount = 0;
+  let pantryMatches: Record<string, PantryMatchInfo> | undefined;
 
   if (!qNorm) {
     matched = filtered;
@@ -657,6 +719,39 @@ export function searchCatalog<T extends SearchableRecipe>(
       const full = fullExact.length > 0 ? fullExact : scoreMatches(rows, tokens, qNorm, lang, true);
       unfilteredCount = full.length;
     }
+  }
+
+  if (haveItems.length > 0) {
+    const minNeed = haveItems.length === 1 ? 1 : 2;
+    const rankedPantry: { rec: T; matchedList: string[]; ingCount: number; idx: number }[] = [];
+    matched.forEach((rec, idx) => {
+      const hay = normSearchText(`${rec.ingredients ?? ''} ${rec.title}`);
+      const hitList: string[] = [];
+      for (const item of haveItems) {
+        const terms = pantryTermsFor(item);
+        if (terms.some((term) => matchToken(term, hay, false))) hitList.push(item);
+      }
+      if (hitList.length >= minNeed) {
+        const ingCount = normSearchText(rec.ingredients ?? '').split(/\s+/).filter(Boolean).length;
+        rankedPantry.push({ rec, matchedList: hitList, ingCount, idx });
+      }
+    });
+    rankedPantry.sort((a, b) =>
+      b.matchedList.length !== a.matchedList.length
+        ? b.matchedList.length - a.matchedList.length
+        : a.ingCount !== b.ingCount
+          ? a.ingCount - b.ingCount
+          : a.idx - b.idx,
+    );
+    pantryMatches = {};
+    for (const entry of rankedPantry) {
+      pantryMatches[entry.rec.id] = {
+        matched: entry.matchedList,
+        matchCount: entry.matchedList.length,
+        requestedCount: haveItems.length,
+      };
+    }
+    matched = rankedPantry.map((e) => e.rec);
   }
 
   let suggestions: T[] = [];
@@ -691,6 +786,7 @@ export function searchCatalog<T extends SearchableRecipe>(
     suggestions,
     unfilteredCount,
     activeFilterCount,
+    ...(pantryMatches ? { pantryMatches } : {}),
   };
 }
 
@@ -768,4 +864,79 @@ export function extractStepMinutes(stepText?: string | null): number | null {
   if (!Number.isFinite(n) || n <= 0) return null;
   const unit = m[2]!.toLowerCase();
   return unit.startsWith('h') ? n * 60 : n;
+}
+
+// ---------------------------------------------------------------------------
+// S4 Structured ingredient builder & S12 Search-gap prompt sanitizer
+// ---------------------------------------------------------------------------
+
+export interface CaptureIngredientRow {
+  isSection: boolean;
+  qty: string;
+  unit: string;
+  item: string;
+}
+
+const CAPTURE_UNITS = new Set([
+  'g', 'kg', 'mg', 'ml', 'cl', 'dl', 'l', 'oz', 'lb', 'lbs',
+  'cup', 'cups', 'tbsp', 'tbsps', 'tablespoon', 'tablespoons',
+  'tsp', 'tsps', 'teaspoon', 'teaspoons',
+  'taza', 'tazas', 'cda', 'cdas', 'cucharada', 'cucharadas',
+  'cdta', 'cdtas', 'cucharadita', 'cucharaditas',
+  'tasse', 'tasses',
+  'pinch', 'pinches', 'pizca', 'pizcas', 'pincee',
+  'clove', 'cloves', 'diente', 'dientes', 'gousse', 'gousses',
+  'can', 'cans', 'lata', 'latas',
+  'slice', 'slices', 'piece', 'pieces', 'pieza', 'piezas',
+  'bunch', 'manojo', 'sprig', 'sprigs', 'rama', 'ramas',
+]);
+
+const LEADING_QTY_RE =
+  /^\s*((?:\d+\s+\d+\/\d+|\d+\/\d+|\d+(?:[.,]\d+)?|[\u00BC-\u00BE\u2150-\u215E])(?:\s*[-\u2013]\s*(?:\d+\s+\d+\/\d+|\d+\/\d+|\d+(?:[.,]\d+)?|[\u00BC-\u00BE\u2150-\u215E]))?)\s*(.*)$/;
+
+export function parseCaptureIngredientRow(line: string): CaptureIngredientRow {
+  const cleaned = (line ?? '').replace(/^\s*(?:[-*\u2022\u00B7]\s+)/, '').replace(/\s+/g, ' ').trim();
+  if (!cleaned) return { isSection: false, qty: '', unit: '', item: '' };
+  if (!LEADING_QTY_RE.test(cleaned)) {
+    const sec = /^(?:#+\s*(.+?)\s*|\[(.+?)\]|([A-Za-z\u00C0-\u024F][^0-9,;]{1,48}):)$/.exec(cleaned);
+    if (sec) {
+      const heading = (sec[1] ?? sec[2] ?? sec[3] ?? '').replace(/:+$/, '').trim();
+      if (heading) return { isSection: true, qty: '', unit: '', item: heading };
+    }
+  }
+  const qm = LEADING_QTY_RE.exec(cleaned);
+  if (!qm) return { isSection: false, qty: '', unit: '', item: cleaned };
+  const qty = qm[1]!.replace(/\s+/g, ' ').trim();
+  let rest = (qm[2] ?? '').trim();
+  let unit = '';
+  const um = /^([A-Za-z\u00C0-\u024F]+)\.?(?=\s|$)\s*(.*)$/.exec(rest);
+  if (um && CAPTURE_UNITS.has(normSearchText(um[1]!))) {
+    unit = um[1]!;
+    rest = (um[2] ?? '').trim().replace(/^of\s+/i, '');
+  }
+  return { isSection: false, qty, unit, item: rest };
+}
+
+export function formatCaptureIngredientRow(row: CaptureIngredientRow): string {
+  const item = (row.item ?? '').replace(/\s+/g, ' ').trim();
+  if (row.isSection) {
+    const h = item.replace(/:+$/, '').trim();
+    return h ? `${h}:` : '';
+  }
+  return [row.qty.trim(), row.unit.trim(), item].filter(Boolean).join(' ');
+}
+
+export function sanitizeSearchGapPrompt(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const s = raw.trim().replace(/\s+/g, ' ');
+  if (s.length < 3 || s.length > 48) return null;
+  if (/(?:https?:|www\.|\.(?:com|org|net|io)\b)/i.test(s)) return null;
+  if (/^\d+$/.test(s)) return null;
+  if (!/[aeiouáéíóúàèìòùâêîôûäëïöüyœæ]/i.test(s)) return null;
+  if (!/^[A-Za-z\u00C0-\u024F0-9][A-Za-z\u00C0-\u024F0-9\s'-]{1,46}[A-Za-z\u00C0-\u024F0-9]$/.test(s)) return null;
+  return s;
+}
+
+export function titleCasePrompt(s: string): string {
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
 }

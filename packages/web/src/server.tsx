@@ -55,7 +55,9 @@ import {
   RECIPE_CLIENT_SCRIPT,
   DISCOVERY_CLIENT_SCRIPT,
   CAPTURE_CLIENT_SCRIPT,
+  CAPTURE_HELPERS_JS,
   CAPTURE_CHECK_STRINGS,
+  ACCOUNT_LIVE_SHARE_SCRIPT,
 } from './clientScript';
 import { DRAFT_PHOTO_CLIENT_SCRIPT } from './photoClientScript';
 import type { RecipePage, IngredientEntry } from '@2yolks/contracts';
@@ -1142,7 +1144,61 @@ html[data-theme="dark"] .acct .preview-badge { background: var(--lime); color: v
   .acct .capture-preview-mobile .start-section,
   .acct .capture-preview-mobile [data-mode-panel] { display: none; }
 }
-@media (max-width: 640px) { .acct .row { grid-template-columns: 1fr; } .acct .start-tiles { grid-template-columns: 1fr; } .acct { margin: 1rem 0.5rem; padding: 1.25rem 0.85rem 1.75rem; } }
+@media (max-width: 640px) {
+  .acct .row { grid-template-columns: minmax(0, 1fr); }
+  .acct .start-tiles { grid-template-columns: minmax(0, 1fr); }
+  .acct { margin: 1rem 0.5rem; padding: 1.25rem 0.85rem 1.75rem; }
+}
+.acct .field-head-row { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 0.4rem 0.75rem; margin-bottom: 0.2rem; }
+.acct .line-counter { font-size: 0.78rem; font-weight: 700; color: var(--muted); font-variant-numeric: tabular-nums; padding: 0.1rem 0.45rem; border: 1px solid var(--line); background: var(--card); }
+.acct .line-counter.is-over { color: #b3261e; border-color: #b3261e; background: #fdecea; }
+html[data-theme="dark"] .acct .line-counter.is-over { color: #ffb4ab; border-color: #ffb4ab; background: #3d1816; }
+.acct .builder-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.4rem 0.65rem; margin: 0.35rem 0 0.55rem; }
+.acct .builder-mode-tabs { display: inline-flex; border: 1px solid var(--line-strong); }
+.acct .builder-mode-tabs button { padding: 0.25rem 0.65rem; font-size: 0.8rem; border: 0; background: var(--card); color: var(--ink); font-weight: 600; }
+.acct .builder-mode-tabs button + button { border-left: 1px solid var(--line-strong); }
+.acct .builder-mode-tabs button[aria-pressed="true"] { background: var(--plum); color: var(--lime); }
+html[data-theme="dark"] .acct .builder-mode-tabs button[aria-pressed="true"] { background: var(--lime); color: var(--plum); }
+.acct .builder-rows-wrap { display: none; gap: 0.45rem; margin-bottom: 0.5rem; }
+.acct .ing-builder.is-enhanced:not(.is-raw) .builder-rows-wrap { display: grid; }
+.acct .step-builder.is-enhanced:not(.is-raw) .builder-rows-wrap { display: grid; }
+.acct .ing-builder:not(.is-enhanced) .builder-toolbar,
+.acct .step-builder:not(.is-enhanced) .builder-toolbar { display: none; }
+.acct .ing-builder.is-enhanced:not(.is-raw) #f-ingredients,
+.acct .step-builder.is-enhanced:not(.is-raw) #f-steps {
+  position: absolute; width: 1px; height: 1px; min-height: 0; padding: 0; margin: -1px; overflow: hidden; opacity: 0; pointer-events: none;
+}
+.acct .ing-row-item { display: grid; grid-template-columns: 4.5rem 5.5rem minmax(0, 1fr) auto; gap: 0.35rem; align-items: center; }
+.acct .ing-section-row { grid-template-columns: minmax(0, 1fr) auto; }
+.acct .ing-chip-section { font-weight: 700; border-left: 3px solid var(--plum); }
+.acct .builder-row-actions { display: inline-flex; gap: 0.22rem; align-items: center; }
+.acct .builder-icon-btn { padding: 0.28rem 0.5rem; min-width: 2rem; min-height: 36px; justify-content: center; font-size: 0.85rem; }
+.acct .builder-add-actions { display: flex; flex-wrap: wrap; gap: 0.45rem; }
+.acct .builder-add-actions button { padding: 0.38rem 0.85rem; font-size: 0.84rem; }
+.acct .step-card-item { border: 1px solid var(--line); background: var(--card); padding: 0.7rem 0.8rem; display: grid; gap: 0.45rem; }
+.acct .step-card-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+.acct .step-card-num { font-family: var(--font-display); font-weight: 750; font-size: 0.85rem; background: var(--plum); color: var(--lime); padding: 0.12rem 0.48rem; }
+html[data-theme="dark"] .acct .step-card-num { background: var(--lime); color: var(--plum); }
+.acct .step-card-text { min-height: 3.4rem; }
+.acct .step-card-timer { display: inline-flex; align-items: center; gap: 0.45rem; font-size: 0.82rem; font-weight: 600; color: var(--muted); }
+.acct .step-card-timer input { width: 5.5rem; padding: 0.35rem 0.5rem; }
+.acct .live-celebration { border: 1px solid #2e7d32; border-left: 4px solid #2e7d32; background: #edf7ee; color: #1b431e; padding: 0.65rem 0.85rem; display: grid; gap: 0.4rem; }
+.acct .live-celebration span { font-size: 0.88rem; }
+.acct .live-celebration-actions { display: flex; flex-wrap: wrap; gap: 0.45rem; align-items: center; }
+.acct .live-celebration-actions button, .acct .live-celebration-actions a.btn-quiet { padding: 0.32rem 0.7rem; font-size: 0.82rem; border: 1px solid var(--line-strong); background: var(--card); color: var(--ink); font-weight: 650; text-decoration: none; display: inline-flex; align-items: center; }
+.acct .live-celebration-actions a.btn-quiet:hover { border-color: var(--plum); }
+html[data-theme="dark"] .acct .live-celebration { border-color: var(--lime); background: #1e2d1b; color: #f7f3fa; }
+.acct .gap-prompts { border-left: 5px solid var(--yolk-gold); display: grid; gap: 0.55rem; }
+.acct .gap-prompts h2 { margin: 0; font-size: 1.05rem; }
+.acct .gap-chip-row { display: flex; flex-wrap: wrap; gap: 0.45rem; align-items: center; }
+.acct .gap-chip-row button.gap-chip { padding: 0.38rem 0.8rem; font-size: 0.86rem; background: var(--plum); color: var(--lime); border: 1px solid var(--plum); }
+.acct .gap-chip-row button.gap-chip.quiet { background: var(--card); color: var(--ink); border-color: var(--line-strong); }
+.acct .remix-banner { border-left-color: var(--plum); }
+@media (max-width: 640px) {
+  .acct .ing-row-item { grid-template-columns: 4rem 4.8rem minmax(0, 1fr); }
+  .acct .ing-row-item .builder-row-actions { grid-column: 1 / -1; justify-self: end; }
+  .acct .ing-section-row { grid-template-columns: minmax(0, 1fr); }
+}
 `;
 
 /** Private, never-indexed page in the After hours shell (account + submissions).
@@ -1162,4 +1218,4 @@ export function renderAccountPage(
   return shell(`<style>${ACCOUNT_CSS}</style><main id="main" class="acct${opts?.wide ? ' acct-capture' : ''}">${bodyHtml}</main>`, { title: `${title} - 2yolks`, noindex: true, lang, nav, currentPath: path });
 }
 
-export { CAPTURE_CLIENT_SCRIPT, CAPTURE_CHECK_STRINGS, DRAFT_PHOTO_CLIENT_SCRIPT, GLOBAL_CHROME_SCRIPT, DESIGN_SYSTEM_CSS, THEME_CLIENT_SCRIPT, RECIPE_CLIENT_SCRIPT, DISCOVERY_CLIENT_SCRIPT };
+export { CAPTURE_CLIENT_SCRIPT, CAPTURE_HELPERS_JS, CAPTURE_CHECK_STRINGS, DRAFT_PHOTO_CLIENT_SCRIPT, GLOBAL_CHROME_SCRIPT, DESIGN_SYSTEM_CSS, THEME_CLIENT_SCRIPT, RECIPE_CLIENT_SCRIPT, DISCOVERY_CLIENT_SCRIPT, ACCOUNT_LIVE_SHARE_SCRIPT };

@@ -1,4 +1,4 @@
-import type { RecipePage, IngredientEntry, DietTag, DifficultyLevel, TimeBucket, SearchQuery, SearchResult } from '@2yolks/contracts';
+import type { RecipePage, IngredientEntry, DietTag, DifficultyLevel, TimeBucket, SearchQuery, SearchResult, PantryMatchInfo } from '@2yolks/contracts';
 import {
   SCALE_MULTIPLIERS,
   defaultUnitSystem,
@@ -22,6 +22,9 @@ import {
   DIET_TAGS,
   TIME_BUCKETS,
   DIFFICULTY_LEVELS,
+  PANTRY_STAPLES,
+  sanitizeSearchGapPrompt,
+  parseCaptureIngredientRow,
   contributorSlug,
   contributorInitials,
   inferDifficulty,
@@ -252,6 +255,7 @@ export function SearchSheet({ lang = 'en', initialQuery = '' }: { lang?: string;
       <div className="search-sheet-section">
         <h3>{labels.explore}</h3>
         <div className="search-sheet-chips">
+          <a className="chip" href={`/search${lq}#pantry`}>{t.cookWithWhatYouHave}</a>
           <a className="chip" href={`/search?${langAmp}time=30`}>{labels.quick}</a>
           <a className="chip" href={`/search?${langAmp}method=no-oven`}>{labels.noOven}</a>
           <a className="chip" href={`/search?${langAmp}diet=vegetarian`}>{labels.veg}</a>
@@ -461,6 +465,7 @@ export function DiscoveryRowCard({
   numbered = false,
   currentCountry = null,
   savedIds,
+  pantryMatch = null,
 }: {
   recipe: RecipeRow;
   index: number;
@@ -468,6 +473,7 @@ export function DiscoveryRowCard({
   numbered?: boolean;
   currentCountry?: string | null;
   savedIds?: ReadonlySet<string>;
+  pantryMatch?: PantryMatchInfo | null;
 }) {
   const t = uiStrings(lang);
   const catText = categoryLabel(r.category, lang);
@@ -533,6 +539,11 @@ export function DiscoveryRowCard({
           {r.lang !== lang ? <span className="fallback-language">{LANG_NAMES[r.lang]}</span> : null}
           {isCrossLocale ? <span className="provenance-badge">{localizedCountryName(r.country, lang)}</span> : null}
         </div>
+        {pantryMatch ? (
+          <span className="pantry-match-pill" data-pantry-match>
+            {`\u2713 ${pantryMatch.matchCount}/${pantryMatch.requestedCount}: ${pantryMatch.matched.join(', ')}`}
+          </span>
+        ) : null}
         {r.authorName ? (
           <div className="contributor-row">
             {r.authorSlug ? (
@@ -767,6 +778,7 @@ export function Home({ recipes, lang = 'en', activeCategory = null, currentCount
             {d.quickChips.map((chip) => (
               <a key={chip.label} href={chipHref(chip)}>{chip.label}</a>
             ))}
+            <a href={`/search${lq}#pantry`}>{t.cookWithWhatYouHave}</a>
           </p>
           <div className="hero-cta-row">
             <a className="discovery-cta" href="#recipes">
@@ -964,7 +976,7 @@ export function Home({ recipes, lang = 'en', activeCategory = null, currentCount
                 {d.searchAll}
               </a>
             ) : null}
-            <a className="empty-share-link" href={`/account/recipes/new${lq}`}>
+            <a className="empty-share-link" data-empty-share-link data-base-href={`/account/recipes/new${lq}`} href={`/account/recipes/new${lq}`}>
               <SocialIcon name="plus" />
               {t.emptyShareCta}
             </a>
@@ -1268,17 +1280,27 @@ export function RecipeView({
             </div>
           ) : null}
           <ul className="ingredients">
-            {entries.map((e, i) => (
-              <li key={i}>
-                <label>
-                  <input type="checkbox" />
-                  <IngredientIcon text={plainIngredients[i] ?? ''} />
-                  <span className="line" data-v={JSON.stringify(ingredientVariants(e, lang, mults))}>
-                    {renderIngredient(e, lang, sys, 1)}
-                  </span>
-                </label>
-              </li>
-            ))}
+            {entries.map((e, i) => {
+              const sec = typeof e === 'string' ? parseCaptureIngredientRow(e) : null;
+              if (sec?.isSection && sec.item) {
+                return (
+                  <li key={i} className="ing-section-head">
+                    <strong>{sec.item}</strong>
+                  </li>
+                );
+              }
+              return (
+                <li key={i}>
+                  <label>
+                    <input type="checkbox" />
+                    <IngredientIcon text={plainIngredients[i] ?? ''} />
+                    <span className="line" data-v={JSON.stringify(ingredientVariants(e, lang, mults))}>
+                      {renderIngredient(e, lang, sys, 1)}
+                    </span>
+                  </label>
+                </li>
+              );
+            })}
           </ul>
         </div>
         <div className="recipe-col steps-col">
@@ -1373,6 +1395,20 @@ export function RecipeView({
           </details>
         </nav>
       ) : null}
+      <section className="remix-callout" data-remix-cta>
+        <div className="remix-copy">
+          <h2>{t.remixHeading}</h2>
+          <p>{t.remixSubhead}</p>
+        </div>
+        <a
+          className="remix-cta-link"
+          data-remix-link
+          href={`/account/recipes/new?remix=${encodeURIComponent(page.recipe.id)}${lang !== 'en' ? `&lang=${encodeURIComponent(lang)}` : ''}`}
+        >
+          <SocialIcon name="plus" />
+          {t.remixButton}
+        </a>
+      </section>
       <p className="recipe-source">
         {t.source}:{' '}
         {page.source.url.startsWith('http') ? (
@@ -1569,6 +1605,7 @@ export function buildSearchHref(lang: string, query: SearchQuery): string {
   if (query.difficulty) params.set('difficulty', query.difficulty);
   if (query.tested) params.set('tested', '1');
   if (query.method) params.set('method', query.method);
+  if (query.have && query.have.length > 0) params.set('have', query.have.join(','));
   if (query.page && query.page > 1) params.set('page', String(query.page));
   const qsStr = params.toString();
   return qsStr ? `/search?${qsStr}` : '/search';
@@ -1581,13 +1618,55 @@ export interface SearchPageProps {
   cuisines: { slug: string; label: string; count: number }[];
   categories: string[];
   savedIds?: ReadonlySet<string>;
+  missingPrompts?: string[];
 }
 
-export function SearchPage({ lang, query, result, cuisines, categories, savedIds }: SearchPageProps) {
+const PANTRY_LABELS: Record<string, {
+  lead: string; addLabel: string; addPlaceholder: string; addBtn: string;
+  findBtn: string; maxMsg: string; gapLead: string; sharePromptCta: string;
+}> = {
+  en: {
+    lead: 'Pick 2–5 ingredients you have on hand and find the best matches.',
+    addLabel: 'Add ingredient',
+    addPlaceholder: 'Add another (e.g. avocado, corn)…',
+    addBtn: '+ Add',
+    findBtn: 'Find matches',
+    maxMsg: 'Pick up to 5 ingredients.',
+    gapLead: 'Popular searches without a recipe yet — click to write one:',
+    sharePromptCta: 'Share a "{q}" recipe',
+  },
+  es: {
+    lead: 'Elige 2 a 5 ingredientes que ya tienes y encuentra las mejores opciones.',
+    addLabel: 'Agregar ingrediente',
+    addPlaceholder: 'Agregar otro (ej. aguacate, elote)…',
+    addBtn: '+ Agregar',
+    findBtn: 'Buscar con esto',
+    maxMsg: 'Puedes elegir hasta 5 ingredientes.',
+    gapLead: 'Búsquedas populares sin receta aún — haz clic para enviar una:',
+    sharePromptCta: 'Comparte una receta de "{q}"',
+  },
+  fr: {
+    lead: 'Choisissez 2 à 5 ingrédients que vous avez sous la main pour trouver des recettes adaptées.',
+    addLabel: 'Ajouter un ingrédient',
+    addPlaceholder: 'Autre ingrédient (ex. avocat, maïs)…',
+    addBtn: '+ Ajouter',
+    findBtn: 'Trouver',
+    maxMsg: 'Vous pouvez choisir jusqu’à 5 ingrédients.',
+    gapLead: 'Recherches fréquentes sans recette — cliquez pour en proposer une :',
+    sharePromptCta: 'Partager une recette pour « {q} »',
+  },
+};
+
+export function SearchPage({ lang, query, result, cuisines, categories, savedIds, missingPrompts = [] }: SearchPageProps) {
   const s = SEARCH_LABELS[lang] ?? SEARCH_LABELS.en!;
+  const pantryLabels = PANTRY_LABELS[lang] ?? PANTRY_LABELS.en!;
   const t = uiStrings(lang);
   const d = DISCOVERY[lang] ?? DISCOVERY.en!;
   const lq = langQuery(lang);
+  const langAmp = lang === 'en' ? '' : `lang=${lang}&`;
+  const haveList = query.have ?? [];
+  const haveNorm = new Set(haveList.map((h) => h.toLowerCase()));
+  const lKey = lang === 'es' || lang === 'fr' ? lang : 'en';
   const pills: { label: string; removeHref: string }[] = [];
   if (query.cat) {
     pills.push({ label: `${s.catLabel}: ${categoryLabel(query.cat, lang) ?? query.cat}`, removeHref: buildSearchHref(lang, { ...query, cat: null, page: 1 }) });
@@ -1611,6 +1690,13 @@ export function SearchPage({ lang, query, result, cuisines, categories, savedIds
   if (query.tested) {
     pills.push({ label: s.testedOnly, removeHref: buildSearchHref(lang, { ...query, tested: false, page: 1 }) });
   }
+  for (const h of haveList) {
+    pills.push({ label: `+ ${h}`, removeHref: buildSearchHref(lang, { ...query, have: haveList.filter((x) => x !== h), page: 1 }) });
+  }
+  const cleanPrompt = sanitizeSearchGapPrompt(query.q);
+  const shareEmptyHref = cleanPrompt
+    ? `/account/recipes/new?${langAmp}prompt=${encodeURIComponent(cleanPrompt)}`
+    : `/account/recipes/new${lq}`;
   const hasFiltersOrQ = pills.length > 0 || Boolean(query.q?.trim());
   const countText = result.total === 1 ? s.countOne : s.countMany.replace('{n}', String(result.total));
   const emptyText = query.q?.trim() ? s.countZero.replace('{q}', query.q.trim()) : d.empty;
@@ -1697,6 +1783,43 @@ export function SearchPage({ lang, query, result, cuisines, categories, savedIds
             </label>
             <button type="submit" className="apply-filters-btn">{s.apply}</button>
           </div>
+          <div id="pantry" className="pantry-picker" data-pantry-picker data-max-msg={pantryLabels.maxMsg}>
+            <div className="pantry-head">
+              <h2>{t.cookWithWhatYouHave}</h2>
+              <span>{pantryLabels.lead}</span>
+            </div>
+            <input type="hidden" name="have" value={haveList.join(',')} data-have-input />
+            <div className="pantry-selected" data-pantry-selected hidden={haveList.length === 0}>
+              {haveList.map((item) => (
+                <button key={item} type="button" className="pantry-selected-pill" data-pantry-remove={item}>
+                  {item} ×
+                </button>
+              ))}
+            </div>
+            <div className="pantry-staples">
+              {PANTRY_STAPLES.map((st) => {
+                const isSel = haveNorm.has(st.key) || haveNorm.has(st.label[lKey].toLowerCase()) || st.synonyms.some((syn) => haveNorm.has(syn.toLowerCase()));
+                return (
+                  <button
+                    key={st.key}
+                    type="button"
+                    className="chip pantry-chip"
+                    data-pantry-chip={st.key}
+                    aria-pressed={isSel ? 'true' : 'false'}
+                  >
+                    {st.label[lKey]}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="pantry-add-row">
+              <label className="visually-hidden" htmlFor="pantry-custom-in">{pantryLabels.addLabel}</label>
+              <input id="pantry-custom-in" type="text" placeholder={pantryLabels.addPlaceholder} data-pantry-add-input />
+              <button type="button" className="pantry-add-btn" data-pantry-add-btn>{pantryLabels.addBtn}</button>
+              <button type="submit" className="apply-filters-btn">{pantryLabels.findBtn}</button>
+            </div>
+            <p className="pantry-status" data-pantry-status role="status" aria-live="polite" hidden />
+          </div>
         </form>
         {pills.length > 0 || hasFiltersOrQ ? (
           <div className="filter-pills">
@@ -1739,6 +1862,7 @@ export function SearchPage({ lang, query, result, cuisines, categories, savedIds
                 lang={lang}
                 numbered
                 savedIds={savedIds}
+                pantryMatch={result.pantryMatches?.[r.id] ?? null}
               />
             ))}
           </ul>
@@ -1767,11 +1891,23 @@ export function SearchPage({ lang, query, result, cuisines, categories, savedIds
             ) : null}
             <div className="empty-actions">
               <a className="btn-clear" href={`/search${lq}`}>{t.clearFilters}</a>
-              <a className="empty-share-link" href={`/account/recipes/new${lq}`}>
+              <a className="empty-share-link" data-empty-share-link data-base-href={`/account/recipes/new${lq}`} href={shareEmptyHref}>
                 <SocialIcon name="plus" />
-                {t.emptyShareCta}
+                {cleanPrompt ? pantryLabels.sharePromptCta.replace('{q}', cleanPrompt) : t.emptyShareCta}
               </a>
             </div>
+            {missingPrompts.length > 0 ? (
+              <div className="empty-gap-prompts" data-empty-gap-prompts>
+                <p>{pantryLabels.gapLead}</p>
+                <div className="empty-gap-chips">
+                  {missingPrompts.map((mp) => (
+                    <a key={mp} className="chip" href={`/account/recipes/new?${langAmp}prompt=${encodeURIComponent(mp)}`}>
+                      {mp}
+                    </a>
+                  ))}
+                </div>
+              </div>
+            ) : null}
           </div>
         )}
         {result.totalPages > 1 ? (
@@ -1907,7 +2043,7 @@ export function HubPage({
             <EmptySkilletIllustration />
             <p>{t.emptyCategory}</p>
             <div className="empty-actions">
-              <a className="empty-share-link" href={`/account/recipes/new${lq}`}>
+              <a className="empty-share-link" data-empty-share-link data-base-href={`/account/recipes/new${lq}`} href={`/account/recipes/new${lq}`}>
                 <SocialIcon name="plus" />
                 {t.emptyShareCta}
               </a>
