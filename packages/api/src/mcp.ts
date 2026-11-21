@@ -18,6 +18,7 @@ import { parseFieldsArg, requestedFormat, shapeToolText } from './mcp-toon';
 import {
   getCountry,
   localesFor,
+  recipePathFor,
   slugify,
   validateRecipeSubmission,
   SLUG_PATTERN,
@@ -36,8 +37,10 @@ import {
 import type { IngredientEntry, StructuredIngredient } from '@2yolks/contracts';
 import { MAX_IMAGE_BASE64, MAX_IMAGE_BYTES, decodeBase64, validateImage } from './imageValidation';
 import { translateStructuredRecipeWithGemini } from './aiRecipe';
+import { sendAuthorReviewNotice } from './account';
+import type { MailEnv } from './email';
 
-export type McpBindings = {
+export type McpBindings = MailEnv & {
   DB: D1Database;
   /** R2 bucket for rights-tracked recipe images (migration 0004). Unset =
    * recipes.set_image answers 503 and /img/recipe/* 404s. */
@@ -46,6 +49,7 @@ export type McpBindings = {
   MCP_READ_KEY?: string;
   MCP_NAMED_KEYS?: string;
   GEMINI_API_KEY?: string;
+  CANONICAL_ORIGIN?: string;
   // Fail-closed gate for translations.mark_reviewed. The human-vs-agent
   // translation publication policy is unresolved, so review stays disabled
   // until that policy decision enables it explicitly.
@@ -300,12 +304,56 @@ const TOOLS: ToolDef[] = [
   {
     name: 'recipes.publish',
     description:
-      'Publish draft locales of a recipe. Requires the source to be rights-cleared. Args: id, optional country+lang to publish one locale.',
+      'Publish draft locales of a recipe. Requires the source to be rights-cleared. Args: id, optional country+lang to publish one locale, optional approvePhoto (boolean, default false — pending contributor cover photos are never auto-published unless explicitly approved).',
     role: 'admin',
     inputSchema: {
       type: 'object',
-      properties: { id: { type: 'string' }, country: { type: 'string' }, lang: { type: 'string' } },
+      properties: { id: { type: 'string' }, country: { type: 'string' }, lang: { type: 'string' }, approvePhoto: { type: 'boolean' } },
       required: ['id'],
+    },
+  },
+  {
+    name: 'recipes.get_draft_photo',
+    description:
+      'Admin-only: fetch the pending private cover photo attached to a submitted user draft (metadata + base64 bytes) for visual review.',
+    role: 'admin',
+    inputSchema: {
+      type: 'object',
+      properties: { id: { type: 'string' } },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'recipes.moderate_draft_photo',
+    description:
+      'Admin-only: approve or reject the pending cover photo attached to a submitted user recipe draft. Requires confirmed: true (dry-run otherwise). Approving copies the image into public recipe_images (style "photo", credited to the contributor) and removes the private draft copy.',
+    role: 'admin',
+    inputSchema: {
+      type: 'object',
+      properties: { id: { type: 'string' }, decision: { type: 'string', enum: ['approve', 'reject'] }, confirmed: { type: 'boolean' } },
+      required: ['id', 'decision'],
+    },
+  },
+  {
+    name: 'recipes.request_changes',
+    description:
+      'Admin-only: return a submitted user recipe draft to the author with a note asking for changes. Clears submitted_at and attested_at so edits require fresh permission confirmation before resending, audits, and sends a budgeted author email notice. Requires confirmed: true (dry-run otherwise).',
+    role: 'admin',
+    inputSchema: {
+      type: 'object',
+      properties: { id: { type: 'string' }, note: { type: 'string' }, confirmed: { type: 'boolean' } },
+      required: ['id', 'note'],
+    },
+  },
+  {
+    name: 'recipes.decline',
+    description:
+      'Admin-only: decline a submitted user recipe with a written reason. Marks draft locales rejected, rejects and deletes any pending private cover photo, keeps the entry visible to the author so they can make a fresh copy, audits, and sends a budgeted author email notice. Requires confirmed: true (dry-run otherwise).',
+    role: 'admin',
+    inputSchema: {
+      type: 'object',
+      properties: { id: { type: 'string' }, reason: { type: 'string' }, confirmed: { type: 'boolean' } },
+      required: ['id', 'reason'],
     },
   },
   {
@@ -758,6 +806,7 @@ type CallCtx = {
   translationReviewEnabled?: boolean;
   images?: R2Bucket;
   geminiApiKey?: string;
+  mailEnv?: MailEnv & { CANONICAL_ORIGIN?: string };
 };
 type CallResult = { status: number; data: unknown };
 
@@ -779,8 +828,12 @@ const RECIPE_ID_TOOLS = new Set([
   'recipes.translate_locale',
   'translations.mark_reviewed',
   'recipes.publish',
+  'recipes.request_changes',
+  'recipes.decline',
   'recipes.unpublish',
   'recipes.set_image',
+  'recipes.get_draft_photo',
+  'recipes.moderate_draft_photo',
 ]);
 const SOURCE_ID_TOOLS = new Set(['sources.update', 'sources.clear_rights']);
 
@@ -812,12 +865,15 @@ async function callRecipesList(db: D1Database, role: Role, args: Record<string, 
   if (args['submitted'] === true) conds.push('r.submitted_at IS NOT NULL');
   conds.push(`NOT ${privateRecipeSql('r', role)}`);
   const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
+  const photoSel = role === 'admin'
+    ? ", EXISTS (SELECT 1 FROM draft_photos dp WHERE dp.recipe_id = r.id AND dp.status = 'pending') AS has_draft_photo"
+    : '';
   const rows = await db
     .prepare(
       `SELECT rl.recipe_id AS id, rl.country, rl.lang, rl.slug, rl.title, rl.status,
-              r.submitted_at, r.attested_at, r.owner_user_id IS NOT NULL AS user_submitted,
+              r.submitted_at, r.attested_at, r.review_status, r.owner_user_id IS NOT NULL AS user_submitted,
               r.origin_country, s.id AS source_id, s.name AS source_name, s.license,
-              s.cleared_at IS NOT NULL AS source_cleared
+              s.cleared_at IS NOT NULL AS source_cleared${photoSel}
        FROM recipe_locales rl
        JOIN recipes r ON r.id = rl.recipe_id
        JOIN sources s ON s.id = r.source_id
@@ -828,7 +884,7 @@ async function callRecipesList(db: D1Database, role: Role, args: Record<string, 
   return { status: 200, data: { recipes: rows.results } };
 }
 
-async function callRecipesGet(db: D1Database, args: Record<string, unknown>): Promise<CallResult> {
+async function callRecipesGet(db: D1Database, role: Role, args: Record<string, unknown>): Promise<CallResult> {
   const id = str(args['id'], 64);
   if (!id) return { status: 400, data: { error: 'id required' } };
   const recipe = await db.prepare('SELECT * FROM recipes WHERE id = ?').bind(id).first();
@@ -845,7 +901,13 @@ async function callRecipesGet(db: D1Database, args: Record<string, unknown>): Pr
     )
     .bind(id)
     .all();
-  return { status: 200, data: { recipe, locales: locales.results, source, images: images.results } };
+  const draftPhoto = role === 'admin'
+    ? await db
+        .prepare('SELECT id, mime, bytes, width, height, status, created_at, moderated_at, moderated_by, image_id FROM draft_photos WHERE recipe_id = ? ORDER BY created_at DESC LIMIT 1')
+        .bind(id)
+        .first()
+    : null;
+  return { status: 200, data: { recipe, locales: locales.results, source, images: images.results, ...(draftPhoto ? { draft_photo: draftPhoto } : {}) } };
 }
 
 async function callSourcesList(db: D1Database, role: Role): Promise<CallResult> {
@@ -1471,12 +1533,21 @@ async function callStatusChange(
     return { status: 400, data: { error: 'country and lang must be given together' } };
   }
   const tool = `${kind === 'recipe' ? 'recipes' : 'blog'}.${target === 'published' ? 'publish' : 'unpublish'}`;
+  let ownerUserId: string | null = null;
+  let notifyLang: string | null = null;
+  let wasAlreadyPublished = false;
   if (kind === 'recipe') {
     const recipe = await ctx.db
-      .prepare('SELECT r.id, s.cleared_at FROM recipes r JOIN sources s ON s.id = r.source_id WHERE r.id = ?')
+      .prepare('SELECT r.id, r.owner_user_id, r.notify_lang, s.cleared_at FROM recipes r JOIN sources s ON s.id = r.source_id WHERE r.id = ?')
       .bind(id)
-      .first<{ id: string; cleared_at: string | null }>();
+      .first<{ id: string; owner_user_id: string | null; notify_lang: string | null; cleared_at: string | null }>();
     if (!recipe) return { status: 404, data: { error: 'recipe not found', id } };
+    ownerUserId = recipe.owner_user_id;
+    notifyLang = recipe.notify_lang;
+    if (target === 'published' && ownerUserId) {
+      const already = await ctx.db.prepare("SELECT 1 AS x FROM recipe_locales WHERE recipe_id = ? AND status = 'published' LIMIT 1").bind(id).first();
+      wasAlreadyPublished = Boolean(already);
+    }
     if (target === 'published' && !recipe.cleared_at) {
       return {
         status: 409,
@@ -1534,11 +1605,30 @@ async function callStatusChange(
   if (matchedCount === 0) {
     return { status: 409, data: { error: `no ${from} locales matched`, id, country: country ?? null, lang: lang ?? null } };
   }
+  const pendingDraftPhoto = kind === 'recipe' && target === 'published'
+    ? await ctx.db.prepare("SELECT id FROM draft_photos WHERE recipe_id = ? AND status = 'pending' LIMIT 1").bind(id).first<{ id: string }>()
+    : null;
+  const approvePhoto = kind === 'recipe' && target === 'published' && args['approvePhoto'] === true;
   if (ctx.dryRun) {
-    return { status: 200, data: { dry_run: true, ok: true, id, would_set: target, matching_locales: matchedCount } };
+    return {
+      status: 200,
+      data: {
+        dry_run: true,
+        ok: true,
+        id,
+        would_set: target,
+        matching_locales: matchedCount,
+        ...(pendingDraftPhoto ? { pending_draft_photo: true, would_approve_photo: approvePhoto } : {}),
+      },
+    };
   }
   const bind: unknown[] = country ? [target, id, country, lang] : [target, id];
   const statements = [];
+  let promotedPhoto: Awaited<ReturnType<typeof planDraftPhotoApproval>> | null = null;
+  if (approvePhoto && pendingDraftPhoto) {
+    promotedPhoto = await planDraftPhotoApproval(ctx, id);
+    if (promotedPhoto.error) return promotedPhoto.error;
+  }
   if (kind === 'recipe' && target === 'draft') {
     // Frozen map (migration 0005): slugs leaving the sitemap are reserved
     // permanently so their old URLs keep resolving and can never be claimed
@@ -1553,16 +1643,60 @@ async function callStatusChange(
     );
   }
   // Content mutation and audit row commit in one atomic batch.
+  const now = new Date().toISOString();
   statements.push(
     ctx.db.prepare(`UPDATE ${table} SET status = ? WHERE ${fk} = ? AND status = '${from}'${scope}`).bind(...bind),
+    ...(kind === 'recipe' && target === 'published' && ownerUserId
+      ? [
+          ctx.db
+            .prepare("UPDATE recipes SET review_status = 'published', review_note = NULL, reviewed_at = ?, reviewed_by = ? WHERE id = ?")
+            .bind(now, ctx.actor, id),
+        ]
+      : []),
+    ...(promotedPhoto?.stmts ?? []),
     auditStmt(ctx, tool, id, {
       locales_changed: matchedCount,
       ...(country ? { country, lang } : {}),
+      ...(promotedPhoto?.imageId ? { approved_photo_image_id: promotedPhoto.imageId } : {}),
       ...(kind === 'blog' && target === 'published' ? { review: args['review'] } : {}),
     }),
   );
-  await ctx.db.batch(statements);
-  return { status: 200, data: { id, status: target, locales_changed: matchedCount } };
+  try {
+    await ctx.db.batch(statements);
+  } catch (e) {
+    if (promotedPhoto?.destKey && ctx.images) {
+      await ctx.images.delete(promotedPhoto.destKey).catch(() => {});
+    }
+    throw e;
+  }
+  if (promotedPhoto?.privateR2Key && ctx.images) {
+    await ctx.images.delete(promotedPhoto.privateR2Key).catch(() => {});
+  }
+  let reviewNotice: string | null = null;
+  if (kind === 'recipe' && target === 'published' && ownerUserId && !wasAlreadyPublished) {
+    const liveLoc = await ctx.db
+      .prepare("SELECT country, lang, slug, title FROM recipe_locales WHERE recipe_id = ? AND status = 'published' ORDER BY CASE WHEN lang = ? THEN 0 ELSE 1 END, country, lang LIMIT 1")
+      .bind(id, notifyLang ?? 'en')
+      .first<{ country: string; lang: string; slug: string; title: string }>();
+    reviewNotice = await notifyAuthor(ctx, {
+      recipeId: id,
+      userId: ownerUserId,
+      lang: notifyLang,
+      kind: 'published',
+      title: liveLoc?.title,
+      livePath: liveLoc ? recipePathFor(liveLoc.country, liveLoc.lang, liveLoc.slug) : null,
+    });
+  }
+  return {
+    status: 200,
+    data: {
+      id,
+      status: target,
+      locales_changed: matchedCount,
+      ...(promotedPhoto?.imageId ? { approved_photo_image_id: promotedPhoto.imageId } : pendingDraftPhoto ? { pending_draft_photo: true } : {}),
+      ...(reviewNotice ? { review_notice: reviewNotice } : {}),
+    },
+  };
 }
 
 async function callSourcesUpdate(ctx: CallCtx, args: Record<string, unknown>): Promise<CallResult> {
@@ -1961,12 +2095,291 @@ async function callModerateTestReport(ctx: CallCtx, args: Record<string, unknown
   return { status: 200, data: { id, status: 'rejected' } };
 }
 
+// --- Contributor draft cover photos (migration 0012) -------------------------
+
+function toBase64(bytes: Uint8Array): string {
+  let bin = '';
+  for (let i = 0; i < bytes.length; i += 8192) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + 8192));
+  }
+  return btoa(bin);
+}
+
+async function planDraftPhotoApproval(
+  ctx: CallCtx,
+  recipeId: string,
+): Promise<{
+  error?: CallResult;
+  stmts?: D1PreparedStatement[];
+  imageId?: string;
+  destKey?: string;
+  privateR2Key?: string;
+}> {
+  const dp = await ctx.db
+    .prepare(
+      `SELECT dp.id, dp.recipe_id, dp.r2_key, dp.mime, dp.bytes, dp.width, dp.height,
+              COALESCE(r.author_name, u.display_name, 'A 2yolks cook') AS credit_name
+       FROM draft_photos dp
+       JOIN recipes r ON r.id = dp.recipe_id
+       LEFT JOIN users u ON u.id = dp.user_id
+       WHERE dp.recipe_id = ? AND dp.status = 'pending' LIMIT 1`,
+    )
+    .bind(recipeId)
+    .first<{
+      id: string;
+      recipe_id: string;
+      r2_key: string;
+      mime: string;
+      bytes: number;
+      width: number;
+      height: number;
+      credit_name: string;
+    }>();
+  if (!dp) return { error: { status: 404, data: { error: 'no pending draft photo', id: recipeId } } };
+  if (!ctx.images) return { error: { status: 503, data: { error: 'image storage is not configured on this worker' } } };
+  const obj = await ctx.images.get(dp.r2_key);
+  if (!obj || !obj.body) return { error: { status: 409, data: { error: 'draft photo bytes missing from storage', id: recipeId } } };
+  const photoBytes = new Uint8Array(await new Response(obj.body).arrayBuffer());
+  const ext = dp.mime === 'image/png' ? 'png' : dp.mime === 'image/webp' ? 'webp' : 'jpg';
+  const imageId = newId();
+  const destKey = `recipes/${recipeId}/${imageId}.${ext}`;
+  await ctx.images.put(destKey, photoBytes, { httpMetadata: { contentType: dp.mime } });
+  const now = new Date().toISOString();
+  return {
+    imageId,
+    destKey,
+    privateR2Key: dp.r2_key,
+    stmts: [
+      ctx.db
+        .prepare(
+          `INSERT INTO recipe_images (id, recipe_id, kind, step_index, r2_key, mime, bytes, width, height, style, source_name, source_url, license, cleared_at)
+           SELECT ?, ?, 'hero', NULL, ?, ?, ?, ?, ?, 'photo', ?, 'https://2yolks.com/', 'user-original', datetime('now')
+           WHERE EXISTS (SELECT 1 FROM draft_photos WHERE id = ? AND status = 'pending')`,
+        )
+        .bind(imageId, recipeId, destKey, dp.mime, dp.bytes, dp.width, dp.height, dp.credit_name, dp.id),
+      ctx.db
+        .prepare("UPDATE recipes SET image_key = ? WHERE id = ? AND EXISTS (SELECT 1 FROM draft_photos WHERE id = ? AND status = 'pending')")
+        .bind(destKey, recipeId, dp.id),
+      ctx.db
+        .prepare("UPDATE draft_photos SET status = 'approved', moderated_at = ?, moderated_by = ?, image_id = ? WHERE id = ? AND status = 'pending'")
+        .bind(now, ctx.actor, imageId, dp.id),
+    ],
+  };
+}
+
+async function callGetDraftPhoto(ctx: CallCtx, args: Record<string, unknown>): Promise<CallResult> {
+  const id = str(args['id'], 64);
+  if (!id) return { status: 400, data: { error: 'id required' } };
+  const dp = await ctx.db
+    .prepare("SELECT id, recipe_id, r2_key, mime, bytes, width, height, created_at FROM draft_photos WHERE recipe_id = ? AND status = 'pending' LIMIT 1")
+    .bind(id)
+    .first<{ id: string; recipe_id: string; r2_key: string; mime: string; bytes: number; width: number; height: number; created_at: string }>();
+  if (!dp) return { status: 404, data: { error: 'no pending draft photo', id } };
+  if (!ctx.images) return { status: 503, data: { error: 'image storage is not configured on this worker' } };
+  const obj = await ctx.images.get(dp.r2_key);
+  if (!obj || !obj.body) return { status: 404, data: { error: 'draft photo bytes missing from storage', id } };
+  const bytes = new Uint8Array(await new Response(obj.body).arrayBuffer());
+  return {
+    status: 200,
+    data: {
+      id: dp.id,
+      recipe_id: dp.recipe_id,
+      mime: dp.mime,
+      bytes: dp.bytes,
+      width: dp.width,
+      height: dp.height,
+      created_at: dp.created_at,
+      image_base64: toBase64(bytes),
+    },
+  };
+}
+
+async function callModerateDraftPhoto(ctx: CallCtx, args: Record<string, unknown>): Promise<CallResult> {
+  const id = str(args['id'], 64);
+  const decision = str(args['decision'], 16);
+  if (!id || (decision !== 'approve' && decision !== 'reject')) {
+    return { status: 400, data: { error: 'id and decision (approve|reject) are required' } };
+  }
+  const existing = await ctx.db
+    .prepare("SELECT id, r2_key FROM draft_photos WHERE recipe_id = ? AND status = 'pending' LIMIT 1")
+    .bind(id)
+    .first<{ id: string; r2_key: string }>();
+  if (!existing) return { status: 409, data: { error: 'no pending draft photo', id } };
+  if (ctx.dryRun) return { status: 200, data: { dry_run: true, ok: true, id, photo_id: existing.id, decision } };
+
+  const now = new Date().toISOString();
+  if (decision === 'approve') {
+    const plan = await planDraftPhotoApproval(ctx, id);
+    if (plan.error) return plan.error;
+    try {
+      await ctx.db.batch([
+        ...plan.stmts!,
+        auditStmt(ctx, 'recipes.moderate_draft_photo', id, { decision: 'approve', photo_id: existing.id, image_id: plan.imageId }),
+      ]);
+    } catch (e) {
+      if (plan.destKey && ctx.images) await ctx.images.delete(plan.destKey).catch(() => {});
+      throw e;
+    }
+    if (plan.privateR2Key && ctx.images) await ctx.images.delete(plan.privateR2Key).catch(() => {});
+    return { status: 200, data: { id, status: 'approved', photo_id: existing.id, image_id: plan.imageId } };
+  }
+
+  await ctx.db.batch([
+    ctx.db
+      .prepare("UPDATE draft_photos SET status = 'rejected', moderated_at = ?, moderated_by = ? WHERE id = ? AND status = 'pending'")
+      .bind(now, ctx.actor, existing.id),
+    auditStmt(ctx, 'recipes.moderate_draft_photo', id, { decision: 'reject', photo_id: existing.id }),
+  ]);
+  if (ctx.images) await ctx.images.delete(existing.r2_key).catch(() => {});
+  return { status: 200, data: { id, status: 'rejected', photo_id: existing.id } };
+}
+
+// --- Contributor review feedback & author notices (S8, migration 0013) -------
+
+async function notifyAuthor(
+  ctx: CallCtx,
+  opts: {
+    recipeId: string;
+    userId: string;
+    lang: string | null;
+    kind: 'needs_changes' | 'declined' | 'published';
+    note?: string | null;
+    title?: string;
+    livePath?: string | null;
+  },
+): Promise<'sent' | 'skipped_budget' | 'skipped_no_mail' | 'failed' | null> {
+  const userRow = await ctx.db.prepare('SELECT email FROM users WHERE id = ?').bind(opts.userId).first<{ email: string }>();
+  if (!userRow?.email) return null;
+  let title = opts.title ?? '';
+  if (!title) {
+    const loc = await ctx.db.prepare('SELECT title FROM recipe_locales WHERE recipe_id = ? LIMIT 1').bind(opts.recipeId).first<{ title: string }>();
+    title = loc?.title ?? 'Recipe';
+  }
+  const noticeStatus = await sendAuthorReviewNotice(ctx.mailEnv ?? {}, ctx.db, {
+    email: userRow.email,
+    lang: opts.lang,
+    kind: opts.kind,
+    title,
+    recipeId: opts.recipeId,
+    note: opts.note,
+    livePath: opts.livePath,
+  });
+  await ctx.db
+    .prepare('UPDATE recipes SET review_notice = ?, review_notice_at = ? WHERE id = ?')
+    .bind(noticeStatus, new Date().toISOString(), opts.recipeId)
+    .run();
+  return noticeStatus;
+}
+
+async function checkReviewableUserRecipe(db: D1Database, id: string): Promise<
+  | { ok: true; ownerUserId: string; notifyLang: string | null }
+  | { ok: false; err: CallResult }
+> {
+  const r = await db
+    .prepare('SELECT id, owner_user_id, submitted_at, removed_by_user_at, notify_lang FROM recipes WHERE id = ?')
+    .bind(id)
+    .first<{ id: string; owner_user_id: string | null; submitted_at: string | null; removed_by_user_at: string | null; notify_lang: string | null }>();
+  if (!r || !r.owner_user_id) {
+    return { ok: false, err: { status: 404, data: { error: 'submitted user recipe not found', id } } };
+  }
+  if (r.removed_by_user_at) {
+    return { ok: false, err: { status: 409, data: { error: 'recipe was removed by author', id } } };
+  }
+  if (!r.submitted_at) {
+    return { ok: false, err: { status: 409, data: { error: 'recipe is not currently submitted for review', id } } };
+  }
+  const pub = await db.prepare("SELECT 1 AS x FROM recipe_locales WHERE recipe_id = ? AND status = 'published' LIMIT 1").bind(id).first();
+  if (pub) {
+    return { ok: false, err: { status: 409, data: { error: 'recipe is already published', id } } };
+  }
+  const rej = await db.prepare("SELECT 1 AS x FROM recipe_locales WHERE recipe_id = ? AND status = 'rejected' LIMIT 1").bind(id).first();
+  if (rej) {
+    return { ok: false, err: { status: 409, data: { error: 'recipe was already declined', id } } };
+  }
+  return { ok: true, ownerUserId: r.owner_user_id, notifyLang: r.notify_lang };
+}
+
+async function callRequestChanges(ctx: CallCtx, args: Record<string, unknown>): Promise<CallResult> {
+  const id = str(args['id'], 64);
+  const note = str(args['note'], 1500)?.trim() ?? '';
+  if (!id || !note) return { status: 400, data: { error: 'id and non-empty note are required' } };
+  const target = await checkReviewableUserRecipe(ctx.db, id);
+  if (!target.ok) return target.err;
+  if (ctx.dryRun) {
+    return { status: 200, data: { dry_run: true, ok: true, id, would_set: 'needs_changes', note } };
+  }
+  const now = new Date().toISOString();
+  await ctx.db.batch([
+    ctx.db
+      .prepare(
+        "UPDATE recipes SET review_status = 'needs_changes', review_note = ?, reviewed_at = ?, reviewed_by = ?, submitted_at = NULL, attested_at = NULL WHERE id = ? AND owner_user_id IS NOT NULL AND submitted_at IS NOT NULL",
+      )
+      .bind(note, now, ctx.actor, id),
+    auditStmt(ctx, 'recipes.request_changes', id, { note }),
+  ]);
+  const reviewNotice = await notifyAuthor(ctx, {
+    recipeId: id,
+    userId: target.ownerUserId,
+    lang: target.notifyLang,
+    kind: 'needs_changes',
+    note,
+  });
+  return {
+    status: 200,
+    data: { id, review_status: 'needs_changes', review_note: note, ...(reviewNotice ? { review_notice: reviewNotice } : {}) },
+  };
+}
+
+async function callDeclineRecipe(ctx: CallCtx, args: Record<string, unknown>): Promise<CallResult> {
+  const id = str(args['id'], 64);
+  const reason = str(args['reason'], 1500)?.trim() ?? '';
+  if (!id || !reason) return { status: 400, data: { error: 'id and non-empty reason are required' } };
+  const target = await checkReviewableUserRecipe(ctx.db, id);
+  if (!target.ok) return target.err;
+  if (ctx.dryRun) {
+    return { status: 200, data: { dry_run: true, ok: true, id, would_set: 'declined', reason } };
+  }
+  const pendingPhotos = await ctx.db
+    .prepare("SELECT r2_key FROM draft_photos WHERE recipe_id = ? AND status = 'pending'")
+    .bind(id)
+    .all<{ r2_key: string }>();
+  const now = new Date().toISOString();
+  await ctx.db.batch([
+    ctx.db
+      .prepare(
+        "UPDATE recipes SET review_status = 'declined', review_note = ?, reviewed_at = ?, reviewed_by = ? WHERE id = ? AND owner_user_id IS NOT NULL AND submitted_at IS NOT NULL",
+      )
+      .bind(reason, now, ctx.actor, id),
+    ctx.db
+      .prepare("UPDATE recipe_locales SET status = 'rejected' WHERE recipe_id = ? AND status = 'draft'")
+      .bind(id),
+    ctx.db
+      .prepare("UPDATE draft_photos SET status = 'rejected', moderated_at = ?, moderated_by = ? WHERE recipe_id = ? AND status = 'pending'")
+      .bind(now, ctx.actor, id),
+    auditStmt(ctx, 'recipes.decline', id, { reason }),
+  ]);
+  if (ctx.images && pendingPhotos.results.length) {
+    await Promise.all(pendingPhotos.results.map((p) => ctx.images!.delete(p.r2_key).catch(() => {})));
+  }
+  const reviewNotice = await notifyAuthor(ctx, {
+    recipeId: id,
+    userId: target.ownerUserId,
+    lang: target.notifyLang,
+    kind: 'declined',
+    note: reason,
+  });
+  return {
+    status: 200,
+    data: { id, review_status: 'declined', review_note: reason, ...(reviewNotice ? { review_notice: reviewNotice } : {}) },
+  };
+}
+
 async function dispatch(ctx: CallCtx, name: string, args: Record<string, unknown>): Promise<CallResult> {
   switch (name) {
     case 'recipes.list':
       return callRecipesList(ctx.db, ctx.role, args);
     case 'recipes.get':
-      return callRecipesGet(ctx.db, args);
+      return callRecipesGet(ctx.db, ctx.role, args);
     case 'sources.list':
       return callSourcesList(ctx.db, ctx.role);
     case 'search.gap_logs':
@@ -1983,12 +2396,20 @@ async function dispatch(ctx: CallCtx, name: string, args: Record<string, unknown
       return callMarkReviewed(ctx, args);
     case 'recipes.publish':
       return callStatusChange(ctx, args, 'recipe', 'published');
+    case 'recipes.request_changes':
+      return callRequestChanges(ctx, args);
+    case 'recipes.decline':
+      return callDeclineRecipe(ctx, args);
     case 'recipes.unpublish':
       return callStatusChange(ctx, args, 'recipe', 'draft');
     case 'recipes.list_test_reports':
       return callListTestReports(ctx.db, args);
     case 'recipes.moderate_test_report':
       return callModerateTestReport(ctx, args);
+    case 'recipes.get_draft_photo':
+      return callGetDraftPhoto(ctx, args);
+    case 'recipes.moderate_draft_photo':
+      return callModerateDraftPhoto(ctx, args);
     case 'sources.update':
       return callSourcesUpdate(ctx, args);
     case 'sources.clear_rights':
@@ -2051,6 +2472,11 @@ async function handleRpc(c: Context<{ Bindings: McpBindings }>) {
     translationReviewEnabled: Boolean(c.env.MCP_TRANSLATION_REVIEW),
     images: c.env.IMAGES,
     geminiApiKey: c.env.GEMINI_API_KEY,
+    mailEnv: {
+      RESEND_API_KEY: c.env.RESEND_API_KEY,
+      RESEND_FROM: c.env.RESEND_FROM,
+      CANONICAL_ORIGIN: c.env.CANONICAL_ORIGIN,
+    },
   };
 
   // Write semantics are identical on both wire shapes: an explicit

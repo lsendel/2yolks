@@ -38,6 +38,14 @@ export const recipes = sqliteTable('recipes', {
   submittedAt: text('submitted_at'),
   attestedAt: text('attested_at'),
   authorName: text('author_name'),
+  reviewStatus: text('review_status', { enum: ['in_review', 'needs_changes', 'declined', 'published'] }),
+  reviewNote: text('review_note'),
+  reviewedAt: text('reviewed_at'),
+  reviewedBy: text('reviewed_by'),
+  removedByUserAt: text('removed_by_user_at'),
+  notifyLang: text('notify_lang'),
+  reviewNotice: text('review_notice', { enum: ['sent', 'skipped_budget', 'skipped_no_mail', 'failed'] }),
+  reviewNoticeAt: text('review_notice_at'),
 });
 
 /** Community kitchen-test reports (migration 0008). A report is a moderation
@@ -96,7 +104,7 @@ export const creatorSubscribers = sqliteTable('creator_subscribers', {
 
 export async function hasUserSharedRecipe(db: D1Database, userId: string): Promise<boolean> {
   const row = await db
-    .prepare('SELECT 1 AS ok FROM recipes WHERE owner_user_id = ? AND submitted_at IS NOT NULL LIMIT 1')
+    .prepare('SELECT 1 AS ok FROM recipes WHERE owner_user_id = ? AND (submitted_at IS NOT NULL OR review_status IS NOT NULL) LIMIT 1')
     .bind(userId)
     .first<{ ok: number }>();
   return row?.ok === 1;
@@ -124,6 +132,33 @@ export const recipeImages = sqliteTable(
     createdAt: text('created_at').notNull(),
   },
   (t) => [index('idx_recipe_images_recipe').on(t.recipeId)],
+);
+
+/** Optional contributor cover photo attached to a private draft (migration 0012). */
+export const draftPhotos = sqliteTable(
+  'draft_photos',
+  {
+    id: text('id').primaryKey(),
+    recipeId: text('recipe_id')
+      .notNull()
+      .references(() => recipes.id),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id),
+    r2Key: text('r2_key').notNull(),
+    mime: text('mime', { enum: ['image/jpeg', 'image/png', 'image/webp'] }).notNull(),
+    bytes: integer('bytes').notNull(),
+    width: integer('width').notNull(),
+    height: integer('height').notNull(),
+    status: text('status', { enum: ['pending', 'approved', 'rejected'] })
+      .notNull()
+      .default('pending'),
+    createdAt: text('created_at').notNull(),
+    moderatedAt: text('moderated_at'),
+    moderatedBy: text('moderated_by'),
+    imageId: text('image_id'),
+  },
+  (t) => [index('idx_draft_photos_user').on(t.userId, t.status)],
 );
 
 export const recipeLocales = sqliteTable(
@@ -179,7 +214,7 @@ export const searchGapLogs = sqliteTable(
 );
 
 export function createDb(d1: D1Database) {
-  return drizzle(d1, { schema: { users, sources, recipes, recipeLocales, recipeImages, recipeSlugAliases, searchGapLogs, recipeTestReports } });
+  return drizzle(d1, { schema: { users, creatorSubscribers, sources, recipes, recipeLocales, recipeImages, draftPhotos, recipeSlugAliases, searchGapLogs, recipeTestReports } });
 }
 
 const DEMO_LICENSE = 'internal-demo';

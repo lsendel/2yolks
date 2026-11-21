@@ -56,6 +56,8 @@ export interface AiFollowUpQuestion {
   question: string;
   field: 'ingredients' | 'steps' | 'servings' | 'prepMinutes' | 'cookMinutes';
   quickChoices: string[];
+  /** Existing ingredient line a quick choice should replace (instead of appending a duplicate). */
+  target?: string;
 }
 
 export interface AiAssistResult {
@@ -437,9 +439,8 @@ export function assistRecipeDeterministic(req: AiAssistRequest): AiAssistResult 
     if (servMatch) servings = Number(servMatch[1]);
   }
 
-  if (!title) {
-    title = lang === 'es' ? 'Receta de casa' : lang === 'fr' ? 'Recette maison' : 'Home Kitchen Recipe';
-  }
+  // No invented placeholder title ("Home Kitchen Recipe"): an empty title
+  // leaves whatever the cook typed in the form untouched.
 
   const improvements: string[] = [];
   if (splitCount > 0) {
@@ -500,6 +501,7 @@ export function assistRecipeDeterministic(req: AiAssistRequest): AiAssistResult 
             ? `Quelle quantité approximative utilisez-vous pour « ${sample} » ?`
             : `Roughly how much "${sample}" should a cook measure out?`,
       quickChoices: [`1 tsp ${sample}`, `100 g ${sample}`, `2 ${sample}`],
+      target: sample,
     });
   }
 
@@ -718,12 +720,42 @@ export async function translateStructuredRecipeWithGemini(
   throw new Error('Unreachable translation failure');
 }
 
+/**
+ * Thrown when a request needs something the deterministic fallback cannot do
+ * honestly: translating ('translate') or reading a photo/voice note with no
+ * typed text alongside it ('media') without GEMINI_API_KEY, or a translate
+ * request with nothing to translate ('empty').
+ */
+export class AiUnavailableError extends Error {
+  constructor(readonly reason: 'translate' | 'media' | 'empty') {
+    super(`AI unavailable: ${reason}`);
+    this.name = 'AiUnavailableError';
+  }
+}
+
+const hasTypedContent = (req: AiAssistRequest): boolean =>
+  !!req.notes?.trim() || (req.draft?.ingredients ?? []).some((x) => x.trim()) || (req.draft?.steps ?? []).some((x) => x.trim());
+
+/**
+ * What the no-key fallback cannot honestly do for this request (null = it can).
+ * The route checks this BEFORE spending AI budget so the user gets a clear
+ * "not available" message instead of a fake success.
+ */
+export function aiUnavailableReason(req: AiAssistRequest, apiKey?: string): 'translate' | 'media' | null {
+  if (apiKey?.trim()) return null;
+  if (req.mode === 'translate') return 'translate';
+  if ((req.image || req.audio) && !hasTypedContent(req)) return 'media';
+  return null;
+}
+
 export async function assistRecipe(
   req: AiAssistRequest,
   opts: { apiKey?: string; fetchImpl?: typeof fetch } = {},
 ): Promise<AiAssistResult> {
   const apiKey = opts.apiKey?.trim();
   const fetchImpl = opts.fetchImpl ?? fetch;
+  const unavailable = aiUnavailableReason(req, apiKey);
+  if (unavailable) throw new AiUnavailableError(unavailable);
   if (req.mode === 'translate') {
     const targetRaw = req.targetLocale || req.recipeLocale || 'us:es';
     const targetLang = (targetRaw.split(':')[1] || req.uiLang || 'es').slice(0, 2);
@@ -767,7 +799,8 @@ export async function assistRecipe(
         followUpQuestions: [],
       };
     }
-    return assistRecipeDeterministic({ ...req, mode: 'polish', uiLang: dstLang });
+    // Never pretend: a "translation" that only re-polished the source text is not a translation.
+    throw new AiUnavailableError('empty');
   }
   if (apiKey) {
     return assistRecipeWithGemini(req, apiKey, fetchImpl);

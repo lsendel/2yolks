@@ -167,10 +167,16 @@ describe('email-code auth', () => {
     expect((await post('/account/recipes/save', recipeForm(), { cookie, origin: 'https://evil.example' })).status).toBe(403);
     expect((await post('/account/logout', {}, { cookie, origin: 'https://evil.example' })).status).toBe(403);
   });
-  it('requires a session for recipe routes', async () => {
-    expect((await get('/account/recipes/new')).status).toBe(303);
-    expect((await post('/account/recipes/save', recipeForm())).status).toBe(303);
+  it('allows anonymous capture preview while requiring a session for private recipe routes', async () => {
+    expect((await get('/account/recipes/new')).status).toBe(200);
+    const editRes = await get('/account/recipes/abc123/edit');
+    expect(editRes.status).toBe(303);
+    expect(editRes.headers.get('location')).toBe('/account?next=%2Faccount%2Frecipes%2Fabc123%2Fedit');
+    const saveRes = await post('/account/recipes/save', recipeForm());
+    expect(saveRes.status).toBe(303);
+    expect(saveRes.headers.get('location')).toBe('/account?next=%2Faccount%2Frecipes%2Fnew');
     expect((await post('/account/recipes/import', { url: 'https://example.com' })).status).toBe(303);
+    expect((await post('/account/recipes/save', recipeForm(), { origin: ORIGIN, e: {}, cookie: undefined })).status).toBe(303);
   });
 });
 
@@ -617,7 +623,7 @@ describe('account i18n (en/es/fr)', () => {
     expect(es).toContain('Aún no lo sé');
     expect(es).toContain('Una o dos frases antes de la receta');
     // recipe data locale untouched by the UI language: still defaults to us:en
-    expect(es).toContain('<select name="locale">');
+    expect(es).toMatch(/<select name="locale"[^>]*>/);
     expect(es).toMatch(/<option value="us:en"[^>]*selected/);
     const fr = await (await get('/account/recipes/new?lang=fr', cookie)).text();
     expect(fr).toContain('<span data-category-prompt>Quel type de plat est-ce ?</span>');
@@ -899,5 +905,304 @@ describe('community kitchen-test reports', () => {
     });
     expect(safeRedir.status).toBe(303);
     expect(safeRedir.headers.get('location')).toBe('/account');
+  });
+});
+
+describe('share flow: one clear finish (attest + send in one POST)', () => {
+  const idFrom = (loc: string) => /recipes\/([a-z0-9]+)\/edit/.exec(loc)![1]!;
+  it('a new recipe with the permission box ticked is saved and sent in with one POST', async () => {
+    const cookie = await signIn();
+    const before = sent.length;
+    const res = await post('/account/recipes/save', recipeForm({ intent: 'submit' }), { cookie });
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('Thanks, it is with us');
+    expect(html).toMatch(/data-capture-clear="[a-z0-9]+"/); // device autosave copy is dropped
+    const row = await DB.prepare('SELECT r.attested_at AS a, r.submitted_at AS s, l.status AS st FROM recipes r JOIN recipe_locales l ON l.recipe_id = r.id').first<Record<string, unknown>>();
+    expect(row!['a']).toBeTruthy();
+    expect(row!['s']).toBeTruthy();
+    expect(row!['st']).toBe('draft'); // never published by a submit
+    expect(sent.length).toBe(before + 1);
+    expect(sent[sent.length - 1]!.to).toEqual(['owner@example.com']);
+  });
+  it('send without the permission box: refused inline next to the box, nothing saved or sent', async () => {
+    const cookie = await signIn();
+    const before = sent.length;
+    const res = await post('/account/recipes/save', recipeForm({ attest: '', intent: 'submit' }), { cookie });
+    expect(res.status).toBe(400);
+    const html = await res.text();
+    expect(html).toContain('<title>Share a recipe - 2yolks</title>');
+    expect(html).toMatch(/<input type="checkbox" name="attest" value="1" id="f-attest"[^>]*aria-invalid="true" aria-describedby="err-attest"/);
+    expect(html).toContain('<p class="field-err" id="err-attest">Tick the permission box to send this recipe in for review.</p>');
+    expect(html).toContain('<a href="#f-attest">'); // summary links to the field
+    expect(html).toContain('value="Abuela Soup"'); // what was typed is kept
+    expect((await DB.prepare('SELECT count(*) AS n FROM recipes').first<{ n: number }>())!.n).toBe(0);
+    expect(sent.length).toBe(before);
+  });
+  it('an existing unattested draft: the edit page offers the box beside an enabled send button, and one POST finishes', async () => {
+    const cookie = await signIn();
+    const saved = await post('/account/recipes/save', recipeForm({ attest: '' }), { cookie });
+    const id = idFrom(saved.headers.get('location')!);
+    const edit = await (await get(`/account/recipes/${id}/edit`, cookie)).text();
+    expect(edit).not.toContain('Tick the permission box above and save first');
+    expect(edit).not.toMatch(/<button[^>]*disabled[^>]*>Send in for review/);
+    const finish = edit.slice(edit.indexOf('data-finish'), edit.indexOf('</form>', edit.indexOf('data-finish')));
+    expect(finish).toContain('name="attest"');
+    expect(finish).toContain('name="intent" value="submit"');
+    expect(finish).toContain('name="intent" value="save"');
+    // Save comes first in DOM order so Enter in a text field never sends anything in.
+    expect(finish.indexOf('value="save"')).toBeLessThan(finish.indexOf('value="submit"'));
+    expect(edit).toContain(`/account/recipes/${id}/delete`);
+    const res = await post('/account/recipes/save', { ...recipeForm({ intent: 'submit' }), id }, { cookie });
+    expect(res.status).toBe(200);
+    const row = await DB.prepare('SELECT attested_at AS a, submitted_at AS s FROM recipes WHERE id = ?').bind(id).first<Record<string, unknown>>();
+    expect(row!['a']).toBeTruthy();
+    expect(row!['s']).toBeTruthy();
+  });
+  it('the submit route records a ticked attestation and submits; without it the submit is still refused', async () => {
+    const cookie = await signIn();
+    const a = idFrom((await post('/account/recipes/save', recipeForm({ attest: '' }), { cookie })).headers.get('location')!);
+    expect((await post(`/account/recipes/${a}/submit`, {}, { cookie })).status).toBe(409);
+    expect((await DB.prepare('SELECT submitted_at AS s FROM recipes WHERE id = ?').bind(a).first<{ s: string | null }>())!.s).toBeNull();
+    const ok = await post(`/account/recipes/${a}/submit`, { attest: '1' }, { cookie });
+    expect(ok.status).toBe(200);
+    const row = await DB.prepare('SELECT attested_at AS at, submitted_at AS s FROM recipes WHERE id = ?').bind(a).first<Record<string, unknown>>();
+    expect(row!['at']).toBeTruthy();
+    expect(row!['s']).toBeTruthy();
+  });
+  it('validation errors on an existing draft keep the Edit title, the finish panel and the remove button, with inline errors', async () => {
+    const cookie = await signIn();
+    const id = idFrom((await post('/account/recipes/save', recipeForm(), { cookie })).headers.get('location')!);
+    const res = await post('/account/recipes/save', { ...recipeForm({ ingredients: '', prep: 'abc' }), id }, { cookie });
+    expect(res.status).toBe(400);
+    const html = await res.text();
+    expect(html).toContain('<title>Edit your draft - 2yolks</title>');
+    expect(html).toContain('<h1>Edit your draft</h1>');
+    expect(html).toContain('name="intent" value="submit"');
+    expect(html).toContain(`/account/recipes/${id}/delete`);
+    expect(html).toMatch(/<textarea name="ingredients" id="f-ingredients" required aria-invalid="true" aria-describedby="err-ingredients">/);
+    expect(html).toContain('<p class="field-err" id="err-ingredients">Add at least one ingredient, one per line.</p>');
+    expect(html).toMatch(/name="prep" id="f-prep"[^>]*aria-invalid="true" aria-describedby="err-prep"/);
+    expect(html).toContain('id="err-prep"');
+    // the summary stays at the top too
+    expect(html).toContain('Fix these first:');
+  });
+  it('shows every problem at once: author, https link and validator errors each next to their field', async () => {
+    const cookie = await signIn();
+    const res = await post('/account/recipes/save', recipeForm({ display_name: '', source_kind: 'adapted', source_url: 'http://nope', title: '' }), { cookie });
+    expect(res.status).toBe(400);
+    const html = await res.text();
+    for (const f of ['display_name', 'source_url', 'title']) {
+      expect(html, f).toContain(`aria-describedby="err-${f}"`);
+      expect(html, f).toContain(`id="err-${f}"`);
+    }
+    // one message per control: the validator's duplicate for the https link is folded away
+    expect(html.match(/id="err-source_url">[^<]*</)![0]).toBe('id="err-source_url">Adapted recipes need an https:// link to the original.<');
+  });
+  it('a rate-limited save re-renders what was typed instead of a blank form', async () => {
+    const cookie = await signIn();
+    const rl = { limit: async () => ({ success: false }) };
+    const res = await post('/account/recipes/save', recipeForm({ title: 'Keep Me Soup' }), { cookie, e: { RL_SUBMIT: rl } });
+    expect(res.status).toBe(429);
+    expect(await res.text()).toContain('value="Keep Me Soup"');
+  });
+  it('marks prep/cook as optional, wraps the original link for progressive hiding, and labels the AI status as a live region', async () => {
+    const cookie = await signIn();
+    for (const [lang, opt] of [['en', '(optional)'], ['es', '(opcional)'], ['fr', '(facultatif)']] as const) {
+      const html = await (await get(`/account/recipes/new?lang=${lang}`, cookie)).text();
+      expect(html).toMatch(new RegExp(`name="prep"`));
+      const prepLabel = html.slice(html.lastIndexOf('<label>', html.indexOf('name="prep"')), html.indexOf('name="prep"'));
+      expect(prepLabel, lang).toContain(`<small>${opt}</small>`);
+      const cookLabel = html.slice(html.lastIndexOf('<label>', html.indexOf('name="cook"')), html.indexOf('name="cook"'));
+      expect(cookLabel, lang).toContain(`<small>${opt}</small>`);
+      // visible without JS (no hidden attribute server-side); the script hides it unless "adapted"
+      expect(html).toContain('<div class="field" data-source-link><label>');
+      expect(html).toContain('<div data-ai-status role="status" aria-live="polite" hidden></div>');
+    }
+  });
+  it('the photo hint tells the truth: sent to Google Gemini to read, not kept by 2yolks (en/es/fr)', async () => {
+    const cookie = await signIn();
+    for (const lang of ['en', 'es', 'fr']) {
+      const html = await (await get(`/account/recipes/new?lang=${lang}`, cookie)).text();
+      expect(html, lang).toContain('Gemini');
+      expect(html, lang).not.toMatch(/never stored on third-party|nunca se almacena en servidores externos|jamais conservée par des tiers/);
+    }
+  });
+});
+
+describe('sign-in code budget override (CODES_PER_DAY)', () => {
+  it('parses the env var: positive integers only, clamped, default 32', async () => {
+    const { codesPerDay, CODES_PER_DAY, MAX_CODES_PER_DAY } = await import('./account');
+    expect(CODES_PER_DAY).toBe(32);
+    expect(codesPerDay({})).toBe(32);
+    expect(codesPerDay({ CODES_PER_DAY: '' })).toBe(32);
+    expect(codesPerDay({ CODES_PER_DAY: '0' })).toBe(32);
+    expect(codesPerDay({ CODES_PER_DAY: '-5' })).toBe(32);
+    expect(codesPerDay({ CODES_PER_DAY: '12.5' })).toBe(32);
+    expect(codesPerDay({ CODES_PER_DAY: 'lots' })).toBe(32);
+    expect(codesPerDay({ CODES_PER_DAY: ' 64 ' })).toBe(64);
+    expect(codesPerDay({ CODES_PER_DAY: '5000' })).toBe(MAX_CODES_PER_DAY);
+    expect(MAX_CODES_PER_DAY).toBe(1000);
+  });
+  it('the /account/code route spends against the overridden budget', async () => {
+    const e = { CODES_PER_DAY: '2' };
+    expect((await post('/account/code', { email: 'one@example.com' }, { e })).status).toBe(200);
+    expect((await post('/account/code', { email: 'two@example.com' }, { e })).status).toBe(200);
+    expect((await post('/account/code', { email: 'three@example.com' }, { e })).status).toBe(503);
+    // a higher override lets the next one through
+    expect((await post('/account/code', { email: 'three@example.com' }, { e: { CODES_PER_DAY: '40' } })).status).toBe(200);
+  });
+});
+
+describe('validator paths map to form controls', () => {
+  it('maps contracts paths (and times messages) to field names', async () => {
+    const { fieldForValidatorPath: f } = await import('./account');
+    expect(f('locales[0].title', 'x')).toBe('title');
+    expect(f('locales[0].slug', 'x')).toBe('title');
+    expect(f('locales[0].ingredients', 'x')).toBe('ingredients');
+    expect(f('locales[0].steps', 'x')).toBe('steps');
+    expect(f('locales[0].intro', 'x')).toBe('intro');
+    expect(f('times', 'prepMinutes must be an integer')).toBe('prep');
+    expect(f('times', 'cookMinutes must be an integer')).toBe('cook');
+    expect(f('times', 'baseServings must be a number')).toBe('servings');
+    expect(f('times', 'totalMinutes must be at least 1')).toBeUndefined();
+    expect(f('source.url', 'x')).toBe('source_url');
+    expect(f('source.name', 'x')).toBe('display_name');
+    expect(f('originCountry', 'x')).toBe('locale');
+    expect(f('locales[0].lang', 'x')).toBe('locale');
+    expect(f('category', 'x')).toBe('category');
+    expect(f('locales', 'x')).toBeUndefined();
+  });
+});
+
+describe('Phase 2 share capture: draft-first, return-to, JSON auth & in-page paste', () => {
+  it('safeNextPath rejects open-redirect vectors and allows only clean /account/ paths', async () => {
+    const { safeNextPath } = await import('./account');
+    expect(safeNextPath('/account')).toBe('/account');
+    expect(safeNextPath('/account/subscribers')).toBe('/account/subscribers');
+    expect(safeNextPath('/account/recipes/new')).toBe('/account/recipes/new');
+    expect(safeNextPath('/account/recipes/abc123/edit')).toBe('/account/recipes/abc123/edit');
+    expect(safeNextPath('/account/recipes/rp1/test-report')).toBe('/account/recipes/rp1/test-report');
+    for (const bad of [
+      null, undefined, '', '/account/', '/recipes/new',
+      '//evil.example/account/recipes/new', '/account//recipes/new',
+      '/account/\\evil', 'https://evil.example/account/recipes/new',
+      '/account/recipes/../admin', '/account/recipes/new?x=1',
+      '/account/recipes/new#frag', '/account/recipes/%2e%2e/x',
+      '/account/recipes/new\nSet-Cookie: a=b', `/account/${'a'.repeat(160)}`,
+    ]) {
+      expect(safeNextPath(bad), String(bad)).toBeNull();
+    }
+  });
+
+  it('serves the full capture form anonymously without creating DB rows or exposing AI controls', async () => {
+    for (const [lang, heading] of [['en', 'Share a recipe'], ['es', 'Comparte una receta'], ['fr', 'Partager une recette']] as const) {
+      const res = await get(`/account/recipes/new?lang=${lang}`);
+      expect(res.status, lang).toBe(200);
+      const html = await res.text();
+      expect(html, lang).toContain(`<h1>${heading}</h1>`);
+      expect(html, lang).toContain('data-signed-in="0"');
+      expect(html, lang).toContain('data-start-tiles');
+      expect(html, lang).toContain('data-live-preview');
+      expect(html, lang).toContain('data-inline-auth');
+      expect((html.match(/class="form-step"/g) ?? []).length).toBe(5);
+      const markupOnly = html.slice(html.indexOf('<main'), html.indexOf('<script type="application/json"'));
+      expect(markupOnly).not.toContain('data-ai-panel');
+      expect(markupOnly).not.toContain('data-ai-photo');
+      expect(markupOnly).toContain('data-draft-photo-input');
+    }
+    for (const table of ['recipes', 'users', 'sessions']) {
+      expect((await DB.prepare(`SELECT count(*) AS n FROM ${table}`).first<{ n: number }>())!.n).toBe(0);
+    }
+  });
+
+  it('allows anonymous parse-only paste in both JSON and HTML modes while enforcing RL_SUBMIT', async () => {
+    const jsonRes = await app.request(`${ORIGIN}/account/recipes/paste`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json', origin: ORIGIN },
+      body: new URLSearchParams({ text: 'Salsa Roja\nIngredients\n4 tomatoes\n2 chiles\nInstructions\nChar and blend.' }).toString(),
+    }, env());
+    expect(jsonRes.status).toBe(200);
+    const body = (await jsonRes.json()) as { ok: boolean; parsed: Record<string, string>; warnings: string[] };
+    expect(body.ok).toBe(true);
+    expect(body.parsed['title']).toBe('Salsa Roja');
+    expect(body.parsed['ingredients']).toBe('4 tomatoes\n2 chiles');
+    expect(body.parsed['steps']).toBe('Char and blend.');
+    expect(body.warnings).toEqual([]);
+    expect((await DB.prepare('SELECT count(*) AS n FROM recipes').first<{ n: number }>())!.n).toBe(0);
+
+    const limitedRes = await app.request(`${ORIGIN}/account/recipes/paste`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json', origin: ORIGIN },
+      body: 'text=hi',
+    }, env({ RL_SUBMIT: { limit: async () => ({ success: false }) } }));
+    expect(limitedRes.status).toBe(429);
+  });
+
+  it('HTML ?next= preserves return-to through sign-in and drops unsafe targets', async () => {
+    const signPage = await (await get('/account?next=%2Faccount%2Frecipes%2Fnew&lang=es')).text();
+    expect(signPage).toContain('name="next" value="/account/recipes/new"');
+    expect(signPage).toContain('href="/account?lang=fr&amp;next=%2Faccount%2Frecipes%2Fnew"');
+
+    const codePage = await post('/account/code?lang=es', { email: 'ret@example.com', next: '/account/recipes/new' });
+    expect(codePage.status).toBe(200);
+    expect(await codePage.text()).toContain('name="next" value="/account/recipes/new"');
+    const esCode = /\b(\d{6})\b/.exec(sent[sent.length - 1]!.text)![1]!;
+
+    const ver = await post('/account/verify?lang=es', { email: 'ret@example.com', code: esCode, next: '/account/recipes/new' });
+    expect(ver.status).toBe(303);
+    expect(ver.headers.get('location')).toBe('/account/recipes/new?lang=es');
+    const cookie = ver.headers.get('set-cookie')!.split(';')[0]!;
+
+    // Already signed in visiting /account?next=... jumps directly; evil next is ignored
+    const bounce = await get('/account?next=%2Faccount%2Frecipes%2Fnew', cookie);
+    expect(bounce.status).toBe(303);
+    expect(bounce.headers.get('location')).toBe('/account/recipes/new');
+
+    const evil = await post('/account/verify', { email: 'ret@example.com', code: '123456', next: '//evil.example' });
+    expect(evil.status).toBe(400);
+    const evilVer = await get('/account?next=%2F%2Fevil.example', cookie);
+    expect(evilVer.status).toBe(200);
+  });
+
+  it('JSON /account/code and /account/verify issue the session cookie for inline auth', async () => {
+    const bad = await app.request(`${ORIGIN}/account/code`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json', origin: ORIGIN },
+      body: JSON.stringify({ email: 'not-an-email' }),
+    }, env());
+    expect(bad.status).toBe(400);
+    expect(((await bad.json()) as { ok: boolean }).ok).toBe(false);
+
+    const okCode = await app.request(`${ORIGIN}/account/code`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json', origin: ORIGIN },
+      body: JSON.stringify({ email: 'inline@example.com', next: '/account/recipes/new' }),
+    }, env());
+    expect(okCode.status).toBe(200);
+    expect(((await okCode.json()) as { ok: boolean; email: string }).email).toBe('inline@example.com');
+
+    const wrong = await app.request(`${ORIGIN}/account/verify`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json', origin: ORIGIN },
+      body: JSON.stringify({ email: 'inline@example.com', code: '000000' }),
+    }, env());
+    expect(wrong.status).toBe(400);
+
+    const okVer = await app.request(`${ORIGIN}/account/verify`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json', origin: ORIGIN },
+      body: JSON.stringify({ email: 'inline@example.com', code: lastCode(), next: '/account/recipes/new' }),
+    }, env());
+    expect(okVer.status).toBe(200);
+    const vBody = (await okVer.json()) as { ok: boolean; next: string };
+    expect(vBody.ok).toBe(true);
+    expect(vBody.next).toBe('/account/recipes/new');
+    const cookie = okVer.headers.get('set-cookie')!.split(';')[0]!;
+    expect(cookie).toMatch(/__Host-2y_sid=[0-9a-f]{64}/);
+
+    const saved = await post('/account/recipes/save', recipeForm({ intent: 'submit' }), { cookie });
+    expect(saved.status).toBe(200);
+    expect(await saved.text()).toContain('Thanks, it is with us');
   });
 });

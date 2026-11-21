@@ -5,24 +5,27 @@
  */
 
 export const THEME_CLIENT_SCRIPT = `(function () {
-  var btn = document.querySelector('[data-theme-toggle]');
-  if (!btn) return;
-  btn.addEventListener('click', function () {
-    var root = document.documentElement;
-    var cur = root.getAttribute('data-theme');
-    var next = cur === 'dark' ? 'light' : 'dark';
-    root.setAttribute('data-theme', next);
-    try { localStorage.setItem('2y-theme', next); } catch (e) {}
+  var btns = Array.prototype.slice.call(document.querySelectorAll('[data-theme-toggle]'));
+  if (!btns.length) return;
+  btns.forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var root = document.documentElement;
+      var cur = root.getAttribute('data-theme');
+      var next = cur === 'dark' ? 'light' : 'dark';
+      root.setAttribute('data-theme', next);
+      try { localStorage.setItem('2y-theme', next); } catch (e) {}
+    });
   });
 })();`;
 
 export const DISCOVERY_CLIENT_SCRIPT = `(function () {
   var lists = Array.prototype.slice.call(document.querySelectorAll('[data-recipe-list]'));
-  var list = lists[0];
+  var list = lists[0] || document.querySelector('[data-recipe-list]');
   var groups = Array.prototype.slice.call(document.querySelectorAll('[data-recipe-group]'));
+  var viewBtns = Array.prototype.slice.call(document.querySelectorAll('[data-view-btn]'));
   function setView(mode) {
     var v = mode === 'grid' ? 'grid' : 'list';
-    lists.forEach(function (l) { l.setAttribute('data-view', v); });
+    (lists.length ? lists : (list ? [list] : [])).forEach(function (l) { l.setAttribute('data-view', v); });
     viewBtns.forEach(function (b) {
       b.setAttribute('aria-pressed', b.getAttribute('data-view-btn') === v ? 'true' : 'false');
     });
@@ -90,19 +93,24 @@ export const DISCOVERY_CLIENT_SCRIPT = `(function () {
     return v;
   }
 
-  function matchTokenInText(tok, text) {
+  // Typo tolerance is deliberately narrow: one edit for 5-7 letter words, two
+  // for 8+, and only against whole words of similar length. Fuzzy matching is
+  // a fallback pass (see filterRecipes), never mixed into exact results, so
+  // "pasta" cannot surface Mulled Wine via "taste".
+  function matchTokenInText(tok, text, fuzzy) {
     if (!tok || !text) return false;
     if (text.indexOf(tok) !== -1) return true;
     var vars = getVariants(tok);
     for (var i = 0; i < vars.length; i++) {
       if (text.indexOf(vars[i]) !== -1) return true;
     }
-    if (tok.length >= 5) {
+    if (fuzzy && tok.length >= 5) {
+      var maxD = tok.length >= 8 ? 2 : 1;
       var words = text.split(/[^a-z0-9]+/);
       for (var i = 0; i < words.length; i++) {
         var w = words[i];
-        if (w.length >= 4 && Math.abs(w.length - tok.length) <= 2) {
-          if (editDist(tok, w) <= 2) return true;
+        if (w.length >= 4 && Math.abs(w.length - tok.length) <= maxD) {
+          if (editDist(tok, w) <= maxD) return true;
         }
       }
     }
@@ -128,6 +136,7 @@ export const DISCOVERY_CLIENT_SCRIPT = `(function () {
       el: li,
       parent: li.parentNode,
       idx: idx,
+      display: (li.getAttribute('data-title') || (li.querySelector('h3') ? li.querySelector('h3').textContent : '') || '').trim(),
       title: title,
       cat: cat,
       body: body,
@@ -162,9 +171,48 @@ export const DISCOVERY_CLIENT_SCRIPT = `(function () {
     } catch (e) {}
   }
 
+  var statusEl = document.querySelector('[data-search-status]');
+  var filterEmptyEl = document.querySelector('[data-filter-empty]');
+  var searchAllLink = document.querySelector('[data-search-all]');
+  function announce(n, q) {
+    if (!statusEl) return;
+    if (!q) { statusEl.textContent = ''; return; }
+    var tmpl = n === 1 ? (statusEl.getAttribute('data-one') || '1 recipe') : (statusEl.getAttribute('data-many') || '{n} recipes');
+    statusEl.textContent = tmpl.replace('{n}', String(n));
+  }
+
+  function runPass(tokens, fuzzy) {
+    var matched = [];
+    records.forEach(function (rec) {
+      var titleMatchesAll = true;
+      var categoryMatchesAny = false;
+      for (var i = 0; i < tokens.length; i++) {
+        var tok = tokens[i];
+        var inTitle = matchTokenInText(tok, rec.title, fuzzy);
+        var inCat = matchTokenInText(tok, rec.cat, fuzzy);
+        // Intros/ingredients are long free text: exact (plural-aware) only.
+        var inBody = matchTokenInText(tok, rec.body, false);
+        if (!inTitle && !inCat && !inBody) return;
+        if (!inTitle) titleMatchesAll = false;
+        if (inCat) categoryMatchesAny = true;
+      }
+      matched.push({ rec: rec, tier: titleMatchesAll ? 1 : (categoryMatchesAny ? 2 : 3) });
+    });
+    return matched;
+  }
+
   function filterRecipes() {
     var rawQ = (input.value || '').trim();
     var q = norm(rawQ);
+    if (filterEmptyEl) filterEmptyEl.hidden = Boolean(q);
+    if (searchAllLink) {
+      try {
+        var su = new URL(searchAllLink.getAttribute('data-base') || '/', window.location.href);
+        if (rawQ) su.searchParams.set('q', rawQ); else su.searchParams.delete('q');
+        su.hash = 'recipes';
+        searchAllLink.setAttribute('href', su.pathname + su.search + su.hash);
+      } catch (e) {}
+    }
     if (!q) {
       if (closestNote) closestNote.hidden = true;
       if (emptyEl) emptyEl.hidden = true;
@@ -172,50 +220,27 @@ export const DISCOVERY_CLIENT_SCRIPT = `(function () {
         r.el.hidden = false;
         var num = r.el.querySelector('.recipe-number');
         if (num) num.textContent = (r.idx + 1 < 10 ? '0' : '') + (r.idx + 1);
-        (r.parent || list).appendChild(r.el);
+        var dest = r.parent || list;
+        if (dest) dest.appendChild(r.el);
       });
       groups.forEach(function (g) { g.hidden = false; });
+      announce(0, '');
       return;
     }
 
     var tokens = q.split(/\\s+/);
-    var matched = [];
-    var strictCount = 0;
-
-    records.forEach(function (rec) {
-      var allTokensMatch = true;
-      var titleMatchesAll = true;
-      var categoryMatchesAny = false;
-      var isStrictMatch = true;
-
-      for (var i = 0; i < tokens.length; i++) {
-        var tok = tokens[i];
-        var inTitle = matchTokenInText(tok, rec.title);
-        var inCat = matchTokenInText(tok, rec.cat);
-        var inBody = matchTokenInText(tok, rec.body);
-        if (!inTitle && !inCat && !inBody) {
-          allTokensMatch = false;
-          break;
-        }
-        if (!inTitle) titleMatchesAll = false;
-        if (inCat) categoryMatchesAny = true;
-
-        if (!strictMatchToken(tok, rec.all)) {
-          isStrictMatch = false;
-        }
-      }
-
-      if (allTokensMatch) {
-        var tier = titleMatchesAll ? 1 : (categoryMatchesAny ? 2 : 3);
-        if (isStrictMatch) strictCount++;
-        matched.push({ rec: rec, tier: tier });
-      }
-    });
+    var matched = runPass(tokens, false);
+    var usedFuzzy = false;
+    if (matched.length === 0) {
+      matched = runPass(tokens, true);
+      usedFuzzy = matched.length > 0;
+    }
+    announce(matched.length, q);
 
     if (matched.length > 0) {
       if (emptyEl) emptyEl.hidden = true;
       if (closestNote) {
-        closestNote.hidden = (strictCount > 0);
+        closestNote.hidden = !usedFuzzy;
       }
       matched.sort(function (a, b) {
         if (a.tier !== b.tier) return a.tier - b.tier;
@@ -264,7 +289,7 @@ export const DISCOVERY_CLIENT_SCRIPT = `(function () {
               var link = s.rec.el.querySelector('h3 a');
               var li = document.createElement('li');
               var a = document.createElement('a');
-              a.textContent = s.rec.title;
+              a.textContent = s.rec.display || s.rec.title;
               if (link) a.href = link.href;
               li.appendChild(a);
               suggestionsList.appendChild(li);
@@ -286,6 +311,8 @@ export const DISCOVERY_CLIENT_SCRIPT = `(function () {
       input.value = initQ;
       filterRecipes();
     }
+    // The header search link lands on /#search: focus the box for typing.
+    if (window.location.hash === '#search') input.focus({ preventScroll: true });
   } catch (e) {}
 
   input.addEventListener('input', function () {
@@ -604,13 +631,160 @@ export const RECIPE_CLIENT_SCRIPT = `(function () {
 })();`;
 
 /**
- * Live quality checks + optional AI Kitchen Co-Editor on the capture form.
- * Nothing here gates saving - the server still validates.
+ * Live quality checks + optional AI Kitchen Co-Editor on the capture form,
+ * plus on-device autosave/restore of the draft. Nothing here gates saving -
+ * the server still validates (and enforces the rights attestation).
  * Strings are localized en/es/fr and follow the form's UI language.
  */
-export const CAPTURE_CHECK_STRINGS = `{"en":{"title":"Give the recipe a name","ingredients":"List the ingredients, one per line","qty_ok":"Every ingredient line starts with an amount","cups_ok":"No ambiguous cup measures","qty_todo":"## ingredient line(s) do not start with an amount - cooks need quantities","cups_todo":"You use \\"cup\\" - cups vary by country, so consider grams or ml too","steps":"Write the steps, one per line","servings_ok":"Servings (optional) should be a number","servings_bad":"Servings should be a number","source_ok":"Source noted","source_todo":"Add the https:// link to the original","optional":"optional"},"es":{"title":"Ponle un nombre a la receta","ingredients":"Anota los ingredientes, uno por línea","qty_ok":"Cada línea de ingrediente empieza con una cantidad","cups_ok":"Sin medidas ambiguas en tazas","qty_todo":"## línea(s) de ingredientes no empiezan con cantidad - hacen falta cantidades","cups_todo":"Usas \\"taza\\" - las tazas varían por país, considera también gramos o ml","steps":"Escribe los pasos, uno por línea","servings_ok":"Las porciones (opcional) deben ser un número","servings_bad":"Las porciones deben ser un número","source_ok":"Fuente anotada","source_todo":"Agrega el enlace https:// al original","optional":"opcional"},"fr":{"title":"Donnez un nom à la recette","ingredients":"Listez les ingrédients, un par ligne","qty_ok":"Chaque ligne d'ingrédient commence par une quantité","cups_ok":"Pas de mesures ambiguës en tasses","qty_todo":"## ligne(s) d'ingrédients ne commencent pas par une quantité - il faut des quantités","cups_todo":"Vous utilisez \\"tasse\\" - les tasses varient selon les pays, pensez aussi aux grammes ou ml","steps":"Écrivez les étapes, une par ligne","servings_ok":"Les portions (facultatif) doivent être un nombre","servings_bad":"Les portions doivent être un nombre","source_ok":"Source notée","source_todo":"Ajoutez le lien https:// vers l'original","optional":"facultatif"}}`;
+const CAPTURE_CHECK_STRINGS_DATA: Record<'en' | 'es' | 'fr', Record<string, string>> = {
+  en: {
+    title: 'Give the recipe a name',
+    ingredients: 'List the ingredients, one per line',
+    qty_ok: 'Every ingredient line starts with an amount',
+    cups_ok: 'No ambiguous cup measures',
+    qty_todo: '## ingredient line(s) do not start with an amount - cooks need quantities',
+    cups_todo: 'You use "cup" - cups vary by country, so consider grams or ml too',
+    steps: 'Write the steps, one per line',
+    servings_ok: 'Servings (optional) should be a number',
+    servings_bad: 'Servings should be a number',
+    source_ok: 'Source noted',
+    source_todo: 'Add the https:// link to the original',
+    optional: 'optional',
+    restored: 'Restored your unsaved draft from this device.',
+    unsaved: 'This device has unsaved changes for this recipe.',
+    restore: 'Restore them',
+    discard: 'Discard',
+  },
+  es: {
+    title: 'Ponle un nombre a la receta',
+    ingredients: 'Anota los ingredientes, uno por línea',
+    qty_ok: 'Cada línea de ingrediente empieza con una cantidad',
+    cups_ok: 'Sin medidas ambiguas en tazas',
+    qty_todo: '## línea(s) de ingredientes no empiezan con cantidad - hacen falta cantidades',
+    cups_todo: 'Usas "taza" - las tazas varían por país, considera también gramos o ml',
+    steps: 'Escribe los pasos, uno por línea',
+    servings_ok: 'Las porciones (opcional) deben ser un número',
+    servings_bad: 'Las porciones deben ser un número',
+    source_ok: 'Fuente anotada',
+    source_todo: 'Agrega el enlace https:// al original',
+    optional: 'opcional',
+    restored: 'Recuperamos tu borrador sin guardar de este dispositivo.',
+    unsaved: 'Este dispositivo tiene cambios sin guardar de esta receta.',
+    restore: 'Recuperarlos',
+    discard: 'Descartar',
+  },
+  fr: {
+    title: 'Donnez un nom à la recette',
+    ingredients: 'Listez les ingrédients, un par ligne',
+    qty_ok: "Chaque ligne d'ingrédient commence par une quantité",
+    cups_ok: 'Pas de mesures ambiguës en tasses',
+    qty_todo: "## ligne(s) d'ingrédients ne commencent pas par une quantité - il faut des quantités",
+    cups_todo: 'Vous utilisez "tasse" - les tasses varient selon les pays, pensez aussi aux grammes ou ml',
+    steps: 'Écrivez les étapes, une par ligne',
+    servings_ok: 'Les portions (facultatif) doivent être un nombre',
+    servings_bad: 'Les portions doivent être un nombre',
+    source_ok: 'Source notée',
+    source_todo: "Ajoutez le lien https:// vers l'original",
+    optional: 'facultatif',
+    restored: 'Votre brouillon non enregistré sur cet appareil a été restauré.',
+    unsaved: 'Cet appareil a des modifications non enregistrées pour cette recette.',
+    restore: 'Les restaurer',
+    discard: 'Supprimer',
+  },
+};
+export const CAPTURE_CHECK_STRINGS = JSON.stringify(CAPTURE_CHECK_STRINGS_DATA);
+
+/**
+ * Pure helpers used by the capture script. Kept as plain ES5 source (String.raw,
+ * so regex backslashes stay literal) and exported so tests can evaluate them.
+ *  - captureDecide: what to do with an autosaved copy on load:
+ *    'none' | 'restore' (server form is blank: put the copy back) | 'offer' (ask first).
+ *  - mergeIngredientLine: a quick-choice answer replaces the existing line for
+ *    the same ingredient ("salt" -> "1 tsp salt") instead of adding a duplicate.
+ */
+export const CAPTURE_HELPERS_JS = String.raw`
+function captureNorm(v) { return String(v == null ? '' : v).replace(/\r/g, '').trim(); }
+function captureIsBlank(f) {
+  return ['title', 'intro', 'ingredients', 'steps'].every(function (n) { return !captureNorm(f && f[n]); });
+}
+function captureSame(a, b, names) {
+  return names.every(function (n) { return captureNorm(a && a[n]) === captureNorm(b && b[n]); });
+}
+function captureDecide(saved, current, names, now, maxAgeMs) {
+  if (!saved || typeof saved !== 'object' || !saved.f || typeof saved.f !== 'object' || typeof saved.at !== 'number') return 'none';
+  if (now - saved.at > maxAgeMs) return 'none';
+  if (captureIsBlank(saved.f) || captureSame(saved.f, current, names)) return 'none';
+  return captureIsBlank(current) ? 'restore' : 'offer';
+}
+function ingredientCore(line) {
+  var s = String(line == null ? '' : line).toLowerCase().replace(/\s+/g, ' ').trim();
+  s = s.replace(/^[0-9\u00BC-\u00BE\u2150-\u215E][0-9\u00BC-\u00BE\u2150-\u215E.,\/\s-]*/, '');
+  s = s.replace(/^(?:kg|g|mg|ml|cl|dl|l|oz|lbs?|cups?|tbsps?|tsps?|tablespoons?|teaspoons?|tazas?|cdas?|cdtas?|cucharadas?|cucharaditas?|tasses?|c\.\s?à\s?[sc]\.?|cuill[eè]res?(?: à (?:soupe|café))?|pinch(?:es)?|pizcas?|pinc[ée]es?|cloves?|dientes?|gousses?|cans?|latas?|bo[iî]tes?|pieces?|piezas?|morceaux?)\.?(?=\s|$)\s*/, '');
+  s = s.replace(/^(?:of|de|d['’])\s*/, '');
+  return s.replace(/\s*[,(;].*$/, '').trim();
+}
+function mergeIngredientLine(text, answer, target) {
+  var ans = String(answer == null ? '' : answer).trim();
+  var src = String(text == null ? '' : text);
+  if (!ans) return src;
+  var lines = src.split(/\r?\n/);
+  var tgt = String(target == null ? '' : target).replace(/\s+/g, ' ').trim().toLowerCase();
+  var ansCore = ingredientCore(ans);
+  var hit = -1;
+  for (var i = 0; i < lines.length; i++) {
+    var l = lines[i].replace(/\s+/g, ' ').trim().toLowerCase();
+    if (!l) continue;
+    if (tgt && l === tgt) { hit = i; break; }
+    if (hit === -1 && ansCore && ingredientCore(l) === ansCore) hit = i;
+  }
+  if (hit !== -1) { lines[hit] = ans; return lines.join('\n'); }
+  var cur = src.replace(/\s+$/, '');
+  return cur ? cur + '\n' + ans : ans;
+}
+`;
 
 export const CAPTURE_CLIENT_SCRIPT = `(function () {
+${CAPTURE_HELPERS_JS}
+  // --- On-device autosave (localStorage; never sent anywhere) -----------------
+  var DRAFT_PREFIX = '2yolks:capture:';
+  var PENDING_KEY = '2yolks:capture:pending';
+  var MAX_AGE = 30 * 24 * 3600 * 1000;
+  var W = typeof window !== 'undefined' ? window : null;
+  function store(kind) {
+    try { var s = W[kind]; var k = DRAFT_PREFIX + 'probe'; s.setItem(k, '1'); s.removeItem(k); return s; } catch (e) { return null; }
+  }
+  var local = store('localStorage');
+  var session = store('sessionStorage');
+  function readSaved(key) {
+    if (!local) return null;
+    try { return JSON.parse(local.getItem(key) || 'null'); } catch (e) { return null; }
+  }
+  function drop(key) { if (local && key) { try { local.removeItem(key); } catch (e) {} } }
+  function takePending() {
+    var p = null;
+    if (session) { try { p = session.getItem(PENDING_KEY); session.removeItem(PENDING_KEY); } catch (e) {} }
+    return p;
+  }
+  (function purgeOld() {
+    if (!local) return;
+    try {
+      var now = Date.now(), dead = [];
+      for (var i = 0; i < local.length; i++) {
+        var k = local.key(i);
+        if (!k || k.indexOf(DRAFT_PREFIX) !== 0) continue;
+        var v = readSaved(k);
+        if (!v || typeof v.at !== 'number' || now - v.at > MAX_AGE) dead.push(k);
+      }
+      dead.forEach(drop);
+    } catch (e) {}
+  })();
+  // "Sent in" page: the draft is with the reviewers now, forget the device copy.
+  var clearEl = document.querySelector('[data-capture-clear]');
+  if (clearEl) {
+    drop(takePending());
+    drop(DRAFT_PREFIX + clearEl.getAttribute('data-capture-clear'));
+  }
+
   var form = document.querySelector('form[data-capture-form]');
   if (!form) return;
   var box = document.querySelector('[data-live-checks]');
@@ -646,9 +820,91 @@ export const CAPTURE_CLIENT_SCRIPT = `(function () {
     var preHint = document.querySelector('[data-preamble-hint]');
     if (preHint) preHint.textContent = labels.__preambleHint;
   }
+  // "Link to the original" only matters for adapted recipes. Visible without
+  // JS; hidden here unless "adapted" is picked (or it carries a server error).
+  function syncSourceLink() {
+    var wrap = form.querySelector('[data-source-link]');
+    if (!wrap) return;
+    var urlEl = field('source_url');
+    var hasErr = !!urlEl && urlEl.getAttribute('aria-invalid') === 'true';
+    wrap.hidden = field('source_kind').value !== 'adapted' && !hasErr;
+  }
+  function qsa(root, sel) {
+    return root && typeof root.querySelectorAll === 'function' ? Array.prototype.slice.call(root.querySelectorAll(sel)) : [];
+  }
+  function checkState(key) {
+    var li = box.querySelector('[data-check="' + key + '"]');
+    return li ? li.className : '';
+  }
+
+  // --- S6 Live preview (textContent + createElement only; never innerHTML) ---
+  var previewWrap = document.querySelector('[data-live-preview]');
+  function updatePreview() {
+    if (!previewWrap) return;
+    var pTitle = previewWrap.querySelector('[data-preview-title]');
+    var pCat = previewWrap.querySelector('[data-preview-category]');
+    var pFacts = previewWrap.querySelector('[data-preview-facts]');
+    var pIntro = previewWrap.querySelector('[data-preview-intro]');
+    var pEmpty = previewWrap.querySelector('[data-preview-empty]');
+    var pIngWrap = previewWrap.querySelector('[data-preview-ing-wrap]');
+    var pIngs = previewWrap.querySelector('[data-preview-ings]');
+    var pStepWrap = previewWrap.querySelector('[data-preview-step-wrap]');
+    var pSteps = previewWrap.querySelector('[data-preview-steps]');
+    var rawTitle = field('title') ? (field('title').value || '').trim() : '';
+    if (pTitle) pTitle.textContent = rawTitle || pTitle.getAttribute('data-empty-title') || '';
+    var catVal = field('category') ? field('category').value : '';
+    var labels = CATLABELS[lang()] || CATLABELS.en;
+    var catText = catVal && labels && labels[catVal] ? labels[catVal] : '';
+    if (pCat) { pCat.textContent = catText; pCat.hidden = !catText; }
+    if (pFacts) {
+      while (pFacts.firstChild) pFacts.removeChild(pFacts.firstChild);
+      [['prep', 'data-tpl-prep'], ['cook', 'data-tpl-cook'], ['servings', 'data-tpl-serves']].forEach(function (pair) {
+        var el = field(pair[0]);
+        var val = el ? (el.value || '').trim() : '';
+        if (!val || !(Number(val) > 0)) return;
+        var span = document.createElement('span');
+        span.textContent = (pFacts.getAttribute(pair[1]) || '{n}').replace('{n}', val);
+        pFacts.appendChild(span);
+      });
+    }
+    var intro = field('intro') ? (field('intro').value || '').trim() : '';
+    if (pIntro) { pIntro.textContent = intro; pIntro.hidden = !intro; }
+    var ings = field('ingredients') ? lines(field('ingredients').value || '') : [];
+    if (pIngs && pIngWrap) {
+      while (pIngs.firstChild) pIngs.removeChild(pIngs.firstChild);
+      ings.forEach(function (line) {
+        var li = document.createElement('li');
+        li.textContent = line;
+        pIngs.appendChild(li);
+      });
+      pIngWrap.hidden = ings.length === 0;
+    }
+    var stepsList = field('steps') ? lines(field('steps').value || '') : [];
+    if (pSteps && pStepWrap) {
+      while (pSteps.firstChild) pSteps.removeChild(pSteps.firstChild);
+      stepsList.forEach(function (line) {
+        var li = document.createElement('li');
+        li.textContent = line;
+        pSteps.appendChild(li);
+      });
+      pStepWrap.hidden = stepsList.length === 0;
+    }
+    if (pEmpty) pEmpty.hidden = Boolean(rawTitle || intro || ings.length || stepsList.length);
+  }
+  if (previewWrap && W && W.addEventListener) {
+    W.addEventListener('2y-photo-change', function (ev) {
+      var pPhoto = previewWrap.querySelector('[data-preview-photo]');
+      if (!pPhoto) return;
+      var url = ev && ev.detail && ev.detail.url ? String(ev.detail.url) : '';
+      if (url) { pPhoto.src = url; pPhoto.hidden = false; }
+      else { pPhoto.removeAttribute('src'); pPhoto.hidden = true; }
+    });
+  }
+
   function run() {
     var T = ALL[lang()];
     localizeChrome();
+    syncSourceLink();
     var title = (field('title').value || '').trim();
     set('title', title.length >= 3 ? 'ok' : title.length ? 'todo' : 'idle', T.title);
     var ings = lines(field('ingredients').value || '');
@@ -673,10 +929,470 @@ export const CAPTURE_CLIENT_SCRIPT = `(function () {
     var urlOk = false;
     if (url) { try { var u = new URL(url); urlOk = u.protocol === 'https:' && u.hostname.indexOf('.') > 0; } catch (e) { urlOk = false; } }
     set('source', !adapted ? 'ok' : urlOk ? 'ok' : url ? 'todo' : 'idle', !adapted ? T.source_ok : T.source_todo);
+    updatePreview();
   }
-  form.addEventListener('input', run);
-  form.addEventListener('change', run);
+
+  var FIELDS = ['category', 'title', 'locale', 'intro', 'ingredients', 'steps', 'prep', 'cook', 'servings', 'display_name', 'source_kind', 'source_url'];
+  var idEl = form.querySelector('input[name="id"]');
+  var KEY = DRAFT_PREFIX + (idEl && idEl.value ? idEl.value : 'new');
+  function readForm() {
+    var o = {};
+    FIELDS.forEach(function (n) { var el = field(n); if (el) o[n] = el.value; });
+    return o;
+  }
+  function writeForm(o) {
+    FIELDS.forEach(function (n) { var el = field(n); if (el && typeof o[n] === 'string') el.value = o[n]; });
+    run();
+  }
+  var saveTimer = null;
+  function persistNow() {
+    if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+    if (!local) return;
+    var f = readForm();
+    try {
+      if (captureIsBlank(f)) local.removeItem(KEY);
+      else local.setItem(KEY, JSON.stringify({ v: 1, at: Date.now(), f: f }));
+    } catch (e) {}
+  }
+  function persistSoon() {
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(persistNow, 400);
+  }
+  function changed() { run(); persistSoon(); }
+
+  // A successful save lands on ?saved=1: drop the copy that was just stored on
+  // the server. Any other load means the last submit did not go through.
+  var pending = takePending();
+  var justSaved = /[?&]saved=1(?:&|$)/.test(W && W.location ? W.location.search : '');
+  if (justSaved) { drop(pending); drop(KEY); }
+
+  function showDraftNotice(text, actions) {
+    var n = document.createElement('div');
+    n.className = 'ok draft-notice';
+    n.setAttribute('role', 'status');
+    var span = document.createElement('span');
+    span.textContent = text;
+    n.appendChild(span);
+    actions.forEach(function (a) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'quiet';
+      b.textContent = a[0];
+      b.addEventListener('click', function () {
+        a[1]();
+        if (n.parentNode) n.parentNode.removeChild(n);
+      });
+      n.appendChild(b);
+    });
+    var anchor = document.querySelector('[data-start-section]') || document.querySelector('[data-capture-shell]') || document.querySelector('[data-ai-panel]') || form;
+    anchor.parentNode.insertBefore(n, anchor);
+  }
+  var hadAutosaveNotice = false;
+  if (!justSaved) {
+    var TS = ALL[lang()];
+    var savedCopy = readSaved(KEY);
+    var serverCopy = readForm();
+    var decision = captureDecide(savedCopy, serverCopy, FIELDS, Date.now(), MAX_AGE);
+    if (decision === 'restore') {
+      hadAutosaveNotice = true;
+      writeForm(savedCopy.f);
+      showDraftNotice(TS.restored, [[TS.discard, function () { writeForm(serverCopy); drop(KEY); }]]);
+    } else if (decision === 'offer') {
+      hadAutosaveNotice = true;
+      showDraftNotice(TS.unsaved, [
+        [TS.restore, function () { writeForm(savedCopy.f); persistNow(); }],
+        [TS.discard, function () { drop(KEY); }]
+      ]);
+    }
+  }
+
+  form.addEventListener('input', changed);
+  form.addEventListener('change', changed);
+  if (W && W.addEventListener) W.addEventListener('pagehide', function () { if (saveTimer) persistNow(); });
+  if (document.addEventListener) document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'hidden' && saveTimer) persistNow(); });
   run();
+
+  // --- S2 Start tiles & in-page paste ---------------------------------------
+  var startTiles = qsa(document, '[data-start-tile]');
+  var modePanels = qsa(document, '[data-mode-panel]');
+  function selectStartTile(mode, focusTarget) {
+    startTiles.forEach(function (b) {
+      b.setAttribute('aria-pressed', b.getAttribute('data-start-tile') === mode ? 'true' : 'false');
+    });
+    modePanels.forEach(function (p) {
+      p.hidden = p.getAttribute('data-mode-panel') !== mode;
+    });
+    if (!focusTarget) return;
+    if (mode === 'type') {
+      var tEl = field('title');
+      if (tEl && typeof tEl.focus === 'function') tEl.focus();
+      return;
+    }
+    var opened = modePanels.filter(function (p) { return p.getAttribute('data-mode-panel') === mode; })[0];
+    var inp = opened && typeof opened.querySelector === 'function' ? opened.querySelector('textarea, input, a') : null;
+    if (inp && typeof inp.focus === 'function') inp.focus();
+  }
+  if (startTiles.length) {
+    selectStartTile('type', false);
+    startTiles.forEach(function (b) {
+      b.addEventListener('click', function () {
+        selectStartTile(b.getAttribute('data-start-tile') || 'type', true);
+      });
+    });
+  }
+
+  var pasteForm = document.querySelector('[data-paste-form]');
+  if (pasteForm && typeof fetch === 'function') {
+    var pasteTa = pasteForm.querySelector('textarea[name="text"]');
+    var pasteSubmit = pasteForm.querySelector('[data-paste-submit]');
+    var pasteUndo = pasteForm.querySelector('[data-paste-undo]');
+    var pasteStatus = pasteForm.querySelector('[data-paste-status]');
+    var pasteUndoSnap = null;
+    function setPasteStatus(kind, text) {
+      if (!pasteStatus) return;
+      pasteStatus.hidden = !text;
+      pasteStatus.className = kind;
+      pasteStatus.textContent = text;
+    }
+    if (pasteUndo) {
+      pasteUndo.addEventListener('click', function () {
+        if (!pasteUndoSnap) return;
+        writeForm(pasteUndoSnap);
+        persistSoon();
+        pasteUndoSnap = null;
+        pasteUndo.hidden = true;
+        setPasteStatus('', '');
+      });
+    }
+    pasteForm.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var action = pasteForm.getAttribute('action') || '/account/recipes/paste';
+      var workingText = pasteForm.getAttribute('data-msg-working') || 'Reading…';
+      var errText = pasteForm.getAttribute('data-msg-err-generic') || 'Something went wrong.';
+      if (pasteSubmit) pasteSubmit.disabled = true;
+      setPasteStatus('ok', workingText);
+      fetch(action, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' },
+        body: 'text=' + encodeURIComponent(pasteTa ? pasteTa.value : '')
+      })
+        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); })
+        .then(function (res) {
+          if (!res.ok || !res.body || !res.body.ok) {
+            setPasteStatus('err', (res.body && res.body.error) || errText);
+            return;
+          }
+          pasteUndoSnap = readForm();
+          var d = res.body.parsed || {};
+          ['title', 'intro', 'ingredients', 'steps', 'prep', 'cook', 'servings'].forEach(function (k) {
+            if (typeof d[k] === 'string' && d[k] && field(k)) field(k).value = d[k];
+          });
+          changed();
+          if (pasteUndo) pasteUndo.hidden = false;
+          var warns = Array.isArray(res.body.warnings) ? res.body.warnings : [];
+          setPasteStatus(warns.length ? 'err' : 'ok', warns.length ? warns.join(' ') : (res.body.message || ''));
+        })
+        .catch(function () { setPasteStatus('err', errText); })
+        .then(function () { if (pasteSubmit) pasteSubmit.disabled = false; });
+    });
+  }
+
+  // --- S3 Mobile stepper & preview toggle ----------------------------------
+  var shell = document.querySelector('[data-capture-shell]');
+  var stepperBar = document.querySelector('[data-stepper-bar]');
+  var stepList = qsa(form, '[data-step]');
+  var stepJumps = qsa(document, '[data-step-jump]');
+  var previewToggle = document.querySelector('[data-preview-toggle]');
+  var previewBack = document.querySelector('[data-preview-back]');
+  var activeStep = 0;
+  var softWarnedStep = -1;
+  var mq = W && typeof W.matchMedia === 'function' ? W.matchMedia('(max-width: 720px)') : null;
+  function stepOfEl(el) {
+    var cur = el;
+    while (cur && cur !== form) {
+      if (typeof cur.getAttribute === 'function' && cur.getAttribute('data-step') != null) {
+        var n = Number(cur.getAttribute('data-step'));
+        return isNaN(n) ? -1 : n;
+      }
+      cur = cur.parentNode;
+    }
+    return -1;
+  }
+  function setPreviewMobile(on) {
+    if (!shell) return;
+    if (shell.classList) shell.classList.toggle('capture-preview-mobile', !!on);
+    if (previewToggle) previewToggle.setAttribute('aria-pressed', on ? 'true' : 'false');
+    if (previewBack) previewBack.hidden = !on;
+    if (on && W && typeof W.scrollTo === 'function') W.scrollTo(0, 0);
+  }
+  function showStep(idx, moveFocus) {
+    if (!stepList.length) return;
+    if (idx < 0) idx = 0;
+    if (idx >= stepList.length) idx = stepList.length - 1;
+    activeStep = idx;
+    softWarnedStep = -1;
+    stepList.forEach(function (fs, i) {
+      if (fs.classList) fs.classList.toggle('is-active', i === idx);
+      else fs.className = i === idx ? 'form-step is-active' : 'form-step';
+      var m = fs.querySelector ? fs.querySelector('[data-step-msg]') : null;
+      if (m) { m.textContent = ''; m.hidden = true; }
+    });
+    stepJumps.forEach(function (a, i) {
+      if (i === idx) a.setAttribute('aria-current', 'step');
+      else a.removeAttribute('aria-current');
+    });
+    if (stepperBar) {
+      var pTxt = stepperBar.querySelector('[data-step-progress]');
+      var pFill = stepperBar.querySelector('[data-step-fill]');
+      var tpl = form.getAttribute('data-step-progress-tpl') || 'Step {n} of {total}';
+      if (pTxt) pTxt.textContent = tpl.replace('{n}', String(idx + 1)).replace('{total}', String(stepList.length));
+      if (pFill && pFill.style) pFill.style.width = Math.round(((idx + 1) * 100) / stepList.length) + '%';
+    }
+    if (moveFocus) {
+      var leg = stepList[idx].querySelector ? stepList[idx].querySelector('.step-heading') : null;
+      if (leg && typeof leg.focus === 'function') leg.focus();
+    }
+  }
+  function stepHasMissing(idx) {
+    if (idx === 0) return !(field('title') && (field('title').value || '').trim()) ? field('title') : null;
+    if (idx === 1) return !(field('ingredients') && lines(field('ingredients').value || '').length) ? field('ingredients') : null;
+    if (idx === 2) return !(field('steps') && lines(field('steps').value || '').length) ? field('steps') : null;
+    return null;
+  }
+  function stepHasSoftWarn(idx) {
+    if (idx === 0) return checkState('title') === 'todo';
+    if (idx === 1) return checkState('qty') === 'todo' || checkState('cups') === 'todo';
+    if (idx === 3) return checkState('servings') === 'todo';
+    return false;
+  }
+  function applyStepperMode() {
+    var on = !!(mq && mq.matches && stepList.length);
+    if (shell && shell.classList) shell.classList.toggle('capture-stepper-on', on);
+    if (stepperBar) stepperBar.hidden = !on;
+    if (!on) setPreviewMobile(false);
+  }
+  if (stepList.length) {
+    showStep(0, false);
+    applyStepperMode();
+    if (mq) {
+      if (typeof mq.addEventListener === 'function') mq.addEventListener('change', applyStepperMode);
+      else if (typeof mq.addListener === 'function') mq.addListener(applyStepperMode);
+    }
+    stepList.forEach(function (fs, idx) {
+      var prev = fs.querySelector ? fs.querySelector('[data-step-prev]') : null;
+      var next = fs.querySelector ? fs.querySelector('[data-step-next]') : null;
+      var msgEl = fs.querySelector ? fs.querySelector('[data-step-msg]') : null;
+      if (prev) prev.addEventListener('click', function () { showStep(idx - 1, true); });
+      if (next) next.addEventListener('click', function () {
+        var missing = stepHasMissing(idx);
+        if (missing) {
+          if (msgEl) { msgEl.textContent = form.getAttribute('data-step-need-required') || ''; msgEl.hidden = false; }
+          if (typeof missing.focus === 'function') missing.focus();
+          return;
+        }
+        if (stepHasSoftWarn(idx) && softWarnedStep !== idx) {
+          softWarnedStep = idx;
+          if (msgEl) { msgEl.textContent = form.getAttribute('data-step-soft-warn') || ''; msgEl.hidden = false; }
+          return;
+        }
+        showStep(idx + 1, true);
+      });
+    });
+    stepJumps.forEach(function (a) {
+      a.addEventListener('click', function () {
+        var idx = Number(a.getAttribute('data-step-jump'));
+        if (!isNaN(idx)) showStep(idx, false);
+      });
+    });
+    if (previewToggle) previewToggle.addEventListener('click', function () {
+      var on = !(shell && shell.classList && shell.classList.contains('capture-preview-mobile'));
+      setPreviewMobile(on);
+    });
+    if (previewBack) previewBack.addEventListener('click', function () { setPreviewMobile(false); });
+  }
+
+  // One clear finish: "Send in for review" needs the permission box. Say so
+  // right next to it before a round trip (the server enforces it regardless).
+  var attestEl = field('attest');
+  function attestError(show) {
+    if (!attestEl) return;
+    var p = document.getElementById('err-attest');
+    if (!show) {
+      attestEl.removeAttribute('aria-invalid');
+      attestEl.removeAttribute('aria-describedby');
+      if (p && p.parentNode) p.parentNode.removeChild(p);
+      return;
+    }
+    if (!p) {
+      p = document.createElement('p');
+      p.className = 'field-err';
+      p.id = 'err-attest';
+      var lab = attestEl.closest('label') || attestEl;
+      lab.parentNode.insertBefore(p, lab.nextSibling);
+    }
+    p.textContent = attestEl.getAttribute('data-err-attest') || '';
+    attestEl.setAttribute('aria-invalid', 'true');
+    attestEl.setAttribute('aria-describedby', 'err-attest');
+  }
+  if (attestEl) attestEl.addEventListener('change', function () { if (attestEl.checked) attestError(false); });
+
+  // --- S1 Inline sign-in when saving or sending while signed out ------------
+  var inlineAuth = form.querySelector('[data-inline-auth]');
+  var pendingIntent = null;
+  if (inlineAuth) {
+    var emailStep = inlineAuth.querySelector('[data-inline-auth-email-step]');
+    var codeStep = inlineAuth.querySelector('[data-inline-auth-code-step]');
+    var authEmail = inlineAuth.querySelector('[data-auth-email]');
+    var authCode = inlineAuth.querySelector('[data-auth-code]');
+    var authCodeLead = inlineAuth.querySelector('[data-auth-code-lead]');
+    var authSendBtn = inlineAuth.querySelector('[data-auth-send]');
+    var authVerifyBtn = inlineAuth.querySelector('[data-auth-verify]');
+    var authChangeBtn = inlineAuth.querySelector('[data-auth-change]');
+    var authStatus = inlineAuth.querySelector('[data-inline-auth-status]');
+    var authSending = false;
+    function authMsg(k, fb) { return inlineAuth.getAttribute('data-msg-' + k) || fb; }
+    function setAuthStatus(kind, text) {
+      if (!authStatus) return;
+      authStatus.hidden = !text;
+      authStatus.className = kind;
+      authStatus.textContent = text;
+    }
+    function submitWithIntent(intentVal) {
+      var hi = form.querySelector('input[type="hidden"][name="intent"]');
+      if (!hi) {
+        hi = document.createElement('input');
+        hi.type = 'hidden';
+        hi.name = 'intent';
+        form.appendChild(hi);
+      }
+      hi.value = intentVal || 'save';
+      persistNow();
+      if (session) { try { session.setItem(PENDING_KEY, KEY); } catch (err) {} }
+      form.submit();
+    }
+    function requestInlineCode() {
+      if (authSending) return;
+      var em = authEmail ? (authEmail.value || '').trim() : '';
+      if (!em || em.indexOf('@') < 1) {
+        setAuthStatus('err', authMsg('err-email', 'Enter a valid email address.'));
+        if (authEmail && typeof authEmail.focus === 'function') authEmail.focus();
+        return;
+      }
+      authSending = true;
+      if (authSendBtn) authSendBtn.disabled = true;
+      setAuthStatus('ok', authMsg('working', 'Working…'));
+      fetch(inlineAuth.getAttribute('data-code-endpoint') || '/account/code', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({ email: em, next: '/account/recipes/new' })
+      })
+        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); })
+        .then(function (res) {
+          if (!res.ok || !res.body || !res.body.ok) {
+            setAuthStatus('err', (res.body && res.body.error) || authMsg('err-generic', 'Something went wrong.'));
+            return;
+          }
+          setAuthStatus('', '');
+          if (emailStep) emailStep.hidden = true;
+          if (codeStep) codeStep.hidden = false;
+          if (authCodeLead) authCodeLead.textContent = authMsg('sent', 'We sent a code to {email}.').replace('{email}', res.body.email || em);
+          if (authCode) { authCode.value = ''; if (typeof authCode.focus === 'function') authCode.focus(); }
+        })
+        .catch(function () { setAuthStatus('err', authMsg('err-generic', 'Something went wrong.')); })
+        .then(function () { authSending = false; if (authSendBtn) authSendBtn.disabled = false; });
+    }
+    function verifyInlineCode() {
+      if (authSending) return;
+      var em = authEmail ? (authEmail.value || '').trim() : '';
+      var cd = authCode ? (authCode.value || '').trim() : '';
+      if (!/^\\d{6}$/.test(cd)) {
+        setAuthStatus('err', authMsg('err-code', 'Enter the 6-digit code.'));
+        if (authCode && typeof authCode.focus === 'function') authCode.focus();
+        return;
+      }
+      authSending = true;
+      if (authVerifyBtn) authVerifyBtn.disabled = true;
+      setAuthStatus('ok', authMsg('working', 'Working…'));
+      fetch(inlineAuth.getAttribute('data-verify-endpoint') || '/account/verify', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({ email: em, code: cd, next: '/account/recipes/new' })
+      })
+        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); })
+        .then(function (res) {
+          if (!res.ok || !res.body || !res.body.ok) {
+            if (res.body && res.body.restart) {
+              if (codeStep) codeStep.hidden = true;
+              if (emailStep) emailStep.hidden = false;
+            }
+            setAuthStatus('err', (res.body && res.body.error) || authMsg('err-generic', 'Something went wrong.'));
+            return;
+          }
+          form.setAttribute('data-signed-in', '1');
+          setAuthStatus('ok', authMsg('done', 'Email confirmed. Saving your recipe…'));
+          submitWithIntent(pendingIntent);
+        })
+        .catch(function () { setAuthStatus('err', authMsg('err-generic', 'Something went wrong.')); })
+        .then(function () { authSending = false; if (authVerifyBtn) authVerifyBtn.disabled = false; });
+    }
+    if (authSendBtn) authSendBtn.addEventListener('click', requestInlineCode);
+    if (authVerifyBtn) authVerifyBtn.addEventListener('click', verifyInlineCode);
+    if (authChangeBtn) authChangeBtn.addEventListener('click', function () {
+      if (codeStep) codeStep.hidden = true;
+      if (emailStep) emailStep.hidden = false;
+      setAuthStatus('', '');
+      if (authEmail && typeof authEmail.focus === 'function') authEmail.focus();
+    });
+    if (authEmail) authEmail.addEventListener('keydown', function (ev) { if (ev.key === 'Enter') { ev.preventDefault(); requestInlineCode(); } });
+    if (authCode) authCode.addEventListener('keydown', function (ev) { if (ev.key === 'Enter') { ev.preventDefault(); verifyInlineCode(); } });
+  }
+
+  form.addEventListener('submit', function (e) {
+    var btn = e.submitter;
+    if (btn && btn.value === 'submit' && attestEl && !attestEl.checked) {
+      e.preventDefault();
+      attestError(true);
+      attestEl.focus();
+      return;
+    }
+    if (form.getAttribute('data-signed-in') === '0' && inlineAuth && typeof fetch === 'function') {
+      if (typeof form.checkValidity === 'function' && !form.checkValidity()) {
+        e.preventDefault();
+        var bad = form.querySelector(':invalid');
+        if (bad) {
+          var sIdx = stepOfEl(bad);
+          if (sIdx >= 0) showStep(sIdx, false);
+        }
+        if (typeof form.reportValidity === 'function') form.reportValidity();
+        return;
+      }
+      e.preventDefault();
+      pendingIntent = (btn && btn.value) ? btn.value : 'save';
+      persistNow();
+      inlineAuth.hidden = false;
+      if (stepList.length) showStep(stepList.length - 1, false);
+      var emIn = inlineAuth.querySelector('[data-auth-email]');
+      if (emIn && typeof emIn.focus === 'function') emIn.focus();
+      if (typeof inlineAuth.scrollIntoView === 'function') {
+        try { inlineAuth.scrollIntoView({ block: 'center' }); } catch (err) {}
+      }
+      return;
+    }
+    persistNow();
+    if (session) { try { session.setItem(PENDING_KEY, KEY); } catch (err) {} }
+  });
+
+  // Server-side validation errors: bring the first offending field (and its step) into view.
+  var firstInvalid = form.querySelector('[aria-invalid="true"]');
+  if (firstInvalid) {
+    var errStep = stepOfEl(firstInvalid);
+    if (errStep >= 0) showStep(errStep, false);
+    try { firstInvalid.focus({ preventScroll: true }); firstInvalid.scrollIntoView({ block: 'center' }); } catch (e) { firstInvalid.focus(); }
+  }
+  if (hadAutosaveNotice && startTiles.length) selectStartTile('type', false);
 
   // Multimodal AI Kitchen Co-Editor (photo + voice note + rough notes -> structured draft & polish)
   var aiPanel = document.querySelector('[data-ai-panel]');
@@ -696,12 +1412,29 @@ export const CAPTURE_CLIENT_SCRIPT = `(function () {
     var improvementsList = aiPanel.querySelector('[data-ai-improvements]');
     var questionsWrap = aiPanel.querySelector('[data-ai-questions-wrap]');
     var questionsList = aiPanel.querySelector('[data-ai-questions]');
+    function msg(name, fallback) { return aiPanel.getAttribute('data-msg-' + name) || fallback; }
 
     var attachedImage = null;
     var attachedAudio = null;
     var undoSnapshot = null;
     var recorder = null;
     var audioChunks = [];
+
+    function setStatus(kind, text, withSignIn) {
+      if (!statusEl) return;
+      statusEl.hidden = false;
+      statusEl.className = kind;
+      statusEl.textContent = text;
+      if (withSignIn) {
+        statusEl.appendChild(document.createTextNode(' '));
+        var a = document.createElement('a');
+        a.href = aiPanel.getAttribute('data-signin-url') || '/account';
+        a.target = '_blank';
+        a.rel = 'noopener';
+        a.textContent = msg('signin', 'Sign in again');
+        statusEl.appendChild(a);
+      }
+    }
 
     function snapshotForm() {
       var names = ['category', 'title', 'locale', 'intro', 'ingredients', 'steps', 'prep', 'cook', 'servings'];
@@ -719,7 +1452,7 @@ export const CAPTURE_CLIENT_SCRIPT = `(function () {
         var el = field(n);
         if (el) el.value = snap[n];
       });
-      run();
+      changed();
     }
 
     if (undoBtn) {
@@ -817,13 +1550,13 @@ export const CAPTURE_CLIENT_SCRIPT = `(function () {
         var mc = /\\d+/.exec(answer);
         if (mc && field('cook')) field('cook').value = mc[0];
       } else if (q.field === 'ingredients' && field('ingredients')) {
-        var curIng = field('ingredients').value.trim();
-        field('ingredients').value = curIng ? curIng + '\\n' + answer : answer;
+        // Replace the existing line for the same ingredient instead of adding a duplicate.
+        field('ingredients').value = mergeIngredientLine(field('ingredients').value, answer, q.target);
       } else if (field('steps')) {
         var curSt = field('steps').value.trim();
         field('steps').value = curSt ? curSt + '\\n' + answer : answer;
       }
-      run();
+      changed();
     }
 
     function renderFeedback(data) {
@@ -875,14 +1608,23 @@ export const CAPTURE_CLIENT_SCRIPT = `(function () {
       }
     }
 
+    function aiError(text, sessionEnded) {
+      var e = new Error(text);
+      e.userFacing = true;
+      e.sessionEnded = !!sessionEnded;
+      return e;
+    }
+
     function callAi(mode) {
       var endpoint = aiPanel.getAttribute('data-ai-endpoint') || '/account/recipes/ai-assist';
-      var workingMsg = aiPanel.getAttribute('data-msg-working') || 'Working…';
+      var workingMsg = msg('working', 'Working…');
+      var genericMsg = msg('err-generic', 'Something went wrong. Please try again.');
+      var sessionMsg = msg('err-session', 'Your session ended. Your draft is saved on this device.');
       var doneMsg = mode === 'polish'
-        ? (aiPanel.getAttribute('data-msg-done-polish') || 'Draft polished.')
+        ? msg('done-polish', 'Draft polished.')
         : mode === 'translate'
-          ? (aiPanel.getAttribute('data-msg-done-translate') || 'Draft translated.')
-          : (aiPanel.getAttribute('data-msg-done-extract') || 'Draft structured.');
+          ? msg('done-translate', 'Draft translated.')
+          : msg('done-extract', 'Draft structured.');
       var targetLocale = targetLangSel ? targetLangSel.value : '';
       var notes = notesInput ? notesInput.value.trim() : '';
       var draft = {
@@ -896,24 +1638,19 @@ export const CAPTURE_CLIENT_SCRIPT = `(function () {
         servings: field('servings') ? field('servings').value.trim() : ''
       };
       if (!attachedImage && !attachedAudio && !notes && !draft.ingredients.length && !draft.steps.length) {
-        if (statusEl) {
-          statusEl.className = 'err';
-          statusEl.textContent = aiPanel.getAttribute('data-msg-err-input') || 'Add notes, photo, or draft lines first.';
-          statusEl.hidden = false;
-        }
+        setStatus('err', msg('err-input', 'Add notes, photo, or draft lines first.'));
         return;
       }
+      // Keep the device copy current: if the session has ended, nothing is lost.
+      persistNow();
       if (extractBtn) extractBtn.disabled = true;
       if (polishBtn) polishBtn.disabled = true;
       if (translateBtn) translateBtn.disabled = true;
-      if (statusEl) {
-        statusEl.className = 'ok';
-        statusEl.textContent = workingMsg;
-        statusEl.hidden = false;
-      }
+      setStatus('ok', workingMsg);
       fetch(endpoint, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
         body: JSON.stringify({
           mode: mode,
           uiLang: lang(),
@@ -925,10 +1662,22 @@ export const CAPTURE_CLIENT_SCRIPT = `(function () {
           draft: draft
         })
       })
-        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); })
+        .then(function (r) {
+          var ct = (r.headers.get('content-type') || '').toLowerCase();
+          var isJson = ct.indexOf('application/json') !== -1;
+          // 401, or a redirect that ended on an HTML sign-in page: the session is gone.
+          if (r.status === 401 || (r.redirected && !isJson)) throw aiError(sessionMsg, true);
+          if (!isJson) throw aiError(genericMsg);
+          return r.json().then(function (j) { return { ok: r.ok, body: j }; }, function () { throw aiError(genericMsg); });
+        })
         .then(function (res) {
           if (!res.ok || !res.body || !res.body.ok) {
-            throw new Error((res.body && res.body.error) || 'AI error');
+            if (res.body && res.body.session) throw aiError(res.body.error || sessionMsg, true);
+            throw aiError((res.body && res.body.error) || genericMsg);
+          }
+          // Only a real (model) translation may switch the recipe language.
+          if (mode === 'translate' && res.body.provider !== 'gemini') {
+            throw aiError(msg('translate-unavailable', genericMsg));
           }
           undoSnapshot = snapshotForm();
           if (undoBtn) undoBtn.hidden = false;
@@ -946,20 +1695,12 @@ export const CAPTURE_CLIENT_SCRIPT = `(function () {
           if (d.cookMinutes != null && d.cookMinutes > 0 && field('cook')) field('cook').value = String(d.cookMinutes);
           if (d.servings != null && d.servings > 0 && field('servings')) field('servings').value = String(d.servings);
           if (mode === 'translate' && targetLocale && field('locale')) field('locale').value = targetLocale;
-          run();
+          changed();
           renderFeedback(res.body);
-          if (statusEl) {
-            statusEl.className = 'ok';
-            statusEl.textContent = doneMsg;
-            statusEl.hidden = false;
-          }
+          setStatus('ok', res.body.provider === 'deterministic' ? doneMsg + ' ' + msg('fallback', '') : doneMsg);
         })
         .catch(function (err) {
-          if (statusEl) {
-            statusEl.className = 'err';
-            statusEl.textContent = err && err.message ? err.message : 'Error';
-            statusEl.hidden = false;
-          }
+          setStatus('err', err && err.userFacing ? err.message : genericMsg, !!(err && err.sessionEnded));
         })
         .then(function () {
           if (extractBtn) extractBtn.disabled = false;

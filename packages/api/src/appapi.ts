@@ -8,16 +8,17 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
-import { eq, and, ne, desc, isNotNull } from 'drizzle-orm';
+import { eq, and, ne, desc, isNotNull, isNull } from 'drizzle-orm';
 import { LOCALES, getCountry, validateRecipeSubmission, slugify, isStructured } from '@2yolks/contracts';
 import type { StructuredIngredient } from '@2yolks/contracts';
 import { createDb, recipes, recipeLocales, recipeImages, sources, published } from './db';
 import { sendMail } from './email';
+import { deleteDraftPhoto } from './draftPhotos';
 import {
   type AccountBindings, type FormState,
   sha256Hex, randomCode, randomToken, newId, normEmail, str,
   reserveMail, cleanupExpired, limited, parseForm, buildSubmission, loadOwned,
-  SESSION_DAYS, MAX_ATTEMPTS, CODES_PER_EMAIL_10MIN, CODES_PER_DAY, NOTICES_PER_DAY,
+  SESSION_DAYS, MAX_ATTEMPTS, CODES_PER_EMAIL_10MIN, codesPerDay, NOTICES_PER_DAY,
   MAX_DRAFTS_PER_USER, MAX_ROWS_PER_USER,
 } from './account';
 
@@ -122,7 +123,7 @@ appApi.post('/auth/code', async (c) => {
   ).bind(id, email, await sha256Hex(`${email}:${code}`), now + 10 * 60_000, now, email, now - 10 * 60_000, CODES_PER_EMAIL_10MIN).run();
   if (ins.meta.changes !== 1) return err(c, 429, 'Too many codes requested for this email. Try again in a few minutes.');
   // Then the site-wide daily mail budget (atomic conditional INSERT). No budget: the code is never sent, so kill it.
-  if (!(await reserveMail(c.env.DB, 'code', CODES_PER_DAY))) {
+  if (!(await reserveMail(c.env.DB, 'code', codesPerDay(c.env)))) {
     await c.env.DB.prepare('UPDATE auth_codes SET used = 1 WHERE id = ?').bind(id).run();
     return err(c, 503, 'Sign-in is busy right now. Please try again tomorrow.');
   }
@@ -204,7 +205,7 @@ appApi.get('/me/recipes', async (c) => {
     country: recipeLocales.country, lang: recipeLocales.lang, slug: recipeLocales.slug,
   })
     .from(recipes).innerJoin(recipeLocales, eq(recipeLocales.recipeId, recipes.id))
-    .where(and(eq(recipes.ownerUserId, user.id), ne(recipeLocales.status, 'rejected'))).orderBy(desc(recipes.createdAt));
+    .where(and(eq(recipes.ownerUserId, user.id), isNull(recipes.removedByUserAt), ne(recipeLocales.status, 'rejected'))).orderBy(desc(recipes.createdAt));
   return c.json({
     recipes: rows.map((r) => ({
       ...r,
@@ -284,7 +285,9 @@ const saveDraft = async (c: Ctx) => {
   if (isUpdate) {
     const owned = await loadOwned(c, id!);
     if (!owned) return err(c, 404, 'Draft not found.');
-    if (owned.r.submittedAt || owned.l.status === 'published') return err(c, 409, 'This recipe was already sent in for review.');
+    if (owned.r.submittedAt || owned.l.status === 'published' || owned.r.reviewStatus === 'published' || owned.r.reviewStatus === 'declined' || owned.l.status === 'rejected') {
+      return err(c, 409, 'This recipe was already sent in for review.');
+    }
   } else {
     id = newId();
   }
@@ -296,14 +299,14 @@ const saveDraft = async (c: Ctx) => {
   const prep = x['prepMinutes'] ?? null, cook = x['cookMinutes'] ?? null, serv = x['baseServings'] ?? null;
   const ing = JSON.stringify(loc.ingredients), stp = JSON.stringify(loc.steps);
   if (isUpdate) {
-    // One transaction (D1 batch). Every statement re-checks "owned, not submitted, not published"
+    // One transaction (D1 batch). Every statement re-checks "owned, not submitted, not published/declined/removed"
     // so a concurrent submit cannot be overwritten; nothing is deleted, rows are updated in place.
-    const open = "EXISTS (SELECT 1 FROM recipes r WHERE r.id = ? AND r.owner_user_id = ? AND r.submitted_at IS NULL) AND NOT EXISTS (SELECT 1 FROM recipe_locales q WHERE q.recipe_id = ? AND q.status = 'published')";
+    const open = "EXISTS (SELECT 1 FROM recipes r WHERE r.id = ? AND r.owner_user_id = ? AND r.submitted_at IS NULL AND r.removed_by_user_at IS NULL AND (r.review_status IS NULL OR r.review_status = 'needs_changes')) AND NOT EXISTS (SELECT 1 FROM recipe_locales q WHERE q.recipe_id = ? AND q.status IN ('published', 'rejected'))";
     const guard = [id, user.id, id];
     const res = await D.batch([
       D.prepare(`UPDATE sources SET name = ?, url = ?, license = ? WHERE id = (SELECT source_id FROM recipes WHERE id = ?) AND ${open}`).bind(sub.source.name, sub.source.url, sub.source.license, id, ...guard),
       D.prepare(`UPDATE recipe_locales SET country = ?, lang = ?, title = ?, slug = ?, intro = ?, ingredients_json = ?, steps_json = ? WHERE recipe_id = ? AND ${open}`).bind(loc.country, loc.lang, loc.title, slug, loc.intro ?? null, ing, stp, id, ...guard),
-      D.prepare(`UPDATE recipes SET origin_country = ?, prep_minutes = ?, cook_minutes = ?, base_servings = ?, attested_at = ?, author_name = ? WHERE id = ? AND owner_user_id = ? AND submitted_at IS NULL`).bind(sub.originCountry ?? null, prep, cook, serv, s.attest ? now : null, s.displayName, id, user.id),
+      D.prepare(`UPDATE recipes SET origin_country = ?, prep_minutes = ?, cook_minutes = ?, base_servings = ?, attested_at = ?, author_name = ? WHERE id = ? AND owner_user_id = ? AND submitted_at IS NULL AND removed_by_user_at IS NULL AND (review_status IS NULL OR review_status = 'needs_changes')`).bind(sub.originCountry ?? null, prep, cook, serv, s.attest ? now : null, s.displayName, id, user.id),
       D.prepare('UPDATE users SET display_name = ? WHERE id = ?').bind(s.displayName, user.id),
     ]);
     if (res[1]!.meta.changes !== 1) return err(c, 409, 'This recipe was already sent in for review, so your changes were not saved.');
@@ -312,7 +315,7 @@ const saveDraft = async (c: Ctx) => {
   const sourceId = `src-${id}`;
   // The draft-count cap is checked inside the inserts themselves (same transaction), so
   // concurrent creates cannot overshoot it. Nothing is written when the cap is hit.
-  const room = "(SELECT count(*) FROM recipes r JOIN recipe_locales l ON l.recipe_id = r.id WHERE r.owner_user_id = ? AND l.status <> 'rejected') < ? AND (SELECT count(*) FROM recipes WHERE owner_user_id = ?) < ?";
+  const room = "(SELECT count(*) FROM recipes r JOIN recipe_locales l ON l.recipe_id = r.id WHERE r.owner_user_id = ? AND r.removed_by_user_at IS NULL AND l.status <> 'rejected') < ? AND (SELECT count(*) FROM recipes WHERE owner_user_id = ?) < ?";
   const res = await D.batch([
     D.prepare(`INSERT INTO sources (id,name,url,license,cleared_at,notes) SELECT ?,?,?,?,NULL,? WHERE ${room}`).bind(sourceId, sub.source.name, sub.source.url, sub.source.license, 'user submission - rights review pending', user.id, MAX_DRAFTS_PER_USER, user.id, MAX_ROWS_PER_USER),
     D.prepare(`INSERT INTO recipes (id,source_id,origin_country,image_key,created_at,prep_minutes,cook_minutes,base_servings,owner_user_id,attested_at,author_name) SELECT ?,?,?,NULL,?,?,?,?,?,?,? WHERE ${room}`).bind(id, sourceId, sub.originCountry ?? null, now, prep, cook, serv, user.id, s.attest ? now : null, s.displayName, user.id, MAX_DRAFTS_PER_USER, user.id, MAX_ROWS_PER_USER),
@@ -336,10 +339,12 @@ appApi.post('/me/recipes/:id/submit', async (c) => {
   if (await limited(c.env.RL_SUBMIT, c, 'submit')) return err(c, 429, 'Too many tries. Please wait a minute.');
   const row = await loadOwned(c, c.req.param('id'));
   if (!row) return err(c, 404, 'Draft not found.');
-  if (row.r.submittedAt || row.l.status === 'published') return err(c, 409, 'Already sent in for review.');
+  if (row.r.submittedAt || row.l.status === 'published' || row.r.reviewStatus === 'published' || row.r.reviewStatus === 'declined' || row.l.status === 'rejected') return err(c, 409, 'Already sent in for review.');
   if (!row.r.attestedAt) return err(c, 409, 'Confirm the permission flag on the draft before sending it in.');
   const now = new Date().toISOString();
-  const flip = await c.env.DB.prepare('UPDATE recipes SET submitted_at = ? WHERE id = ? AND owner_user_id = ? AND submitted_at IS NULL AND attested_at IS NOT NULL').bind(now, row.r.id, user.id).run();
+  const flip = await c.env.DB.prepare(
+    "UPDATE recipes SET submitted_at = ?, review_status = 'in_review' WHERE id = ? AND owner_user_id = ? AND removed_by_user_at IS NULL AND submitted_at IS NULL AND attested_at IS NOT NULL AND (review_status IS NULL OR review_status = 'needs_changes')",
+  ).bind(now, row.r.id, user.id).run();
   if (flip.meta.changes !== 1) return err(c, 409, 'Already sent in for review.');
   // The admin queue (MCP recipes.list submitted:true) is the source of truth; the email is an extra,
   // counted against the same daily mail budget as login codes.
@@ -353,14 +358,21 @@ appApi.post('/me/recipes/:id/submit', async (c) => {
   return c.json({ ok: true, submittedAt: now }, 200, NO_STORE);
 });
 
-// "Remove" never deletes data: the locale is marked rejected (hidden from the owner's list), rows stay for review/audit.
+// "Remove" never deletes data: marks removed_by_user_at + locale rejected (hidden from the owner's list), rows stay for review/audit.
 appApi.delete('/me/recipes/:id', async (c) => {
   const user = c.get('user')!;
   const id = c.req.param('id');
-  const r = await c.env.DB.prepare(
-    "UPDATE recipe_locales SET status = 'rejected' WHERE recipe_id = ? AND status = 'draft' AND EXISTS (SELECT 1 FROM recipes r WHERE r.id = ? AND r.owner_user_id = ? AND r.submitted_at IS NULL)",
-  ).bind(id, id, user.id).run();
-  if (r.meta.changes !== 1) return err(c, 404, 'Draft not found, or it was already sent in for review.');
+  const now = new Date().toISOString();
+  const res = await c.env.DB.batch([
+    c.env.DB.prepare(
+      "UPDATE recipe_locales SET status = 'rejected' WHERE recipe_id = ? AND status = 'draft' AND EXISTS (SELECT 1 FROM recipes r WHERE r.id = ? AND r.owner_user_id = ? AND r.submitted_at IS NULL AND r.removed_by_user_at IS NULL AND (r.review_status IS NULL OR r.review_status = 'needs_changes'))",
+    ).bind(id, id, user.id),
+    c.env.DB.prepare(
+      "UPDATE recipes SET removed_by_user_at = ? WHERE id = ? AND owner_user_id = ? AND submitted_at IS NULL AND removed_by_user_at IS NULL AND (review_status IS NULL OR review_status = 'needs_changes')",
+    ).bind(now, id, user.id),
+  ]);
+  if (res[0]!.meta.changes !== 1) return err(c, 404, 'Draft not found, or it was already sent in for review.');
+  await deleteDraftPhoto(c.env, { recipeId: id, userId: user.id });
   return c.json({ ok: true }, 200, NO_STORE);
 });
 
