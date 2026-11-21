@@ -9,6 +9,9 @@ import {
   availableCuisines,
   searchCatalog,
   suggestCatalog,
+  extractStepMinutes,
+  contributorSlug,
+  contributorInitials,
   SEARCH_PAGE_SIZE,
   type SearchableRecipe,
 } from './index';
@@ -218,5 +221,20 @@ describe('cuisines, collections, searchCatalog & suggestCatalog', () => {
     expect(sug.ingredients).toContain('potatoes');
     const catSug = suggestCatalog(ITEMS, 'soup', 'en', (r) => `/${r.country}/recipes/${r.slug}`);
     expect(catSug.categories.some((c) => c.href === '/recipes/soups-stews')).toBe(true);
+  });
+
+  it('derives contributor slugs, monogram initials, and step timer durations cleanly', () => {
+    expect(contributorSlug('Sam T.')).toBe('sam-t');
+    expect(contributorSlug('  Elena Morales ')).toBe('elena-morales');
+    expect(contributorSlug('   ')).toBeNull();
+    expect(contributorSlug('???')).toBeNull();
+    expect(contributorInitials('Sam T.')).toBe('ST');
+    expect(contributorInitials('Elena')).toBe('E');
+    expect(contributorInitials('')).toBe('2Y');
+
+    expect(extractStepMinutes('Simmer gently for 15 minutes.')).toBe(15);
+    expect(extractStepMinutes('Hornear 2 horas hasta dorar.')).toBe(120);
+    expect(extractStepMinutes('Add 0 min wait')).toBeNull();
+    expect(extractStepMinutes('Chop onions finely.')).toBeNull();
   });
 });

@@ -36,6 +36,9 @@ import {
   type SearchQuery,
   type RecipePage,
   asImageStyle,
+  contributorSlug,
+  contributorInitials,
+  uiStrings,
 } from '@2yolks/contracts';
 import {
   browserLang,
@@ -58,7 +61,7 @@ import {
 } from '@2yolks/web/server';
 import { isUntested, localizedCountryName } from '@2yolks/contracts';
 import type { ImageStyle } from '@2yolks/contracts';
-import { recipeSlugAliases,  createDb, recipes, recipeLocales, recipeImages, sources, published, imageCleared, searchGapLogs } from './db';
+import { recipeSlugAliases, createDb, recipes, recipeLocales, recipeImages, sources, published, imageCleared, searchGapLogs, recipeTestReports } from './db';
 import { appApi } from './appapi';
 import { mcpApp, getMcpManifest } from './mcp';
 import { accountApp, readSessionUser, loadSavedRecipeIds, SESSION_COOKIE, type AccountBindings } from './account';
@@ -339,6 +342,11 @@ app.get('/sitemap.xml', async (c) => {
     for (const cItem of availableCuisines(discRows, 'en')) {
       addHubAlternates(`/cuisine/${cItem.slug}`);
     }
+    const cookSlugs = [...new Set(discRows.map((r) => r.authorSlug).filter((s): s is string => Boolean(s)))].sort();
+    if (cookSlugs.length > 0) {
+      addHubAlternates('/cooks');
+      for (const cookSlug of cookSlugs) addHubAlternates(`/cooks/${cookSlug}`);
+    }
   }
   for (const list of byRecipe.values()) {
     const linksList = list.map(
@@ -420,6 +428,22 @@ app.get('/img/recipe/:imageId', async (c) => {
 // --- SSR pages ----------------------------------------------------------
 
 
+/** Count approved community kitchen-test reports per recipe id (migration 0008). */
+async function approvedReportCountsByRecipe(db: ReturnType<typeof createDb>): Promise<Map<string, number>> {
+  try {
+    const rows = await db
+      .select({ recipeId: recipeTestReports.recipeId })
+      .from(recipeTestReports)
+      .where(eq(recipeTestReports.status, 'approved'));
+    const counts = new Map<string, number>();
+    for (const r of rows) counts.set(r.recipeId, (counts.get(r.recipeId) ?? 0) + 1);
+    return counts;
+  } catch {
+    // Tolerate sparse test D1 schemas that omit migration 0008.
+    return new Map();
+  }
+}
+
 /** Latest rights-cleared hero image per recipe (migration 0004): the list
  * thumbnail and its honest label. Uncleared rows never reach the list. */
 async function heroImagesByRecipe(db: ReturnType<typeof createDb>) {
@@ -495,6 +519,7 @@ async function loadDiscoveryRecipeRows(db: ReturnType<typeof createDb>, demo: bo
       ingredientsJson: recipeLocales.ingredientsJson,
       stepsJson: recipeLocales.stepsJson,
       originCountry: recipes.originCountry,
+      authorName: recipes.authorName,
       testedAt: recipes.testedAt,
       category: recipes.category,
       prepMinutes: recipes.prepMinutes,
@@ -505,10 +530,12 @@ async function loadDiscoveryRecipeRows(db: ReturnType<typeof createDb>, demo: bo
     .innerJoin(recipes, eq(recipeLocales.recipeId, recipes.id))
     .innerJoin(sources, eq(recipes.sourceId, sources.id))
     .where(published(db, demo));
-  const heroByRecipe = await heroImagesByRecipe(db);
+  const [heroByRecipe, reportCounts] = await Promise.all([heroImagesByRecipe(db), approvedReportCountsByRecipe(db)]);
   return recipeRows.map((r) => {
     const ings = parseIngredientsData(r.ingredientsJson);
     const steps = parseStepsData(r.stepsJson);
+    const authorName = r.authorName?.trim() || null;
+    const approvedCount = reportCounts.get(r.id) ?? 0;
     return {
       id: r.id,
       country: r.country,
@@ -516,7 +543,10 @@ async function loadDiscoveryRecipeRows(db: ReturnType<typeof createDb>, demo: bo
       slug: r.slug,
       title: r.title,
       originCountry: r.originCountry ?? null,
+      authorName,
+      authorSlug: contributorSlug(authorName),
       untested: isUntested({ testedAt: r.testedAt }),
+      cookedCount: approvedCount || (r.testedAt ? 1 : 0),
       category: r.category,
       prepMinutes: r.prepMinutes,
       cookMinutes: r.cookMinutes,
@@ -751,6 +781,93 @@ app.get('/cuisine/:slug', async (c) => {
     ),
     200,
     items.length === 0 ? { 'x-robots-tag': 'noindex' } : undefined,
+  );
+});
+
+app.get('/cooks', async (c) => {
+  const { lang } = discoveryLang(c);
+  const l = lang === 'es' || lang === 'fr' ? lang : 'en';
+  const lq = l === 'en' ? '' : `?lang=${l}`;
+  const db = createDb(c.env.DB);
+  const selected = discoveryRecipes(await loadDiscoveryRecipeRows(db, demoAllowed(c)), l);
+  const bySlug = new Map<string, { slug: string; name: string; count: number }>();
+  for (const r of selected) {
+    if (!r.authorSlug || !r.authorName) continue;
+    const prev = bySlug.get(r.authorSlug);
+    if (prev) prev.count += 1;
+    else bySlug.set(r.authorSlug, { slug: r.authorSlug, name: r.authorName, count: 1 });
+  }
+  const t = uiStrings(l);
+  const items = [...bySlug.values()]
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
+    .map((co) => ({
+      slug: co.slug,
+      href: `/cooks/${co.slug}${lq}`,
+      label: co.name,
+      description: `${co.count} ${co.count === 1 ? t.recipeWord : t.recipesWord}`,
+      count: co.count,
+    }));
+  const heading = t.cooksNav;
+  const intro = l === 'es'
+    ? 'Cocineros y autores que comparten recetas honestas en 2yolks.'
+    : l === 'fr'
+      ? 'Les cuisiniers et contributeurs qui partagent des recettes sur 2yolks.'
+      : 'Home cooks and contributors sharing tested and honest recipes on 2yolks.';
+  const nav = await siteNav(db, demoAllowed(c), l, new URL(c.req.url));
+  const origin = c.env.CANONICAL_ORIGIN ?? new URL(c.req.url).origin;
+  return c.html(
+    renderHubDirectoryPage({ kind: 'cooks', lang: l, title: heading, intro, items }, { canonicalPath: '/cooks', nav, origin }),
+    200,
+    items.length === 0 ? { 'x-robots-tag': 'noindex' } : undefined,
+  );
+});
+
+app.get('/cooks/:slug', async (c) => {
+  const slug = c.req.param('slug').toLowerCase();
+  const { lang } = discoveryLang(c);
+  const l = lang === 'es' || lang === 'fr' ? lang : 'en';
+  const lq = l === 'en' ? '' : `?lang=${l}`;
+  const db = createDb(c.env.DB);
+  const selected = discoveryRecipes(await loadDiscoveryRecipeRows(db, demoAllowed(c)), l);
+  const items = selected.filter((r) => r.authorSlug === slug);
+  if (items.length === 0) return c.notFound();
+  const authorName = items[0]!.authorName!;
+  const hero = items.find((r) => r.imageId && r.imageStyle === 'photo') ?? items.find((r) => r.imageId && r.imageStyle);
+  const byOther = new Map<string, { slug: string; name: string; count: number }>();
+  for (const r of selected) {
+    if (!r.authorSlug || !r.authorName || r.authorSlug === slug) continue;
+    const prev = byOther.get(r.authorSlug);
+    if (prev) prev.count += 1;
+    else byOther.set(r.authorSlug, { slug: r.authorSlug, name: r.authorName, count: 1 });
+  }
+  const relatedHubs = [...byOther.values()]
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
+    .slice(0, 6)
+    .map((co) => ({ href: `/cooks/${co.slug}${lq}`, label: co.name, count: co.count }));
+  const t = uiStrings(l);
+  const intro = l === 'es'
+    ? `Recetas publicadas compartidas por ${authorName} en 2yolks.`
+    : l === 'fr'
+      ? `Recettes publiées partagées par ${authorName} sur 2yolks.`
+      : `Published recipes shared by ${authorName} on 2yolks.`;
+  const nav = await siteNav(db, demoAllowed(c), l, new URL(c.req.url));
+  const origin = c.env.CANONICAL_ORIGIN ?? new URL(c.req.url).origin;
+  return c.html(
+    renderHubPage(
+      {
+        kind: 'cook',
+        slug,
+        lang: l,
+        title: authorName,
+        intro,
+        avatarInitials: contributorInitials(authorName),
+        heroImage: hero && hero.imageId && hero.imageStyle ? { id: hero.imageId, style: hero.imageStyle, alt: hero.title } : null,
+        recipes: items,
+        searchHref: `/search${lq}`,
+        relatedHubs,
+      },
+      { canonicalPath: `/cooks/${slug}`, nav, origin, parentLabel: t.cooksNav, parentPath: '/cooks' },
+    ),
   );
 });
 
@@ -1129,6 +1246,16 @@ const recipeRoute = async (c: Context<{ Bindings: Bindings }>) => {
     if (idx < 0 || idx >= stepCount || stepImages[idx]) continue;
     stepImages[idx] = { url: `${origin}/img/recipe/${row.id}`, style: row.style };
   }
+  let approvedReportCount = 0;
+  try {
+    const approvedReports = await db
+      .select({ id: recipeTestReports.id })
+      .from(recipeTestReports)
+      .where(and(eq(recipeTestReports.recipeId, recipeId), eq(recipeTestReports.status, 'approved')));
+    approvedReportCount = approvedReports.length;
+  } catch { /* tolerate sparse test D1 schemas without migration 0008 */ }
+  const cookedCount = approvedReportCount || (canonical.recipes.testedAt ? 1 : 0);
+
   const page: RecipePage = {
     recipe: {
       id: canonical.recipes.id,
@@ -1144,6 +1271,8 @@ const recipeRoute = async (c: Context<{ Bindings: Bindings }>) => {
       totalMinutes: canonical.recipes.totalMinutes,
       baseServings: canonical.recipes.baseServings,
       category: (canonical.recipes.category ?? null) as RecipePage['recipe']['category'],
+      authorName: canonical.recipes.authorName?.trim() || null,
+      cookedCount,
     },
     heroImage: heroRows[0] ? { url: `${origin}/img/recipe/${heroRows[0].id}`, style: heroRows[0].style } : null,
     stepImages,
@@ -1173,12 +1302,15 @@ const recipeRoute = async (c: Context<{ Bindings: Bindings }>) => {
     },
   };
   const nav = alternates.filter(a=>a.hreflang!=='x-default').map(a=>({href:a.href,label:({en:'English',es:'Español',fr:'Français'} as Record<string,string>)[a.hreflang.split('-')[0]!]??a.hreflang,current:a.hreflang.toLowerCase()===`${page.locale.lang}-${page.locale.country}`.toLowerCase()}));
-  const otherRows = await db
-    .select({ id: recipeLocales.recipeId, country: recipeLocales.country, lang: recipeLocales.lang, slug: recipeLocales.slug, title: recipeLocales.title, testedAt: recipes.testedAt, category: recipes.category, totalMinutes: recipes.totalMinutes })
-    .from(recipeLocales)
-    .innerJoin(recipes, eq(recipeLocales.recipeId, recipes.id))
-    .innerJoin(sources, eq(recipes.sourceId, sources.id))
-    .where(and(ne(recipeLocales.recipeId, recipeId), published(db, demoAllowed(c))));
+  const [otherRows, relHeroByRecipe] = await Promise.all([
+    db
+      .select({ id: recipeLocales.recipeId, country: recipeLocales.country, lang: recipeLocales.lang, slug: recipeLocales.slug, title: recipeLocales.title, testedAt: recipes.testedAt, category: recipes.category, totalMinutes: recipes.totalMinutes, authorName: recipes.authorName })
+      .from(recipeLocales)
+      .innerJoin(recipes, eq(recipeLocales.recipeId, recipes.id))
+      .innerJoin(sources, eq(recipes.sourceId, sources.id))
+      .where(and(ne(recipeLocales.recipeId, recipeId), published(db, demoAllowed(c)))),
+    heroImagesByRecipe(db),
+  ]);
   const byRelId = new Map<string, typeof otherRows>();
   for (const r of otherRows) {
     const list = byRelId.get(r.id) ?? [];
@@ -1193,16 +1325,24 @@ const recipeRoute = async (c: Context<{ Bindings: Bindings }>) => {
       return aCat - bCat || a.title.localeCompare(b.title);
     })
     .slice(0, 4)
-    .map((r) => ({
-      id: r.id,
-      country: r.country,
-      lang: r.lang,
-      slug: r.slug,
-      title: r.title,
-      untested: isUntested({ testedAt: r.testedAt }),
-      category: r.category,
-      totalMinutes: r.totalMinutes,
-    }));
+    .map((r) => {
+      const h = relHeroByRecipe.get(r.id);
+      const authorName = r.authorName?.trim() || null;
+      return {
+        id: r.id,
+        country: r.country,
+        lang: r.lang,
+        slug: r.slug,
+        title: r.title,
+        untested: isUntested({ testedAt: r.testedAt }),
+        category: r.category,
+        totalMinutes: r.totalMinutes,
+        imageId: h?.id ?? null,
+        imageStyle: h?.style ?? null,
+        authorName,
+        authorSlug: contributorSlug(authorName),
+      };
+    });
   return c.html(renderRecipe(page, alternates, { nav, countryName: localizedCountryName(parsed.country, page.locale.lang), related }));
 };
 const makeRecipeSvgRoute =

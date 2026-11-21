@@ -78,6 +78,10 @@ await waitForHealth(PORT, server);
 try {
   let r = await get('/');
   check('home 200 with language-first discovery, no country cards', r.status === 200 && r.body.includes('RECIPES WITHOUT BORDERS') && !r.body.includes('class="country-grid"'));
+  check('home defaults to grid cards and theme toggle has aria-pressed', r.body.includes('data-view="grid"') && r.body.includes('data-theme-toggle="true" aria-pressed="false"'));
+
+  r = await get('/cooks');
+  check('GET /cooks returns 200 with noindex', r.status === 200 && r.headers.get('x-robots-tag') === 'noindex');
 
   r = await get('/us/');
   check('empty wave-1 country home is 200 + noindex header', r.status === 200 && r.headers.get('x-robots-tag') === 'noindex');
@@ -167,6 +171,9 @@ try {
     check('interactive: ingredient checkboxes', r.body.includes('<input type="checkbox"'));
     check('interactive: cook mode overlay + data + client script', r.body.includes('data-cook-mode') && r.body.includes('id="cook-data"') && r.body.includes('wakeLock'));
     check('interactive: es cook-mode chrome', r.body.includes('Modo cocina') && r.body.includes('Ir a la receta'));
+
+    r = await get2('/us/recipes/ranch-eggs');
+    check('phase 4 recipe enhancements: meter, ingredient icons, inline step timer', r.status === 200 && r.body.includes('class="recipe-meter"') && r.body.includes('class="ing-icon') && r.body.includes('data-inline-timer="3"'));
 
     r = await get2('/mx/recipes/r1-huevos-rancheros');
     check('legacy URL 301 directly to clean canonical', r.status === 301 && r.location === '/mx/recipes/huevos-rancheros');

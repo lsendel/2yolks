@@ -7,13 +7,35 @@
 export const THEME_CLIENT_SCRIPT = `(function () {
   var btns = Array.prototype.slice.call(document.querySelectorAll('[data-theme-toggle]'));
   if (!btns.length) return;
+  var root = document.documentElement;
+  var mq = typeof window !== 'undefined' && window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+  function effectiveDark() {
+    var cur = root.getAttribute('data-theme');
+    if (cur === 'dark') return true;
+    if (cur === 'light') return false;
+    return !!(mq && mq.matches);
+  }
+  function syncPressed() {
+    var on = effectiveDark() ? 'true' : 'false';
+    btns.forEach(function (btn) { btn.setAttribute('aria-pressed', on); });
+  }
+  syncPressed();
+  if (mq && typeof mq.addEventListener === 'function') {
+    mq.addEventListener('change', function () {
+      var saved = null;
+      try { saved = localStorage.getItem('2y-theme'); } catch (e) {}
+      if (saved !== 'dark' && saved !== 'light') {
+        root.setAttribute('data-theme', mq.matches ? 'dark' : 'light');
+        syncPressed();
+      }
+    });
+  }
   btns.forEach(function (btn) {
     btn.addEventListener('click', function () {
-      var root = document.documentElement;
-      var cur = root.getAttribute('data-theme');
-      var next = cur === 'dark' ? 'light' : 'dark';
+      var next = effectiveDark() ? 'light' : 'dark';
       root.setAttribute('data-theme', next);
       try { localStorage.setItem('2y-theme', next); } catch (e) {}
+      syncPressed();
     });
   });
 })();`;
@@ -51,22 +73,31 @@ export const GLOBAL_CHROME_SCRIPT = `(function () {
   // --- 1. View toggle (Cards / Index across Home, Search, Hubs, Saved) -------
   var lists = qsa(document, '[data-recipe-list]');
   var viewBtns = qsa(document, '[data-view-btn]');
-  function setView(mode) {
-    var v = mode === 'grid' ? 'grid' : 'list';
-    lists.forEach(function (l) { l.setAttribute('data-view', v); });
-    viewBtns.forEach(function (b) {
-      b.setAttribute('aria-pressed', b.getAttribute('data-view-btn') === v ? 'true' : 'false');
-    });
+  function prefersReducedMotion() {
+    return !!(W && typeof W.matchMedia === 'function' && W.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  }
+  function setView(mode, animate) {
+    var v = mode === 'list' ? 'list' : 'grid';
+    function apply() {
+      lists.forEach(function (l) { l.setAttribute('data-view', v); });
+      viewBtns.forEach(function (b) {
+        b.setAttribute('aria-pressed', b.getAttribute('data-view-btn') === v ? 'true' : 'false');
+      });
+    }
+    if (animate && document && typeof document.startViewTransition === 'function' && !prefersReducedMotion()) {
+      try { document.startViewTransition(apply); return; } catch (e) {}
+    }
+    apply();
   }
   if (viewBtns.length && lists.length) {
     try {
       var savedView = local ? local.getItem('2y-view') : null;
-      if (savedView === 'grid' || savedView === 'list') setView(savedView);
+      if (savedView === 'grid' || savedView === 'list') setView(savedView, false);
     } catch (e) {}
     viewBtns.forEach(function (b) {
       b.addEventListener('click', function () {
-        var mode = b.getAttribute('data-view-btn') || 'list';
-        setView(mode);
+        var mode = b.getAttribute('data-view-btn') || 'grid';
+        setView(mode, true);
         if (local) { try { local.setItem('2y-view', mode); } catch (e) {} }
       });
     });
@@ -296,10 +327,18 @@ export const GLOBAL_CHROME_SCRIPT = `(function () {
     btn.addEventListener('click', function (e) {
       e.preventDefault();
       e.stopPropagation();
+      var wasSaved = btn.getAttribute('aria-pressed') === 'true';
       var id = btn.getAttribute('data-save-recipe');
       var meta = null;
       try { meta = JSON.parse(btn.getAttribute('data-recipe-meta') || 'null'); } catch (err) {}
       toggleSavedById(id, meta);
+      if (!wasSaved && !prefersReducedMotion() && btn.classList && typeof btn.classList.add === 'function') {
+        btn.classList.remove('is-popping');
+        btn.classList.add('is-popping');
+        setTimeout(function () {
+          if (btn.classList) btn.classList.remove('is-popping');
+        }, 380);
+      }
     });
   });
 
@@ -1009,7 +1048,7 @@ export const RECIPE_CLIENT_SCRIPT = `(function () {
   }
   var shareNav = document.querySelector('[data-share-url]');
   var pageTitle = (shareNav && shareNav.getAttribute('data-share-title')) || document.title;
-  var pageUrl = (shareNav && shareNav.getAttribute('data-share-url')) || window.location.href;
+  var pageUrl = (shareNav && shareNav.getAttribute('data-share-url')) || (window && window.location ? window.location.href : '');
   var groceryBtn = document.querySelector('[data-share-grocery]');
   if (groceryBtn) {
     groceryBtn.addEventListener('click', function () {
@@ -1120,7 +1159,10 @@ export const RECIPE_CLIENT_SCRIPT = `(function () {
   var openBtn = document.querySelector('[data-cook-open]');
   if (dataEl && overlay && openBtn) {
     var cookData = JSON.parse(dataEl.textContent);
-    var steps = Array.prototype.map.call(document.querySelectorAll('ol.steps li'), function (li) { return li.textContent; });
+    var steps = Array.prototype.map.call(document.querySelectorAll('ol.steps li'), function (li) {
+      var st = li.querySelector('[data-step-text]');
+      return st ? st.textContent : li.textContent;
+    });
     if (!steps.length) steps = cookData.steps;
     var strings = cookData.strings || {};
     var stepEl = overlay.querySelector('[data-cook-step]');
@@ -1153,7 +1195,10 @@ export const RECIPE_CLIENT_SCRIPT = `(function () {
       timerBtn.hidden = false;
     }
     function open() {
-      var liveSteps = Array.prototype.map.call(document.querySelectorAll('ol.steps li'), function (li) { return li.textContent; });
+      var liveSteps = Array.prototype.map.call(document.querySelectorAll('ol.steps li'), function (li) {
+        var st = li.querySelector('[data-step-text]');
+        return st ? st.textContent : li.textContent;
+      });
       if (liveSteps.length) steps = liveSteps;
       overlay.hidden = false;
       document.body.style.overflow = 'hidden';
@@ -1211,6 +1256,62 @@ export const RECIPE_CLIENT_SCRIPT = `(function () {
       timerId = setInterval(tick, 500);
     });
   }
+  // Inline step timer chips (D7)
+  Array.prototype.slice.call(document.querySelectorAll('[data-inline-timer]')).forEach(function (chip) {
+    var mins = parseInt(chip.getAttribute('data-inline-timer') || '0', 10);
+    if (!mins || mins <= 0) return;
+    var disp = chip.querySelector('[data-chip-display]') || chip;
+    var baseLabel = chip.getAttribute('data-timer-label-base') || (mins + ' min');
+    var doneLabel = chip.getAttribute('data-done-label') || 'Done!';
+    var tid = null;
+    function reset() {
+      if (tid) { clearInterval(tid); tid = null; }
+      if (chip.classList) {
+        chip.classList.remove('is-running');
+        chip.classList.remove('is-done');
+      }
+      chip.setAttribute('aria-pressed', 'false');
+      disp.textContent = baseLabel;
+    }
+    chip.addEventListener('click', function () {
+      if (tid) { reset(); return; }
+      if (chip.classList) {
+        chip.classList.remove('is-done');
+        chip.classList.add('is-running');
+      }
+      chip.setAttribute('aria-pressed', 'true');
+      var end = Date.now() + mins * 60000;
+      function update() {
+        var left = Math.max(0, Math.round((end - Date.now()) / 1000));
+        if (left <= 0) {
+          clearInterval(tid);
+          tid = null;
+          if (chip.classList) {
+            chip.classList.remove('is-running');
+            chip.classList.add('is-done');
+          }
+          chip.setAttribute('aria-pressed', 'false');
+          disp.textContent = doneLabel;
+          try {
+            var Ctx = typeof window !== 'undefined' && (window.AudioContext || window.webkitAudioContext);
+            if (Ctx) {
+              var ctx = new Ctx(), osc = ctx.createOscillator(), g = ctx.createGain();
+              osc.type = 'sine'; osc.frequency.value = 880;
+              g.gain.setValueAtTime(0.16, ctx.currentTime);
+              g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.5);
+              osc.connect(g); g.connect(ctx.destination);
+              osc.start(); osc.stop(ctx.currentTime + 0.5);
+            }
+          } catch (e4) {}
+          return;
+        }
+        var mm = Math.floor(left / 60), ss = left % 60;
+        disp.textContent = mm + ':' + (ss < 10 ? '0' : '') + ss;
+      }
+      update();
+      tid = setInterval(update, 500);
+    });
+  });
 })();`;
 
 /**

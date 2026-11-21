@@ -261,3 +261,157 @@ export function EmptySkilletIllustration() {
     </svg>
   );
 }
+
+const ART_PALETTES = [
+  { bg: '#2e1f39', fg: '#e0fa80', accent: '#ffd166', line: '#faf7f4', subtle: '#49335a' },
+  { bg: '#ffd166', fg: '#211729', accent: '#fffdf8', line: '#302038', subtle: '#e8b948' },
+  { bg: '#d9f570', fg: '#211729', accent: '#ffd166', line: '#211729', subtle: '#bfe04c' },
+] as const;
+
+function seedPalette(seed?: string, slug?: string | null) {
+  const s = `${seed ?? ''}:${slug ?? ''}`;
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return ART_PALETTES[h % ART_PALETTES.length]!;
+}
+
+/** Bold 4:5 editorial category illustration with zero repeated recipe title text (D3). */
+export function CategoryArt({ slug, seed }: { slug?: string | null; seed?: string }) {
+  const p = seedPalette(seed, slug);
+  return (
+    <svg className="category-art-svg" viewBox="0 0 240 300" fill="none" aria-hidden="true" focusable="false">
+      <rect width="240" height="300" fill={p.bg} />
+      <path d="M0 244H240" stroke={p.subtle} strokeWidth="2" />
+      <circle cx="120" cy="144" r="78" fill={p.subtle} opacity="0.45" />
+      {slug === 'soups-stews' ? (
+        <>
+          <path d="M84 88c0-14 12-16 12-30M120 80c0-14 12-16 12-30M156 88c0-14 12-16 12-30" stroke={p.accent} strokeWidth="5" strokeLinecap="round" />
+          <path d="M168 62l-26 68" stroke={p.line} strokeWidth="6" strokeLinecap="round" />
+          <rect x="48" y="128" width="144" height="14" fill={p.accent} />
+          <path d="M56 142h128v28c0 32-26 56-64 56s-64-24-64-56v-28z" fill={p.fg} />
+          <path d="M36 142h16M188 142h16" stroke={p.line} strokeWidth="7" strokeLinecap="round" />
+        </>
+      ) : slug === 'tacos-tortillas' ? (
+        <>
+          <path d="M44 196a76 76 0 0 1 152 0H44z" fill={p.fg} stroke={p.line} strokeWidth="4" />
+          <path d="M72 162c12-12 24-12 36 0 12 12 24 12 36 0 12-12 24-12 36 0" stroke={p.accent} strokeWidth="7" strokeLinecap="round" />
+          <circle cx="94" cy="142" r="9" fill={p.accent} />
+          <circle cx="126" cy="134" r="8" fill={p.line} />
+          <path d="M168 214a22 22 0 1 0 38-20l-38 20z" fill={p.accent} stroke={p.line} strokeWidth="3" />
+        </>
+      ) : slug === 'dumplings' ? (
+        <>
+          <rect x="52" y="180" width="136" height="36" rx="4" fill={p.subtle} stroke={p.line} strokeWidth="4" />
+          <path d="M68 180c0-30 22-50 52-50s52 20 52 50H68z" fill={p.fg} stroke={p.line} strokeWidth="4" />
+          <path d="M96 136l10 18M120 130v22M144 136l-10 18" stroke={p.line} strokeWidth="4" strokeLinecap="round" />
+          <circle cx="88" cy="166" r="6" fill={p.accent} />
+          <circle cx="152" cy="166" r="6" fill={p.accent} />
+        </>
+      ) : slug === 'breakfast' ? (
+        <>
+          <circle cx="116" cy="150" r="66" fill={p.fg} stroke={p.line} strokeWidth="5" />
+          <path d="M174 186l40 28" stroke={p.line} strokeWidth="10" strokeLinecap="round" />
+          <ellipse cx="102" cy="152" rx="28" ry="24" fill={p.line} />
+          <ellipse cx="134" cy="144" rx="25" ry="22" fill={p.line} />
+          <circle cx="100" cy="154" r="13" fill={p.accent} />
+          <circle cx="134" cy="146" r="11" fill={p.accent} />
+        </>
+      ) : slug === 'mains' ? (
+        <>
+          <rect x="44" y="182" width="152" height="14" fill={p.line} />
+          <path d="M54 182a66 66 0 0 1 132 0H54z" fill={p.fg} stroke={p.line} strokeWidth="4" />
+          <circle cx="120" cy="108" r="11" fill={p.accent} stroke={p.line} strokeWidth="4" />
+          <path d="M88 152c16-14 48-14 64 0" stroke={p.accent} strokeWidth="6" strokeLinecap="round" />
+        </>
+      ) : slug === 'sides' ? (
+        <>
+          <path d="M48 152h144a72 68 0 0 1-144 0z" fill={p.fg} stroke={p.line} strokeWidth="4" />
+          <circle cx="96" cy="138" r="18" fill={p.accent} />
+          <circle cx="134" cy="130" r="22" fill={p.subtle} stroke={p.line} strokeWidth="4" />
+          <path d="M114 148c4-28 24-44 50-44-4 28-24 44-50 44z" fill={p.accent} stroke={p.line} strokeWidth="3" />
+        </>
+      ) : slug === 'snacks-dips' ? (
+        <>
+          <path d="M56 164h128c-6 34-30 52-64 52s-58-18-64-52z" fill={p.fg} stroke={p.line} strokeWidth="4" />
+          <path d="M88 154l32-54 32 54H88z" fill={p.accent} stroke={p.line} strokeWidth="4" />
+          <path d="M128 154l26-44 26 44h-52z" fill={p.line} opacity="0.85" />
+        </>
+      ) : slug === 'desserts-baking' ? (
+        <>
+          <path d="M62 198l18-56h80l18 56H62z" fill={p.fg} stroke={p.line} strokeWidth="4" />
+          <path d="M62 170h116" stroke={p.accent} strokeWidth="7" />
+          <path d="M72 142a22 22 0 0 1 28-28 28 28 0 0 1 40 0 22 22 0 0 1 28 28H72z" fill={p.line} />
+          <circle cx="120" cy="96" r="10" fill={p.accent} />
+        </>
+      ) : slug === 'drinks' ? (
+        <>
+          <path d="M66 96h108l-16 64a39 39 0 0 1-76 0L66 96z" fill={p.fg} stroke={p.line} strokeWidth="4" />
+          <path d="M120 198v28M92 226h56" stroke={p.line} strokeWidth="6" strokeLinecap="round" />
+          <circle cx="152" cy="96" r="20" fill={p.accent} stroke={p.line} strokeWidth="4" />
+          <path d="M104 120l14 14M128 114l14 14" stroke={p.accent} strokeWidth="5" strokeLinecap="round" />
+        </>
+      ) : (
+        <>
+          <ellipse cx="96" cy="150" rx="34" ry="31" fill={p.fg} />
+          <ellipse cx="148" cy="140" rx="31" ry="29" fill={p.accent} />
+          <path d="M82 138a16 14 0 0 1 18-7" stroke={p.bg} strokeWidth="4" strokeLinecap="round" />
+          <path d="M135 129a14 12 0 0 1 16-6" stroke={p.bg} strokeWidth="4" strokeLinecap="round" />
+        </>
+      )}
+    </svg>
+  );
+}
+
+const RE_EGG_DAIRY = /\b(eggs?|huevos?|oeufs?|milk|leche|lait|butter|mantequilla|beurre|cheese|queso|fromage|cream|crema|cr[eè]me|yogurt|yogur)\b/i;
+const RE_PROTEIN = /\b(chicken|pollo|poulet|beef|res|b[oœ]euf|pork|cerdo|porc|fish|pescado|poisson|shrimp|camar[oó]n|crevette|tofu|beans?|frijol(?:es)?|haricots?|lentils?|lentejas?)\b/i;
+const RE_GRAIN = /\b(flour|harina|farine|bread|pan|pain|tortillas?|rice|arroz|riz|pasta|spaghetti|noodles?|oats?|avena|hominy|ma[ií]z|cornmeal)\b/i;
+const RE_PRODUCE = /\b(onions?|cebollas?|oignons?|garlic|ajo|ail|tomato(?:es)?|jitomates?|chiles?|chilis?|peppers?|pimientos?|limes?|lim[oó]n|citrons?|avocados?|aguacates?|cilantro|parsley|persil|potato(?:es)?|papas?|pommes?|cabbage|col|chou|sweet\s+potato)\b/i;
+const RE_LIQUID_SPICE = /\b(oil|aceite|huile|salt|sal|sel|sugar|az[uú]car|sucre|honey|miel|vinegar|vinagre|vinaigre|sauce|salsa|soy|broth|stock|caldo|bouillon|water|agua|eau|wine|vino|vin)\b/i;
+
+/** Small deterministic category micro-icon next to recipe ingredient lines (D7). */
+export function IngredientIcon({ text }: { text: string }) {
+  let kind: 'egg' | 'protein' | 'grain' | 'produce' | 'liquid' | 'default' = 'default';
+  if (RE_EGG_DAIRY.test(text)) kind = 'egg';
+  else if (RE_PROTEIN.test(text)) kind = 'protein';
+  else if (RE_GRAIN.test(text)) kind = 'grain';
+  else if (RE_PRODUCE.test(text)) kind = 'produce';
+  else if (RE_LIQUID_SPICE.test(text)) kind = 'liquid';
+  return (
+    <svg className={`ing-icon ing-icon--${kind}`} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+      {kind === 'egg' ? (
+        <>
+          <ellipse cx="8" cy="8.5" rx="4.5" ry="5.5" />
+          <circle cx="8" cy="9.5" r="1.8" fill="currentColor" stroke="none" />
+        </>
+      ) : kind === 'protein' ? (
+        <path d="M3.5 9.5c0-3.2 2.4-5.5 5.5-5.5 2.4 0 4 1.5 4 3.5 0 2.5-2.2 4.8-5.2 4.8H5a1.5 1.5 0 0 1-1.5-1.5z" />
+      ) : kind === 'grain' ? (
+        <>
+          <path d="M8 2.5v11" />
+          <path d="M8 6.5c-2.2-.2-3.5-1.5-3.5-3.2 2.2.2 3.5 1.5 3.5 3.2z" />
+          <path d="M8 9.8c2.2-.2 3.5-1.5 3.5-3.2-2.2.2-3.5 1.5-3.5 3.2z" />
+        </>
+      ) : kind === 'produce' ? (
+        <>
+          <path d="M4 12c0-4.5 3.5-8 8.5-8 0 5-3.5 8-8.5 8z" />
+          <path d="M3.5 12.5L7.5 8.5" />
+        </>
+      ) : kind === 'liquid' ? (
+        <path d="M8 2.4s4.2 4.5 4.2 7.2a4.2 4.2 0 1 1-8.4 0C3.8 6.9 8 2.4 8 2.4z" />
+      ) : (
+        <circle cx="8" cy="8" r="2.2" fill="currentColor" stroke="none" />
+      )}
+    </svg>
+  );
+}
+
+/** Small inline ⓘ provenance badge icon (D3). */
+export function InfoBadgeIcon({ className = 'info-icon' }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+      <circle cx="8" cy="8" r="6" />
+      <path d="M8 7.5v3.5" />
+      <circle cx="8" cy="5.1" r="0.7" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
