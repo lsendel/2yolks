@@ -17,7 +17,7 @@ import { deleteDraftPhoto } from './draftPhotos';
 import {
   type AccountBindings, type FormState,
   sha256Hex, randomCode, randomToken, newId, normEmail, str,
-  reserveMail, cleanupExpired, limited, parseForm, buildSubmission, loadOwned,
+  reserveMail, cleanupExpired, limited, parseForm, buildSubmission, loadOwned, tombstoneUser,
   SESSION_DAYS, MAX_ATTEMPTS, CODES_PER_EMAIL_10MIN, codesPerDay, NOTICES_PER_DAY,
   MAX_DRAFTS_PER_USER, MAX_ROWS_PER_USER,
 } from './account';
@@ -86,7 +86,7 @@ async function bearerUser(c: Ctx): Promise<User | null> {
   if (!m) return null;
   const id = await sha256Hex(m[1]!);
   const row = await c.env.DB.prepare(
-    'SELECT u.id AS id, u.email AS email, u.display_name AS displayName FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.id = ? AND s.expires_at > ?',
+    'SELECT u.id AS id, u.email AS email, u.display_name AS displayName FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.id = ? AND s.expires_at > ? AND u.deleted_at IS NULL',
   ).bind(id, Date.now()).first<User>();
   return row ?? null;
 }
@@ -184,14 +184,15 @@ appApi.get('/me', (c) => {
   return c.json({ user: u }, 200, NO_STORE);
 });
 
-// Account deletion is NOT RELEASED. The retention/destruction policy
-// (never-submitted drafts vs submitted/published evidence vs license
-// attribution) and the implementation's atomicity are still under review;
-// until both are settled this route must not mutate anything. It stays
-// registered so clients get an explicit, honest answer instead of a 404
-// that could be mistaken for "already deleted".
-appApi.delete('/me/account', (c) => {
-  return c.json({ code: 'ACCOUNT_DELETION_UNAVAILABLE', message: 'Account deletion is not available yet. Your drafts and account are unchanged.' }, 503, NO_STORE);
+// Account deletion (App Store 5.1.1(v)). Retention policy, settled:
+// content rows stay (draft "Remove" never deletes either) and published
+// attribution survives because recipes.author_name is a per-recipe string,
+// independent of the users row. Atomicity: tombstoneUser runs one D1 batch.
+// Requires migration 0016 (users.deleted_at) to be applied before deploy.
+appApi.delete('/me/account', async (c) => {
+  const user = c.get('user')!;
+  await tombstoneUser(c.env, user);
+  return c.json({ ok: true }, 200, NO_STORE);
 });
 
 // --- Own recipes (JSON mirror of the account home list + save/submit/remove) -

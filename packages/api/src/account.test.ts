@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import { sendAuthorReviewNotice } from './account';
 import app from './index';
 import { migratedD1All } from './testd1';
 
@@ -1204,5 +1205,184 @@ describe('Phase 2 share capture: draft-first, return-to, JSON auth & in-page pas
     const saved = await post('/account/recipes/save', recipeForm({ intent: 'submit' }), { cookie });
     expect(saved.status).toBe(200);
     expect(await saved.text()).toContain('Thanks, it is with us');
+  });
+});
+
+describe('account deletion (App Store 5.1.1(v))', () => {
+  const userRow = () => DB.prepare('SELECT id, email, display_name AS dn, deleted_at AS da, marketing_opt_in AS moi, unsubscribed_at AS ua, zeluto_connection_status AS zcs, zeluto_org_id AS zoi FROM users').first<{
+    id: string; email: string; dn: string | null; da: string | null; moi: number; ua: string | null; zcs: string; zoi: string | null;
+  }>();
+
+  function makeTestR2() {
+    const objects = new Map<string, Uint8Array>();
+    return {
+      objects,
+      async put(key: string, value: Uint8Array | ArrayBuffer) {
+        objects.set(key, value instanceof Uint8Array ? new Uint8Array(value) : new Uint8Array(value));
+        return { key };
+      },
+      async delete(keys: string | string[]) {
+        for (const k of Array.isArray(keys) ? keys : [keys]) objects.delete(k);
+      },
+    };
+  }
+
+  it('home shows the delete panel only when signed in', async () => {
+    const anon = await get('/account');
+    expect(await anon.text()).not.toContain('action="/account/delete"');
+    const cookie = await signIn();
+    const home = await get('/account', cookie);
+    const html = await home.text();
+    expect(html).toContain('action="/account/delete"');
+    expect(html).toContain('name="confirm"');
+    expect(html).toContain('data-delete-account-panel');
+  });
+
+  it('rejects anonymous callers: redirect for HTML, 401 for JSON', async () => {
+    const html = await post('/account/delete', { confirm: 'yes' });
+    expect(html.status).toBe(303);
+    const json = await app.request(`${ORIGIN}/account/delete`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json', origin: ORIGIN },
+      body: 'confirm=yes',
+    }, env());
+    expect(json.status).toBe(401);
+    expect(await userRow()).toBeNull();
+  });
+
+  it('refuses without the explicit confirm and leaves the account untouched', async () => {
+    const cookie = await signIn();
+    const res = await post('/account/delete', {}, { cookie });
+    expect(res.status).toBe(400);
+    const jsonErr = await app.request(`${ORIGIN}/account/delete`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json', origin: ORIGIN, cookie },
+      body: '',
+    }, env());
+    expect(jsonErr.status).toBe(400);
+    expect(await jsonErr.json()).toEqual({ ok: false, error: 'confirm_required' });
+    const u = (await userRow())!;
+    expect(u.email).toBe('cook@example.com');
+    expect(u.da).toBeNull();
+    const s = await DB.prepare('SELECT count(*) AS n FROM sessions').first<{ n: number }>();
+    expect(s!.n).toBe(1);
+  });
+
+  it('tombstones the account: anonymized row, sessions killed, cookie cleared, drafts kept', async () => {
+    const cookie = await signIn();
+    const save = await post('/account/recipes/save', recipeForm(), { cookie });
+    expect(save.status).toBe(303);
+    const res = await post('/account/delete', { confirm: 'yes' }, { cookie });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain('Account deleted');
+    const sc = res.headers.get('set-cookie') ?? '';
+    expect(sc).toMatch(/__Host-2y_sid=;/);
+    const u = (await userRow())!;
+    expect(u.email).toBe(`deleted+${u.id}@deleted.invalid`);
+    expect(u.dn).toBeNull();
+    expect(u.da).toBeTruthy();
+    expect(u.moi).toBe(0);
+    expect(u.ua).toBeTruthy();
+    expect(await DB.prepare('SELECT count(*) AS n FROM sessions').first<{ n: number }>()).toEqual({ n: 0 });
+    const r = await DB.prepare('SELECT count(*) AS n FROM recipes').first<{ n: number }>();
+    expect(r!.n).toBe(1);
+    const home = await get('/account', cookie);
+    expect(await home.text()).not.toContain('action="/account/delete"');
+  });
+
+  it('JSON client gets { ok: true } and the email is free for a fresh account', async () => {
+    const cookie = await signIn();
+    const res = await app.request(`${ORIGIN}/account/delete`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json', origin: ORIGIN, cookie },
+      body: 'confirm=yes',
+    }, env());
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+    const cookie2 = await signIn();
+    expect(cookie2).toMatch(/__Host-2y_sid=/);
+    const rows = await DB.prepare('SELECT email, deleted_at AS da FROM users ORDER BY rowid').all<{ email: string; da: string | null }>();
+    expect(rows.results.length).toBe(2);
+    expect(rows.results[0]!.email).toMatch(/^deleted\+.*@deleted\.invalid$/);
+    expect(rows.results[0]!.da).toBeTruthy();
+    expect(rows.results[1]!.email).toBe('cook@example.com');
+    expect(rows.results[1]!.da).toBeNull();
+  });
+
+  it('clears passkeys, OAuth links, challenges, saved bookmarks, pending R2 draft photos, and Zeluto/mail visibility', async () => {
+    const IMAGES = makeTestR2();
+    const creatorCookie = await signIn('creator@example.com');
+    await post('/account/recipes/save', recipeForm({ intent: 'submit' }), { cookie: creatorCookie });
+    const subCookie = await signIn('sub@example.com');
+    await post('/account/recipes/save', recipeForm({ title: 'Sub Draft' }), { cookie: subCookie });
+
+    const creator = (await DB.prepare("SELECT id FROM users WHERE email = 'creator@example.com'").first<{ id: string }>())!;
+    const sub = (await DB.prepare("SELECT id FROM users WHERE email = 'sub@example.com'").first<{ id: string }>())!;
+    const subDraft = (await DB.prepare('SELECT id FROM recipes WHERE owner_user_id = ?').bind(sub.id).first<{ id: string }>())!;
+    const creatorDraft = (await DB.prepare('SELECT id FROM recipes WHERE owner_user_id = ?').bind(creator.id).first<{ id: string }>())!;
+
+    await DB.prepare("UPDATE users SET zeluto_connection_status = 'approved', zeluto_org_id = 'org-1', zeluto_contact_id = 'zc-sub' WHERE id = ?").bind(sub.id).run();
+    await DB.prepare("INSERT INTO user_passkeys (id, user_id, public_key_spki, cose_alg, sign_count, created_at) VALUES ('pk-1', ?, 'spki', -7, 1, '2026-01-01')").bind(sub.id).run();
+    await DB.prepare("INSERT INTO user_oauth_accounts (provider, provider_sub, user_id, email, created_at) VALUES ('google', 'gsub-1', ?, 'sub@example.com', '2026-01-01')").bind(sub.id).run();
+    await DB.prepare("INSERT INTO auth_challenges (id, kind, challenge, user_id, lang, expires_at, used, created_at) VALUES ('ch-1', 'passkey_reg', 'chal', ?, 'en', 9999999999999, 0, 1)").bind(sub.id).run();
+    await DB.prepare("INSERT INTO saved_recipes (user_id, recipe_id, created_at) VALUES (?, ?, '2026-01-01')").bind(sub.id, creatorDraft.id).run();
+    await DB.prepare("INSERT INTO creator_subscribers (id, creator_user_id, subscriber_user_id, created_at, updated_at) VALUES ('cs-1', ?, ?, '2026-01-01', '2026-01-01')").bind(creator.id, sub.id).run();
+
+    const pendingKey = `drafts/${sub.id}/${subDraft.id}/dp1.png`;
+    const approvedKey = `drafts/${sub.id}/${subDraft.id}/dp2.png`;
+    await IMAGES.put(pendingKey, new Uint8Array([1, 2, 3]));
+    await IMAGES.put(approvedKey, new Uint8Array([4, 5, 6]));
+    await DB.prepare("INSERT INTO draft_photos (id, recipe_id, user_id, r2_key, mime, bytes, width, height, status, created_at) VALUES ('dp1', ?, ?, ?, 'image/png', 3, 1, 1, 'pending', '2026-01-01')").bind(subDraft.id, sub.id, pendingKey).run();
+    await DB.prepare("INSERT INTO draft_photos (id, recipe_id, user_id, r2_key, mime, bytes, width, height, status, created_at) VALUES ('dp2', ?, ?, ?, 'image/png', 3, 1, 1, 'approved', '2026-01-01')").bind(subDraft.id, sub.id, approvedKey).run();
+
+    const delRes = await post('/account/delete', { confirm: 'yes' }, { cookie: subCookie, e: { IMAGES } });
+    expect(delRes.status).toBe(200);
+
+    // Phase 1-6 per-user auth/bookmark/pending-photo tables cleared, private pending R2 deleted, approved preserved.
+    expect((await DB.prepare('SELECT count(*) AS n FROM user_passkeys WHERE user_id = ?').bind(sub.id).first<{ n: number }>())!.n).toBe(0);
+    expect((await DB.prepare('SELECT count(*) AS n FROM user_oauth_accounts WHERE user_id = ?').bind(sub.id).first<{ n: number }>())!.n).toBe(0);
+    expect((await DB.prepare('SELECT count(*) AS n FROM auth_challenges WHERE user_id = ?').bind(sub.id).first<{ n: number }>())!.n).toBe(0);
+    expect((await DB.prepare('SELECT count(*) AS n FROM saved_recipes WHERE user_id = ?').bind(sub.id).first<{ n: number }>())!.n).toBe(0);
+    expect((await DB.prepare("SELECT count(*) AS n FROM draft_photos WHERE user_id = ? AND status = 'pending'").bind(sub.id).first<{ n: number }>())!.n).toBe(0);
+    expect((await DB.prepare("SELECT count(*) AS n FROM draft_photos WHERE user_id = ? AND status = 'approved'").bind(sub.id).first<{ n: number }>())!.n).toBe(1);
+    expect(IMAGES.objects.has(pendingKey)).toBe(false);
+    expect(IMAGES.objects.has(approvedKey)).toBe(true);
+
+    // Same Google (provider, provider_sub) can cleanly link to a brand new user row without collision.
+    await signIn('sub@example.com');
+    const freshSub = (await DB.prepare("SELECT id FROM users WHERE email = 'sub@example.com'").first<{ id: string }>())!;
+    expect(freshSub.id).not.toBe(sub.id);
+    await DB.prepare("INSERT INTO user_oauth_accounts (provider, provider_sub, user_id, email, created_at) VALUES ('google', 'gsub-1', ?, 'sub@example.com', '2026-01-02')").bind(freshSub.id).run();
+
+    // Tombstoned user excluded from creator subscriber view and Zeluto sync; creator_subscribers marked unsubscribed.
+    const cs = (await DB.prepare("SELECT unsubscribed_at AS ua FROM creator_subscribers WHERE id = 'cs-1'").first<{ ua: string | null }>())!;
+    expect(cs.ua).toBeTruthy();
+
+    const subsView = await app.request(`${ORIGIN}/account/subscribers`, { headers: { cookie: creatorCookie, accept: 'application/json' } }, env());
+    expect(subsView.status).toBe(200);
+    expect(((await subsView.json()) as { subscribers: unknown[] }).subscribers).toEqual([]);
+
+    const oldSubState = (await DB.prepare('SELECT email, zeluto_connection_status AS zcs, zeluto_org_id AS zoi FROM users WHERE id = ?').bind(sub.id).first<{ email: string; zcs: string; zoi: string | null }>())!;
+    expect(oldSubState.zcs).toBe('revoked');
+    expect(oldSubState.zoi).toBeNull();
+
+    const syncRes = await app.request(`${ORIGIN}/api/internal/zeluto-sync/records`, {
+      headers: { authorization: 'Bearer sync-sec' },
+    }, env({ ZELUTO_SYNC_SECRET: 'sync-sec' }));
+    expect(syncRes.status).toBe(200);
+    const syncBody = (await syncRes.json()) as { records: Array<{ externalId: string; email?: string }> };
+    expect(syncBody.records.some((r) => r.externalId === sub.id || (r.email ?? '').endsWith('@deleted.invalid'))).toBe(false);
+
+    // Review notice mail budget is never touched for @deleted.invalid addresses.
+    const sentBefore = sent.length;
+    const noticesBefore = (await DB.prepare("SELECT count(*) AS n FROM mail_log WHERE kind = 'notice'").first<{ n: number }>())!.n;
+    const noticeStatus = await sendAuthorReviewNotice(
+      { RESEND_API_KEY: 're_test', CANONICAL_ORIGIN: ORIGIN },
+      DB,
+      { email: oldSubState.email, lang: 'en', kind: 'published', title: 'Sub Draft', recipeId: subDraft.id },
+    );
+    expect(noticeStatus).toBe('skipped_no_mail');
+    expect(sent.length).toBe(sentBefore);
+    expect((await DB.prepare("SELECT count(*) AS n FROM mail_log WHERE kind = 'notice'").first<{ n: number }>())!.n).toBe(noticesBefore);
   });
 });

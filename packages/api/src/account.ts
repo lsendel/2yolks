@@ -268,7 +268,7 @@ export async function readSessionUser(db: D1Database, cookieToken: string | unde
   if (!cookieToken || !/^[0-9a-f]{64}$/.test(cookieToken)) return null;
   const id = await sha256Hex(cookieToken);
   const row = await db.prepare(
-    'SELECT u.id AS id, u.email AS email, u.display_name AS displayName FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.id = ? AND s.expires_at > ?',
+    'SELECT u.id AS id, u.email AS email, u.display_name AS displayName FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.id = ? AND s.expires_at > ? AND u.deleted_at IS NULL',
   ).bind(id, Date.now()).first<{ id: string; email: string; displayName: string | null }>();
   return row ?? null;
 }
@@ -488,7 +488,9 @@ ${savedPanel}
 ${passkeyPanel}
 ${creatorSection}
 <div class="panel"><h2>${t.yourDrafts}</h2>${items ? `<ul class="mine">${items}</ul>` : `<p class="hint">${t.emptyDrafts}</p>`}</div>
-<form method="post" action="/account/logout${qs(lang)}"><button class="quiet" type="submit">${t.signOut}</button></form><script>${PASSKEY_CLIENT_SCRIPT}</script>${hasLiveRecipe ? `<script>${ACCOUNT_LIVE_SHARE_SCRIPT}</script>` : ''}`);
+<form method="post" action="/account/logout${qs(lang)}"><button class="quiet" type="submit">${t.signOut}</button></form>
+<div class="panel" data-delete-account-panel><h2>${t.deletePanelTitle}</h2><p class="hint">${t.deleteLead}</p>
+<form method="post" action="/account/delete${qs(lang)}"><label class="check"><input type="checkbox" name="confirm" value="yes"> <span>${t.deleteConfirmLabel}</span></label><button class="quiet danger" type="submit">${t.deleteButton}</button></form></div><script>${PASSKEY_CLIENT_SCRIPT}</script>${hasLiveRecipe ? `<script>${ACCOUNT_LIVE_SHARE_SCRIPT}</script>` : ''}`);
 });
 
 // --- Saved recipes (bookmarks) -----------------------------------------------
@@ -723,6 +725,76 @@ accountApp.post('/logout', async (c) => {
   if (tok && /^[0-9a-f]{64}$/.test(tok)) await c.env.DB.prepare('DELETE FROM sessions WHERE id = ?').bind(await sha256Hex(tok)).run();
   deleteCookie(c, SESSION_COOKIE, { path: '/', secure: true });
   return c.redirect(`/account${qs(langOf(c))}`, 303);
+});
+
+/** Tombstone one account in a single atomic batch: anonymize the identity
+ * (tombstone email keeps UNIQUE(email), frees the real address for
+ * re-registration, and is undeliverable), stamp deleted_at, suppress
+ * marketing/Zeluto CRM linkage, revoke every session, pending code, passkey,
+ * OAuth link, challenge, saved bookmark, and pending private draft photo.
+ * Content rows (recipes, approved recipe_images, author_name) stay untouched.
+ * Shared by cookie (/account/delete) and bearer (/api/v1/me/account) routes. */
+export async function tombstoneUser(
+  env: { DB: D1Database; IMAGES?: R2Bucket },
+  user: { id: string; email: string },
+): Promise<void> {
+  const now = new Date().toISOString();
+  const pendingPhotos = await env.DB
+    .prepare("SELECT r2_key AS r2Key FROM draft_photos WHERE user_id = ? AND status = 'pending'")
+    .bind(user.id)
+    .all<{ r2Key: string }>()
+    .catch(() => ({ results: [] as { r2Key: string }[] }));
+
+  await env.DB.batch([
+    env.DB
+      .prepare(
+        `UPDATE users
+         SET email = ?,
+             display_name = NULL,
+             deleted_at = ?,
+             marketing_opt_in = 0,
+             unsubscribed_at = COALESCE(unsubscribed_at, ?),
+             zeluto_contact_id = NULL,
+             zeluto_org_id = NULL,
+             zeluto_connection_status = CASE WHEN zeluto_connection_status = 'approved' THEN 'revoked' ELSE 'not_registered' END
+         WHERE id = ? AND deleted_at IS NULL`,
+      )
+      .bind(`deleted+${user.id}@deleted.invalid`, now, now, user.id),
+    env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(user.id),
+    env.DB.prepare('DELETE FROM auth_codes WHERE email = ?').bind(user.email),
+    env.DB.prepare('DELETE FROM user_passkeys WHERE user_id = ?').bind(user.id),
+    env.DB.prepare('DELETE FROM user_oauth_accounts WHERE user_id = ?').bind(user.id),
+    env.DB.prepare('DELETE FROM auth_challenges WHERE user_id = ?').bind(user.id),
+    env.DB.prepare('DELETE FROM saved_recipes WHERE user_id = ?').bind(user.id),
+    env.DB.prepare("DELETE FROM draft_photos WHERE user_id = ? AND status = 'pending'").bind(user.id),
+    env.DB
+      .prepare('UPDATE creator_subscribers SET unsubscribed_at = COALESCE(unsubscribed_at, ?), updated_at = ? WHERE subscriber_user_id = ?')
+      .bind(now, now, user.id),
+  ]);
+
+  if (env.IMAGES && pendingPhotos.results.length > 0) {
+    await Promise.all(pendingPhotos.results.map((p) => env.IMAGES!.delete(p.r2Key).catch(() => {})));
+  }
+}
+
+// Account deletion (App Store 5.1.1(v)). Mark-and-anonymize matching the
+// repo's remove-never-deletes rule for content: requires migration 0016
+// (users.deleted_at) to be applied before deploy.
+accountApp.post('/delete', async (c) => {
+  const lang = langOf(c);
+  const t = accountStrings(lang);
+  const json = wantsJson(c);
+  const user = c.get('user');
+  if (!user) return json ? c.json({ ok: false, error: 'unauthorized' }, 401, NO_STORE) : c.redirect(`/account${qs(lang)}`, 303);
+  const form = await readBody(c);
+  if (form['confirm'] !== 'yes') {
+    if (json) return c.json({ ok: false, error: 'confirm_required' }, 400, NO_STORE);
+    return page(c, t.homePageTitle, banner('err', t.errDeleteConfirm), 400);
+  }
+  await tombstoneUser(c.env, user);
+  deleteCookie(c, SESSION_COOKIE, { path: '/', secure: true });
+  if (json) return c.json({ ok: true }, 200, NO_STORE);
+  return page(c, t.deletedPageTitle, `<h1>${t.deletedTitle}</h1><p class="lead">${t.deletedLead}</p>`);
 });
 
 // Draft-first capture: GET /recipes/new and parse-only POST /recipes/paste work
@@ -1056,7 +1128,7 @@ export async function sendAuthorReviewNotice(
     livePath?: string | null;
   },
 ): Promise<'sent' | 'skipped_budget' | 'skipped_no_mail' | 'failed'> {
-  if (!env.RESEND_API_KEY) return 'skipped_no_mail';
+  if (!env.RESEND_API_KEY || !opts.email || opts.email.endsWith('@deleted.invalid')) return 'skipped_no_mail';
   if (!(await reserveMail(db, 'notice', NOTICES_PER_DAY))) return 'skipped_budget';
   const noticeLang = isAccountLang(opts.lang) ? opts.lang : 'en';
   const t = accountStrings(noticeLang);
@@ -1777,7 +1849,7 @@ accountApp.get('/subscribers', async (c) => {
     `SELECT cs.id, sub.id AS subscriber_user_id, sub.email, sub.display_name, cs.zeluto_contact_id, cs.unsubscribed_at, cs.created_at
      FROM creator_subscribers cs
      JOIN users sub ON sub.id = cs.subscriber_user_id
-     WHERE cs.creator_user_id = ?
+     WHERE cs.creator_user_id = ? AND sub.deleted_at IS NULL
      ORDER BY cs.created_at DESC
      LIMIT 200`,
   )
