@@ -226,6 +226,7 @@ zeluto2YolksSyncApp.get('/tenants', async (c) => {
     `SELECT u.id
      FROM users u
      WHERE u.zeluto_connection_status = 'approved'
+       AND u.deleted_at IS NULL
        AND EXISTS (SELECT 1 FROM recipes r WHERE r.owner_user_id = u.id AND r.submitted_at IS NOT NULL)`,
   ).all<{ id: string }>();
   return c.json({ tenants: (rows.results ?? []).map((r) => `creator:${r.id}`) }, 200);
@@ -242,6 +243,7 @@ zeluto2YolksSyncApp.get('/records', async (c) => {
             u.marketing_opt_in, u.unsubscribed_at,
             EXISTS (SELECT 1 FROM recipes r WHERE r.owner_user_id = u.id AND r.submitted_at IS NOT NULL) AS is_creator
      FROM users u
+     WHERE u.deleted_at IS NULL
      ORDER BY u.created_at ASC
      LIMIT ?`,
   )
@@ -278,6 +280,7 @@ zeluto2YolksSyncApp.get('/records', async (c) => {
      FROM creator_subscribers cs
      JOIN users sub ON sub.id = cs.subscriber_user_id
      JOIN users cr ON cr.id = cs.creator_user_id
+     WHERE sub.deleted_at IS NULL AND cr.deleted_at IS NULL
      ORDER BY cs.created_at ASC
      LIMIT ?`,
   )

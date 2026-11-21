@@ -1204,6 +1204,10 @@ html[data-theme="dark"] .acct .live-celebration { border-color: var(--lime); bac
 .acct .auth-divider { display: flex; align-items: center; gap: 0.75rem; margin: 0.9rem 0; color: var(--muted); font-size: 0.84rem; text-transform: uppercase; letter-spacing: 0.06em; }
 .acct .auth-divider::before, .acct .auth-divider::after { content: ""; flex: 1 1 0; height: 1px; background: var(--line); }
 .acct ul.passkey-list li { align-items: center; }
+.acct button.danger { border-color: #a42325; color: #8b1a1c; }
+.acct button.danger:hover { background: #a42325; color: #fff; border-color: #a42325; }
+html[data-theme="dark"] .acct button.danger { border-color: #f87171; color: #fca5a5; }
+html[data-theme="dark"] .acct button.danger:hover { background: #dc2626; color: #fff; border-color: #dc2626; }
 @media (max-width: 640px) {
   .acct .ing-row-item { grid-template-columns: 4rem 4.8rem minmax(0, 1fr); }
   .acct .ing-row-item .builder-row-actions { grid-column: 1 / -1; justify-self: end; }

@@ -23,6 +23,9 @@ export interface AccountStrings {
   // account home
   homePageTitle: string; homeTitle: string; homeLead: string; addRecipe: string; yourDrafts: string; emptyDrafts: string; signOut: string;
   statusPublished: string; statusSubmitted: string; statusDraft: string; editLink: string;
+  // account deletion
+  deletePanelTitle: string; deleteLead: string; deleteConfirmLabel: string; deleteButton: string;
+  errDeleteConfirm: string; deletedPageTitle: string; deletedTitle: string; deletedLead: string;
   // draft form
   formTitleNew: string; formTitleEdit: string; formLead: string; fixThese: string;
   startFaster: string; pasteLabel: string; pasteHint: string; pasteButton: string;
@@ -169,6 +172,14 @@ const en: AccountStrings = {
   addRecipe: 'Add a recipe', yourDrafts: 'Your drafts',
   emptyDrafts: 'Nothing yet. Start from a form, pasted text or a link.', signOut: 'Sign out',
   statusPublished: 'Published', statusSubmitted: 'Submitted for review', statusDraft: 'Private draft', editLink: 'Edit',
+  deletePanelTitle: 'Delete account',
+  deleteLead: 'This signs you out everywhere and deletes your sign-in details (email, passkeys, and Google link) and saved list. Your drafts stay private and unpublished.',
+  deleteConfirmLabel: 'I understand, delete my account',
+  deleteButton: 'Delete my account',
+  errDeleteConfirm: 'Tick the box first so we know you mean it.',
+  deletedPageTitle: 'Account deleted',
+  deletedTitle: 'Account deleted',
+  deletedLead: 'Your sign-in details are gone and every session is closed. You can make a new account any time.',
   formTitleNew: 'Share a recipe', formTitleEdit: 'Edit your draft',
   formLead: 'Drafts are private to you until you send one in and we review it.',
   fixThese: 'Fix these first:',
@@ -401,6 +412,14 @@ const es: AccountStrings = {
   addRecipe: 'Añadir una receta', yourDrafts: 'Tus borradores',
   emptyDrafts: 'Nada todavía. Empieza desde un formulario, texto pegado o un enlace.', signOut: 'Cerrar sesión',
   statusPublished: 'Publicada', statusSubmitted: 'Enviada a revisión', statusDraft: 'Borrador privado', editLink: 'Editar',
+  deletePanelTitle: 'Eliminar cuenta',
+  deleteLead: 'Cierra tu sesión en todos lados y elimina tus datos de acceso (correo, llaves de acceso y vínculo de Google) y tu lista de guardadas. Tus borradores siguen privados y sin publicar.',
+  deleteConfirmLabel: 'Lo entiendo, eliminar mi cuenta',
+  deleteButton: 'Eliminar mi cuenta',
+  errDeleteConfirm: 'Marca la casilla primero para confirmar.',
+  deletedPageTitle: 'Cuenta eliminada',
+  deletedTitle: 'Cuenta eliminada',
+  deletedLead: 'Tus datos de acceso se eliminaron y todas las sesiones se cerraron. Puedes crear una cuenta nueva cuando quieras.',
   formTitleNew: 'Comparte una receta', formTitleEdit: 'Editar tu borrador',
   formLead: 'Los borradores son privados hasta que envíes uno y lo revisemos.',
   fixThese: 'Corrige esto primero:',
@@ -633,6 +652,14 @@ const fr: AccountStrings = {
   addRecipe: 'Ajouter une recette', yourDrafts: 'Vos brouillons',
   emptyDrafts: 'Rien pour l’instant. Partez d’un formulaire, d’un texte collé ou d’un lien.', signOut: 'Déconnexion',
   statusPublished: 'Publiée', statusSubmitted: 'Envoyée en relecture', statusDraft: 'Brouillon privé', editLink: 'Modifier',
+  deletePanelTitle: 'Supprimer le compte',
+  deleteLead: 'Vous serez déconnecté partout et vos identifiants (e-mail, clés d’accès et lien Google) ainsi que vos recettes enregistrées seront supprimés. Vos brouillons restent privés et non publiés.',
+  deleteConfirmLabel: 'Je comprends, supprimer mon compte',
+  deleteButton: 'Supprimer mon compte',
+  errDeleteConfirm: 'Cochez d’abord la case pour confirmer.',
+  deletedPageTitle: 'Compte supprimé',
+  deletedTitle: 'Compte supprimé',
+  deletedLead: 'Vos identifiants sont supprimés et toutes les sessions sont fermées. Vous pouvez recréer un compte à tout moment.',
   formTitleNew: 'Partager une recette', formTitleEdit: 'Modifier votre brouillon',
   formLead: 'Les brouillons restent privés jusqu’à ce que vous en envoyiez un et que nous le relisions.',
   fixThese: 'À corriger d’abord :',

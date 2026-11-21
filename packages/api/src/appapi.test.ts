@@ -153,18 +153,47 @@ describe('own recipes', () => {
   });
 });
 
-describe('account deletion (not released)', () => {
-  it('is explicitly unavailable and mutates nothing', async () => {
+describe('account deletion (App Store 5.1.1(v))', () => {
+  it('tombstones the account: identity anonymized, sessions dead, content kept', async () => {
     const token = await signIn();
     const { id: draftId } = (await (await post('/api/v1/me/recipes', draftBody(), { token })).json()) as { id: string };
     const res = await del('/api/v1/me/account', { token });
-    expect(res.status).toBe(503);
-    expect(((await res.json()) as { code: string }).code).toBe('ACCOUNT_DELETION_UNAVAILABLE');
-    // Nothing changed: session still valid, draft still owned and listed.
-    expect((await get('/api/v1/me', { token })).status).toBe(200);
-    const mine = (await (await get('/api/v1/me/recipes', { token })).json()) as { recipes: { id: string }[] };
-    expect(mine.recipes.map((r) => r.id)).toContain(draftId);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+    // Identity anonymized and stamped; every session gone.
+    const u = (await DB.prepare('SELECT id, email, display_name AS dn, deleted_at AS da FROM users').first<{ id: string; email: string; dn: string | null; da: string | null }>())!;
+    expect(u.email).toBe(`deleted+${u.id}@deleted.invalid`);
+    expect(u.dn).toBeNull();
+    expect(u.da).toBeTruthy();
+    expect(await DB.prepare('SELECT count(*) AS n FROM sessions').first<{ n: number }>().then((r) => r!.n)).toBe(0);
+    // The old token is dead immediately.
+    expect((await get('/api/v1/me', { token })).status).toBe(401);
+    // Content is never deleted: the draft row stays for review/audit.
     expect(await DB.prepare('SELECT count(*) AS n FROM recipes WHERE id = ?').bind(draftId).first<{ n: number }>().then((r) => r!.n)).toBe(1);
+  });
+
+  it('keeps published attribution (author_name) after the owner deletes the account', async () => {
+    const token = await signIn();
+    const me = (await (await get('/api/v1/me', { token })).json()) as { user: { id: string } };
+    await seedPublished(me.user.id);
+    expect((await del('/api/v1/me/account', { token })).status).toBe(200);
+    const row = (await DB.prepare("SELECT author_name AS an FROM recipes WHERE id = 'rp1'").first<{ an: string }>())!;
+    expect(row.an).toBe('Chef Ana');
+    const pub = await get('/api/v1/recipes/us/en/tomato-soup-rp1');
+    expect(pub.status).toBe(200);
+  });
+
+  it('frees the address: the same email can register a fresh account afterwards', async () => {
+    const token = await signIn();
+    expect((await del('/api/v1/me/account', { token })).status).toBe(200);
+    const token2 = await signIn();
+    expect(token2).toMatch(/^[0-9a-f]{64}$/);
+    const rows = (await DB.prepare('SELECT email, deleted_at AS da FROM users ORDER BY rowid').all<{ email: string; da: string | null }>()).results;
+    expect(rows.length).toBe(2);
+    expect(rows[0]!.email).toMatch(/^deleted\+.*@deleted\.invalid$/);
+    expect(rows[0]!.da).toBeTruthy();
+    expect(rows[1]!.email).toBe('cook@example.com');
+    expect(rows[1]!.da).toBeNull();
   });
 });
 
