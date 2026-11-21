@@ -120,6 +120,22 @@ export interface AccountStrings {
   gapPromptMore: string;
   gapPrefilledBanner: string;
   savedPanelTitle: string; savedPanelLead: string; savedPanelLink: string;
+  passkeySignInBtn: string;
+  googleSignInBtn: string;
+  orDivider: string;
+  passkeysPanelTitle: string;
+  passkeysPanelLead: string;
+  passkeysEmpty: string;
+  passkeyAddBtn: string;
+  passkeyRemoveBtn: string;
+  passkeyAddedMsg: string;
+  passkeyDefaultLabel: string;
+  errPasskeyUnsupported: string;
+  errPasskeyCancelled: string;
+  errPasskeyFailed: string;
+  errPasskeyLimit: string;
+  errGoogleOff: string;
+  errGoogleFailed: string;
 }
 
 const en: AccountStrings = {
@@ -336,6 +352,22 @@ const en: AccountStrings = {
   savedPanelTitle: 'Saved recipes',
   savedPanelLead: 'Recipes you bookmarked with ♥ are synced to your account ({count}).',
   savedPanelLink: 'Open Saved recipes',
+  passkeySignInBtn: 'Sign in with a passkey',
+  googleSignInBtn: 'Continue with Google',
+  orDivider: 'or',
+  passkeysPanelTitle: 'Passkeys',
+  passkeysPanelLead: 'Sign in faster on this device with Touch ID, Face ID, or a security key — no email code needed.',
+  passkeysEmpty: 'No passkeys added yet.',
+  passkeyAddBtn: 'Add a passkey',
+  passkeyRemoveBtn: 'Remove',
+  passkeyAddedMsg: 'Passkey saved. You can use it next time you sign in.',
+  passkeyDefaultLabel: 'Passkey ({date})',
+  errPasskeyUnsupported: 'Passkeys are not supported in this browser.',
+  errPasskeyCancelled: 'Passkey request was cancelled or did not complete.',
+  errPasskeyFailed: 'Could not verify that passkey. Try again or use an email code.',
+  errPasskeyLimit: 'Up to {max} passkeys allowed per account.',
+  errGoogleOff: 'Google sign-in is not enabled right now. Use an email code or passkey.',
+  errGoogleFailed: 'Google sign-in could not be completed. Please try again or use an email code.',
 };
 
 const es: AccountStrings = {
@@ -552,6 +584,22 @@ const es: AccountStrings = {
   savedPanelTitle: 'Recetas guardadas',
   savedPanelLead: 'Las recetas que marcaste con ♥ se sincronizan con tu cuenta ({count}).',
   savedPanelLink: 'Ver recetas guardadas',
+  passkeySignInBtn: 'Iniciar sesión con llave de acceso',
+  googleSignInBtn: 'Continuar con Google',
+  orDivider: 'o',
+  passkeysPanelTitle: 'Llaves de acceso',
+  passkeysPanelLead: 'Inicia sesión más rápido en este dispositivo con Touch ID, Face ID o una llave de seguridad, sin código por correo.',
+  passkeysEmpty: 'Aún no has añadido ninguna llave de acceso.',
+  passkeyAddBtn: 'Añadir una llave de acceso',
+  passkeyRemoveBtn: 'Quitar',
+  passkeyAddedMsg: 'Llave de acceso guardada. Ya puedes usarla la próxima vez.',
+  passkeyDefaultLabel: 'Llave de acceso ({date})',
+  errPasskeyUnsupported: 'Las llaves de acceso no son compatibles con este navegador.',
+  errPasskeyCancelled: 'La solicitud de llave de acceso se canceló o no se completó.',
+  errPasskeyFailed: 'No pudimos verificar esa llave de acceso. Inténtalo otra vez o usa un código por correo.',
+  errPasskeyLimit: 'Se permiten hasta {max} llaves de acceso por cuenta.',
+  errGoogleOff: 'El inicio de sesión con Google no está activado ahora mismo. Usa un código por correo o una llave de acceso.',
+  errGoogleFailed: 'No se pudo completar el inicio de sesión con Google. Inténtalo de nuevo o usa un código por correo.',
 };
 
 const fr: AccountStrings = {
@@ -768,6 +816,22 @@ const fr: AccountStrings = {
   savedPanelTitle: 'Recettes enregistrées',
   savedPanelLead: 'Les recettes marquées d’un ♥ sont synchronisées avec votre compte ({count}).',
   savedPanelLink: 'Ouvrir les recettes enregistrées',
+  passkeySignInBtn: 'Se connecter avec une clé d’accès',
+  googleSignInBtn: 'Continuer avec Google',
+  orDivider: 'ou',
+  passkeysPanelTitle: 'Clés d’accès',
+  passkeysPanelLead: 'Connectez-vous plus vite sur cet appareil avec Touch ID, Face ID ou une clé de sécurité, sans code par e-mail.',
+  passkeysEmpty: 'Aucune clé d’accès enregistrée pour le moment.',
+  passkeyAddBtn: 'Ajouter une clé d’accès',
+  passkeyRemoveBtn: 'Retirer',
+  passkeyAddedMsg: 'Clé d’accès enregistrée. Vous pourrez l’utiliser la prochaine fois.',
+  passkeyDefaultLabel: 'Clé d’accès ({date})',
+  errPasskeyUnsupported: 'Les clés d’accès ne sont pas prises en charge par ce navigateur.',
+  errPasskeyCancelled: 'La demande de clé d’accès a été annulée ou n’a pas abouti.',
+  errPasskeyFailed: 'Impossible de vérifier cette clé d’accès. Réessayez ou utilisez un code par e-mail.',
+  errPasskeyLimit: 'Jusqu’à {max} clés d’accès autorisées par compte.',
+  errGoogleOff: 'La connexion avec Google n’est pas activée pour le moment. Utilisez un code par e-mail ou une clé d’accès.',
+  errGoogleFailed: 'La connexion avec Google n’a pas abouti. Réessayez ou utilisez un code par e-mail.',
 };
 
 const ACCOUNT_STRINGS: Record<string, AccountStrings> = { en, es, fr };

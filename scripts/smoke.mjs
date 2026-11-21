@@ -127,6 +127,9 @@ try {
 
   r = await get('/account');
   check('account sign-in page 200, noindex, no-store, form present', r.status === 200 && r.headers.get('x-robots-tag') === 'noindex' && r.headers.get('cache-control') === 'no-store' && r.body.includes('Email me a code'));
+  check('S10 auth controls: passkey option present, Google hidden when unconfigured', r.body.includes('data-passkey-login') && !r.body.includes('data-google-login'));
+  r = await get('/account/google/start');
+  check('S10 google/start returns 503 when unconfigured', r.status === 503);
   r = await get('/account/code', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', origin: 'https://evil.example' }, body: 'email=a%40example.com' });
   check('cross-origin account POST blocked (403)', r.status === 403);
   r = await get('/account/code', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', origin: `http://127.0.0.1:${PORT}` }, body: 'email=a%40example.com' });

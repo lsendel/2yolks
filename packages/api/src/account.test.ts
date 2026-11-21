@@ -202,10 +202,10 @@ describe('atomicity under concurrency', () => {
   });
   it('daily mail budget holds under concurrency and covers review notices', async () => {
     const now = Date.now();
-    for (let i = 0; i < 31; i++) await DB.prepare("INSERT INTO mail_log (id,kind,created_at) VALUES (?,'code',?)").bind(`seed${i}`, now).run();
+    for (let i = 0; i < 79; i++) await DB.prepare("INSERT INTO mail_log (id,kind,created_at) VALUES (?,'code',?)").bind(`seed${i}`, now).run();
     await Promise.all(Array.from({ length: 10 }, (_, i) => post('/account/code', { email: `u${i}@example.com` })));
     expect(sent.length).toBe(1);
-    expect((await DB.prepare('SELECT count(*) AS n FROM mail_log').first<{ n: number }>())!.n).toBe(32);
+    expect((await DB.prepare('SELECT count(*) AS n FROM mail_log').first<{ n: number }>())!.n).toBe(80);
   });
   it('review notices stop at the overall cap but the submit still flags the draft', async () => {
     const cookie = await signIn();
@@ -483,14 +483,14 @@ describe('limits and credit', () => {
 });
 
 describe('budget order, concurrent issuance, removal frees a slot', () => {
-  it('hard allocation: 32 codes and 8 notices are independent, 40 total', async () => {
+  it('hard allocation: 80 codes and 8 notices are independent, 88 total', async () => {
     const now = Date.now();
     for (let i = 0; i < 8; i++) await DB.prepare("INSERT INTO mail_log (id,kind,created_at) VALUES (?,'notice',?)").bind(`n${i}`, now).run();
-    for (let i = 0; i < 31; i++) await DB.prepare("INSERT INTO mail_log (id,kind,created_at) VALUES (?,'code',?)").bind(`c${i}`, now).run();
-    // 8 notices already used: a code is still allowed (31 < 32), the next is refused
+    for (let i = 0; i < 79; i++) await DB.prepare("INSERT INTO mail_log (id,kind,created_at) VALUES (?,'code',?)").bind(`c${i}`, now).run();
+    // 8 notices already used: a code is still allowed (79 < 80), the next is refused
     expect((await post('/account/code', { email: 'one@example.com' })).status).toBe(200);
     expect((await post('/account/code', { email: 'two@example.com' })).status).toBe(503);
-    expect((await DB.prepare('SELECT count(*) AS n FROM mail_log').first<{ n: number }>())!.n).toBe(40);
+    expect((await DB.prepare('SELECT count(*) AS n FROM mail_log').first<{ n: number }>())!.n).toBe(88);
   });
   it('per-email rejections do not spend the site-wide mail budget', async () => {
     for (let i = 0; i < 3; i++) await post('/account/code', { email: 'spam@example.com' });
@@ -500,7 +500,7 @@ describe('budget order, concurrent issuance, removal frees a slot', () => {
   });
   it('when the site budget is exhausted the code is killed, not sent', async () => {
     const now = Date.now();
-    for (let i = 0; i < 32; i++) await DB.prepare("INSERT INTO mail_log (id,kind,created_at) VALUES (?,'code',?)").bind(`b${i}`, now).run();
+    for (let i = 0; i < 80; i++) await DB.prepare("INSERT INTO mail_log (id,kind,created_at) VALUES (?,'code',?)").bind(`b${i}`, now).run();
     expect((await post('/account/code', { email: 'late@example.com' })).status).toBe(503);
     expect(sent.length).toBe(0);
     expect((await DB.prepare('SELECT used FROM auth_codes').first<{ used: number }>())!.used).toBe(1);
@@ -1031,15 +1031,15 @@ describe('share flow: one clear finish (attest + send in one POST)', () => {
 });
 
 describe('sign-in code budget override (CODES_PER_DAY)', () => {
-  it('parses the env var: positive integers only, clamped, default 32', async () => {
+  it('parses the env var: positive integers only, clamped, default 80', async () => {
     const { codesPerDay, CODES_PER_DAY, MAX_CODES_PER_DAY } = await import('./account');
-    expect(CODES_PER_DAY).toBe(32);
-    expect(codesPerDay({})).toBe(32);
-    expect(codesPerDay({ CODES_PER_DAY: '' })).toBe(32);
-    expect(codesPerDay({ CODES_PER_DAY: '0' })).toBe(32);
-    expect(codesPerDay({ CODES_PER_DAY: '-5' })).toBe(32);
-    expect(codesPerDay({ CODES_PER_DAY: '12.5' })).toBe(32);
-    expect(codesPerDay({ CODES_PER_DAY: 'lots' })).toBe(32);
+    expect(CODES_PER_DAY).toBe(80);
+    expect(codesPerDay({})).toBe(80);
+    expect(codesPerDay({ CODES_PER_DAY: '' })).toBe(80);
+    expect(codesPerDay({ CODES_PER_DAY: '0' })).toBe(80);
+    expect(codesPerDay({ CODES_PER_DAY: '-5' })).toBe(80);
+    expect(codesPerDay({ CODES_PER_DAY: '12.5' })).toBe(80);
+    expect(codesPerDay({ CODES_PER_DAY: 'lots' })).toBe(80);
     expect(codesPerDay({ CODES_PER_DAY: ' 64 ' })).toBe(64);
     expect(codesPerDay({ CODES_PER_DAY: '5000' })).toBe(MAX_CODES_PER_DAY);
     expect(MAX_CODES_PER_DAY).toBe(1000);

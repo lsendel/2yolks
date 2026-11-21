@@ -8,9 +8,10 @@ import { bodyLimit } from 'hono/body-limit';
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import { eq, and, ne, desc, isNull, or } from 'drizzle-orm';
 import { LOCALES, getCountry, localizedCountryName, slugify, recipePathFor, validateRecipeSubmission, RECIPE_CATEGORY_SLUGS, categoryLabel, isRecipeCategorySlug, CATEGORIES, accountStrings, fill, isAccountLang, validatorMessage, parseWarningMessage, ssrfMessage, MAX_RECIPE_LINES, sanitizeSearchGapPrompt, titleCasePrompt, searchCatalog, renderIngredient, renderStep, defaultUnitSystem, type AccountStrings, type IngredientEntry, type SearchableRecipe } from '@2yolks/contracts';
-import { renderAccountPage, escapeHtml as esc, CAPTURE_CLIENT_SCRIPT, CAPTURE_CHECK_STRINGS, DRAFT_PHOTO_CLIENT_SCRIPT, ACCOUNT_LIVE_SHARE_SCRIPT } from '@2yolks/web/server';
+import { renderAccountPage, escapeHtml as esc, CAPTURE_CLIENT_SCRIPT, CAPTURE_CHECK_STRINGS, DRAFT_PHOTO_CLIENT_SCRIPT, ACCOUNT_LIVE_SHARE_SCRIPT, PASSKEY_CLIENT_SCRIPT } from '@2yolks/web/server';
 import { createDb, hasUserSharedRecipe, recipes, recipeLocales, sources, users } from './db';
 import { sendMail, type MailEnv } from './email';
+import { googleOAuthEnabled, loadUserPasskeys, registerAuthMethodRoutes } from './authMethods';
 import { parseRecipeText, parseJsonLdRecipe, type ParsedRecipe } from './parse';
 import { safeFetchText, SsrfError } from './ssrf';
 import { assistRecipe, aiUnavailableReason, AiUnavailableError, reserveAiBudget, sanitizeMediaPart, DEFAULT_AI_DAILY_CAP, type AiAssistRequest } from './aiRecipe';
@@ -51,9 +52,8 @@ export type AccountBindings = MailEnv & {
   /**
    * Optional override for the site-wide daily sign-in code budget (positive
    * integer, clamped to MAX_CODES_PER_DAY; anything else falls back to
-   * CODES_PER_DAY = 32). The default stays low on purpose: the Resend free
-   * plan (100/day, 3,000/month) is shared with other sites, so raise this only
-   * once the mail plan allows it.
+   * CODES_PER_DAY = 80). Stays bounded inside the Resend free tier
+   * (100/day) alongside NOTICES_PER_DAY (80 + 8 = 88/day default ceiling).
    */
   CODES_PER_DAY?: string;
   /** Optional Workers rate-limit bindings (approximate, per location). Absent = skipped. */
@@ -64,6 +64,8 @@ export type AccountBindings = MailEnv & {
   ZELUTO_CLIENT_SECRET?: string;
   ZELUTO_SYNC_SECRET?: string;
   ZELUTO_BRAND_ORG_ID?: string;
+  GOOGLE_CLIENT_ID?: string;
+  GOOGLE_CLIENT_SECRET?: string;
 };
 
 export const SESSION_COOKIE = '__Host-2y_sid';
@@ -71,9 +73,9 @@ export const SESSION_DAYS = 30;
 const CODE_TTL_MS = 10 * 60_000;
 export const MAX_ATTEMPTS = 5;
 export const CODES_PER_EMAIL_10MIN = 3;
-export const CODES_PER_DAY = 32; // default login codes per rolling 24h, counted by kind. The Resend free plan (100/day, 3,000/month) is shared with other sites
+export const CODES_PER_DAY = 80; // default login codes per rolling 24h, counted by kind (inside Resend's 100/day tier)
 export const MAX_CODES_PER_DAY = 1000; // ceiling for the CODES_PER_DAY env override
-export const NOTICES_PER_DAY = 8; // review notices per rolling 24h, counted by kind; 32 + 8 = 40/day hard total at the default code budget
+export const NOTICES_PER_DAY = 8; // review notices per rolling 24h, counted by kind; 80 + 8 = 88/day hard total at the default code budget
 export const MAX_DRAFTS_PER_USER = 50; // active (not removed) drafts
 export const MAX_ROWS_PER_USER = 500; // lifetime rows incl. removed ones, so remove/recreate loops cannot grow storage forever
 export const MAX_SAVED_PER_USER = 200; // max saved (bookmarked) recipes per account
@@ -82,7 +84,7 @@ export type AccountUser = { id: string; email: string; displayName: string | nul
 export const accountApp = new Hono<{ Bindings: AccountBindings; Variables: { user: AccountUser | null } }>();
 type Ctx = Context<{ Bindings: AccountBindings; Variables: { user: AccountUser | null } }>;
 
-/** Site-wide daily sign-in code budget: CODES_PER_DAY env override (positive integer, clamped) or the default 32. */
+/** Site-wide daily sign-in code budget: CODES_PER_DAY env override (positive integer, clamped) or the default 80. */
 export function codesPerDay(env: { CODES_PER_DAY?: string }): number {
   const raw = typeof env.CODES_PER_DAY === 'string' ? env.CODES_PER_DAY.trim() : '';
   if (!/^\d{1,9}$/.test(raw)) return CODES_PER_DAY;
@@ -195,7 +197,7 @@ export async function reserveMail(db: D1Database, kind: 'code' | 'notice', cap: 
   return r.meta.changes === 1;
 }
 
-/** Drop expired sign-in artifacts only (codes, sessions, old mail counters). Never touches recipes or users. */
+/** Drop expired sign-in artifacts only (codes, sessions, challenges, old mail counters). Never touches recipes or users. */
 export async function cleanupExpired(db: D1Database, now: number): Promise<void> {
   try {
     await db.batch([
@@ -203,6 +205,7 @@ export async function cleanupExpired(db: D1Database, now: number): Promise<void>
       db.prepare('DELETE FROM sessions WHERE expires_at < ?').bind(now),
       db.prepare('DELETE FROM mail_log WHERE created_at < ?').bind(now - 2 * 86_400_000),
     ]);
+    await db.prepare('DELETE FROM auth_challenges WHERE expires_at < ?').bind(now).run();
   } catch { /* housekeeping must never block sign-in */ }
 }
 
@@ -296,10 +299,22 @@ accountApp.use('*', async (c, next) => {
 
 const nextField = (next: string | null) => (next ? `<input type="hidden" name="next" value="${esc(next)}">` : '');
 
-const signInForm = (t: AccountStrings, lang: string, msg = '', next: string | null = null) => `<h1>${t.signInTitle}</h1>
+const signInForm = (t: AccountStrings, lang: string, msg = '', next: string | null = null, googleEnabled = false) => {
+  const gHref = `/account/google/start${qsNext(lang, next)}`;
+  const altAuth = `<div class="alt-auth" data-alt-auth${googleEnabled ? '' : ' hidden'}>
+<div class="alt-auth-actions">
+  <button type="button" class="quiet btn-passkey" data-passkey-login hidden data-options-url="/account/passkey/login/options${qs(lang)}" data-verify-url="/account/passkey/login/verify${qs(lang)}" data-next="${esc(next ?? '')}" data-msg-working="${esc(t.authWorking)}" data-msg-cancel="${esc(t.errPasskeyCancelled)}" data-msg-fail="${esc(t.errPasskeyFailed)}">${t.passkeySignInBtn}</button>
+  ${googleEnabled ? `<a class="btn-google" data-google-login href="${esc(gHref)}">${t.googleSignInBtn}</a>` : ''}
+</div>
+<div data-passkey-status role="status" aria-live="polite" hidden></div>
+<div class="auth-divider"><span>${t.orDivider}</span></div>
+</div>`;
+  return `<h1>${t.signInTitle}</h1>
 <p class="lead">${t.signInLead}</p>${msg}
+${altAuth}
 <form method="post" action="/account/code${qsNext(lang, next)}">${nextField(next)}<label>${t.signInEmailLabel}<input type="email" name="email" required autocomplete="email" maxlength="254"></label><button type="submit">${t.signInButton}</button></form>
-<p class="hint">${t.signInHint}</p>`;
+<p class="hint">${t.signInHint}</p><script>${PASSKEY_CLIENT_SCRIPT}</script>`;
+};
 
 const codeForm = (t: AccountStrings, lang: string, email: string, msg = '', next: string | null = null) => `<h1>${t.codeTitle}</h1>
 <p class="lead">${fill(t.codeLead, { email: esc(email) })}</p>${msg}
@@ -385,7 +400,7 @@ accountApp.get('/', async (c) => {
   const t = accountStrings(lang);
   const next = safeNextPath(c.req.query('next'));
   const user = c.get('user');
-  if (!user) return page(c, t.signInPageTitle, signInForm(t, lang, '', next), 200, next);
+  if (!user) return page(c, t.signInPageTitle, signInForm(t, lang, '', next, googleOAuthEnabled(c.env)), 200, next);
   if (next && next !== '/account') return c.redirect(`${next}${qs(lang)}`, 303);
   const db = createDb(c.env.DB);
   const origin = (c.env.CANONICAL_ORIGIN || new URL(c.req.url).origin).replace(/\/+$/, '');
@@ -454,17 +469,26 @@ accountApp.get('/', async (c) => {
     return `<li><div class="mine-main"><strong>${esc(r.title)}</strong> <span class="badge ${badgeCls}">${label}</span>${renderTimeline(t, state)}${note}</div><div class="mine-actions">${action}</div></li>`;
   }).join('');
   const isCreator = await hasUserSharedRecipe(c.env.DB, user.id);
-  const savedIds = await loadSavedRecipeIds(c.env.DB, user.id);
+  const [savedIds, passkeys] = await Promise.all([loadSavedRecipeIds(c.env.DB, user.id), loadUserPasskeys(c.env.DB, user.id)]);
+  const passkeyNotice = c.req.query('passkey_added') === '1' ? banner('ok', t.passkeyAddedMsg) : '';
+  const passkeyItems = passkeys
+    .map(
+      (pk) =>
+        `<li><div class="mine-main"><strong>${esc(pk.label)}</strong><p class="hint">${esc((pk.lastUsedAt ?? pk.createdAt).slice(0, 10))}</p></div><div class="mine-actions"><form method="post" action="/account/passkey/${esc(pk.id)}/delete${qs(lang)}"><button type="submit" class="quiet">${t.passkeyRemoveBtn}</button></form></div></li>`,
+    )
+    .join('');
+  const passkeyPanel = `<div class="panel" data-passkeys-panel><h2>${t.passkeysPanelTitle}</h2><p class="hint">${t.passkeysPanelLead}</p>${passkeyItems ? `<ul class="mine passkey-list">${passkeyItems}</ul>` : `<p class="hint">${t.passkeysEmpty}</p>`}<p><button type="button" class="quiet" data-passkey-register hidden data-options-url="/account/passkey/register/options${qs(lang)}" data-verify-url="/account/passkey/register/verify${qs(lang)}" data-msg-working="${esc(t.authWorking)}" data-msg-unsupported="${esc(t.errPasskeyUnsupported)}" data-msg-cancel="${esc(t.errPasskeyCancelled)}" data-msg-fail="${esc(t.errPasskeyFailed)}">${t.passkeyAddBtn}</button></p><div data-passkey-reg-status role="status" aria-live="polite" hidden></div></div>`;
   const savedPanel = `<div class="panel"><h2>${t.savedPanelTitle}</h2><p>${fill(t.savedPanelLead, { count: savedIds.length })}</p><p><a class="btn" href="/saved${qs(lang)}">${t.savedPanelLink}</a></p></div>`;
   const creatorSection = isCreator
     ? `<div class="panel"><h2>Creator Subscribers &amp; Zeluto CRM</h2><p>Because you shared a recipe, your Creator workspace is unlocked.</p><p><a class="btn" href="/account/subscribers${qs(lang)}">Manage Subscribers &amp; Zeluto CRM</a></p></div>`
     : '';
-  return page(c, t.homePageTitle, `<h1>${t.homeTitle}</h1><p class="lead">${fill(t.homeLead, { email: esc(user.email) })}</p>
+  return page(c, t.homePageTitle, `<h1>${t.homeTitle}</h1><p class="lead">${fill(t.homeLead, { email: esc(user.email) })}</p>${passkeyNotice}
 <p><a class="btn" href="/account/recipes/new${qs(lang)}">${t.addRecipe}</a></p>
 ${savedPanel}
+${passkeyPanel}
 ${creatorSection}
 <div class="panel"><h2>${t.yourDrafts}</h2>${items ? `<ul class="mine">${items}</ul>` : `<p class="hint">${t.emptyDrafts}</p>`}</div>
-<form method="post" action="/account/logout${qs(lang)}"><button class="quiet" type="submit">${t.signOut}</button></form>${hasLiveRecipe ? `<script>${ACCOUNT_LIVE_SHARE_SCRIPT}</script>` : ''}`);
+<form method="post" action="/account/logout${qs(lang)}"><button class="quiet" type="submit">${t.signOut}</button></form><script>${PASSKEY_CLIENT_SCRIPT}</script>${hasLiveRecipe ? `<script>${ACCOUNT_LIVE_SHARE_SCRIPT}</script>` : ''}`);
 });
 
 // --- Saved recipes (bookmarks) -----------------------------------------------
@@ -570,7 +594,7 @@ accountApp.post('/code', async (c) => {
   const queryNext = safeNextPath(c.req.query('next'));
   const json = wantsJson(c);
   const fail = (status: 400 | 429 | 503, pageTitle: string, msg: string, next = queryNext) =>
-    json ? c.json({ ok: false, error: msg }, status, NO_STORE) : page(c, pageTitle, signInForm(t, lang, banner('err', msg), next), status, next);
+    json ? c.json({ ok: false, error: msg }, status, NO_STORE) : page(c, pageTitle, signInForm(t, lang, banner('err', msg), next, googleOAuthEnabled(c.env)), status, next);
   if (await limited(c.env.RL_AUTH, c, 'code')) return fail(429, t.titleSlowDown, t.errTooManyTries);
   const form = await readBody(c);
   const next = safeNextPath(form['next']) ?? queryNext;
@@ -603,6 +627,40 @@ accountApp.post('/code', async (c) => {
   return page(c, t.codePageTitle, codeForm(t, lang, email, '', next), 200, next);
 });
 
+async function issueUserSession(
+  c: Ctx,
+  user: { id: string; email: string },
+  next: string | null,
+  lang: string,
+  json: boolean,
+): Promise<Response> {
+  const now = Date.now();
+  const token = randomToken();
+  await c.env.DB.prepare('INSERT INTO sessions (id,user_id,expires_at,created_at) VALUES (?,?,?,?)')
+    .bind(await sha256Hex(token), user.id, now + SESSION_DAYS * 86_400_000, now).run();
+  if (c.env.ZELUTO_CLIENT_SECRET?.trim()) {
+    const isCreator = await hasUserSharedRecipe(c.env.DB, user.id);
+    const pushRes = await push2YolksContactToZeluto(zelutoConfigFromCtx(c), {
+      email: user.email,
+      externalId: user.id,
+      externalEntityType: 'user',
+      stage: isCreator ? 'creator' : 'subscriber',
+      externalUrlPath: '/account',
+      tags: ['2yolks', isCreator ? 'creator' : 'subscriber'],
+    });
+    if (pushRes.ok && pushRes.zelutoId) {
+      await c.env.DB.prepare('UPDATE users SET zeluto_contact_id = ? WHERE id = ?')
+        .bind(pushRes.zelutoId, user.id)
+        .run()
+        .catch(() => {});
+    }
+  }
+  setCookie(c, SESSION_COOKIE, token, { httpOnly: true, secure: true, sameSite: 'Lax', path: '/', maxAge: SESSION_DAYS * 86_400 });
+  const dest = `${next ?? '/account'}${qs(lang)}`;
+  if (json) return c.json({ ok: true, email: user.email, next: dest }, 200, NO_STORE);
+  return c.redirect(dest, 303);
+}
+
 accountApp.post('/verify', async (c) => {
   const lang = langOf(c);
   const t = accountStrings(lang);
@@ -610,10 +668,11 @@ accountApp.post('/verify', async (c) => {
   const json = wantsJson(c);
   const form = await readBody(c);
   const next = safeNextPath(form['next']) ?? queryNext;
+  const gEnabled = googleOAuthEnabled(c.env);
   const fail = (status: 400 | 429 | 503, kind: 'signin' | 'code', msg: string, email = '', restart = false) => {
     if (json) return c.json({ ok: false, error: msg, ...(restart ? { restart: true } : {}) }, status, NO_STORE);
     const title = status === 429 ? t.titleSlowDown : kind === 'code' ? t.codePageTitle : t.signInPageTitle;
-    const body = kind === 'code' ? codeForm(t, lang, email, banner('err', msg), next) : signInForm(t, lang, banner('err', msg), next);
+    const body = kind === 'code' ? codeForm(t, lang, email, banner('err', msg), next) : signInForm(t, lang, banner('err', msg), next, gEnabled);
     return page(c, title, body, status, next);
   };
   if (await limited(c.env.RL_AUTH, c, 'verify')) return fail(429, 'signin', t.errTooManyTries);
@@ -640,30 +699,23 @@ accountApp.post('/verify', async (c) => {
     user = await c.env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email).first<{ id: string }>();
     if (!user) return fail(503, 'signin', t.errGeneric, email, true);
   }
-  const token = randomToken();
-  await c.env.DB.prepare('INSERT INTO sessions (id,user_id,expires_at,created_at) VALUES (?,?,?,?)')
-    .bind(await sha256Hex(token), user.id, now + SESSION_DAYS * 86_400_000, now).run();
-  if (c.env.ZELUTO_CLIENT_SECRET?.trim()) {
-    const isCreator = await hasUserSharedRecipe(c.env.DB, user.id);
-    const pushRes = await push2YolksContactToZeluto(zelutoConfigFromCtx(c), {
-      email,
-      externalId: user.id,
-      externalEntityType: 'user',
-      stage: isCreator ? 'creator' : 'subscriber',
-      externalUrlPath: '/account',
-      tags: ['2yolks', isCreator ? 'creator' : 'subscriber'],
-    });
-    if (pushRes.ok && pushRes.zelutoId) {
-      await c.env.DB.prepare('UPDATE users SET zeluto_contact_id = ? WHERE id = ?')
-        .bind(pushRes.zelutoId, user.id)
-        .run()
-        .catch(() => {});
-    }
-  }
-  setCookie(c, SESSION_COOKIE, token, { httpOnly: true, secure: true, sameSite: 'Lax', path: '/', maxAge: SESSION_DAYS * 86_400 });
-  const dest = `${next ?? '/account'}${qs(lang)}`;
-  if (json) return c.json({ ok: true, email, next: dest }, 200, NO_STORE);
-  return c.redirect(dest, 303);
+  return issueUserSession(c, { id: user.id, email }, next, lang, json);
+});
+
+registerAuthMethodRoutes(accountApp, {
+  safeNextPath,
+  normEmail,
+  str,
+  newId,
+  randomToken,
+  sha256Hex,
+  cleanupExpired,
+  limited,
+  readBody,
+  wantsJson,
+  page,
+  renderSignIn: signInForm,
+  issueUserSession,
 });
 
 accountApp.post('/logout', async (c) => {
@@ -772,7 +824,7 @@ export function fieldForValidatorPath(path: string, message: string): FormField 
 const removeDraftForm = (t: AccountStrings, lang: string, id: string) =>
   `<form method="post" action="/account/recipes/${esc(id)}/delete${qs(lang)}"><button class="quiet" type="submit">${t.removeDraft}</button></form>`;
 
-function renderForm(s: FormState, t: AccountStrings, acctLang: string, errors: ReadonlyArray<string | FieldError> = [], note = '', importOn = false, extras = '', signedIn = true, gapPrompts: string[] = []): string {
+function renderForm(s: FormState, t: AccountStrings, acctLang: string, errors: ReadonlyArray<string | FieldError> = [], note = '', importOn = false, extras = '', signedIn = true, gapPrompts: string[] = [], googleEnabled = false): string {
   // Errors show twice: a linked summary at the top (role=alert) and inline
   // next to the offending control (aria-invalid + aria-describedby).
   const errs: FieldError[] = errors.map((e) => (typeof e === 'string' ? { msg: e } : e));
@@ -834,10 +886,15 @@ ${importOn && signedIn ? `<form method="post" action="/account/recipes/import${q
   data-msg-done="${esc(t.authDone)}"
   data-msg-err-email="${esc(t.errInvalidEmail)}"
   data-msg-err-code="${esc(t.errEnterCode)}"
+  data-msg-err-passkey-cancel="${esc(t.errPasskeyCancelled)}"
   data-msg-err-generic="${esc(t.errGeneric)}">
   <h2>${t.authStepTitle}</h2>
   <p class="hint">${t.authStepLead}</p>
   <div data-inline-auth-email-step>
+    <div class="alt-auth-actions">
+      <button type="button" class="quiet btn-passkey" data-inline-passkey-login hidden data-options-url="/account/passkey/login/options${qs(acctLang)}" data-verify-url="/account/passkey/login/verify${qs(acctLang)}">${t.passkeySignInBtn}</button>
+      ${googleEnabled ? `<a class="btn-google" data-inline-google-login href="/account/google/start${qsNext(acctLang, '/account/recipes/new')}">${t.googleSignInBtn}</a>` : ''}
+    </div>
     <label>${t.signInEmailLabel}<input type="email" data-auth-email autocomplete="email" maxlength="254"></label>
     <div class="inline-auth-actions"><button type="button" data-auth-send>${t.signInButton}</button></div>
   </div>
@@ -1030,7 +1087,7 @@ export async function sendAuthorReviewNotice(
 
 const rf = (c: Ctx, s: FormState, errors: ReadonlyArray<string | FieldError> = [], note = '', extras = '', gapPrompts: string[] = []) => {
   const lang = langOf(c);
-  return renderForm(s, accountStrings(lang), lang, errors, note, c.env.IMPORT_ENABLED === 'true', extras, Boolean(c.get('user')), gapPrompts);
+  return renderForm(s, accountStrings(lang), lang, errors, note, c.env.IMPORT_ENABLED === 'true', extras, Boolean(c.get('user')), gapPrompts, googleOAuthEnabled(c.env));
 };
 
 accountApp.get('/recipes/new', async (c) => {
