@@ -466,6 +466,7 @@ export function DiscoveryRowCard({
   currentCountry = null,
   savedIds,
   pantryMatch = null,
+  showUntestedBadge = false,
 }: {
   recipe: RecipeRow;
   index: number;
@@ -474,11 +475,13 @@ export function DiscoveryRowCard({
   currentCountry?: string | null;
   savedIds?: ReadonlySet<string>;
   pantryMatch?: PantryMatchInfo | null;
+  showUntestedBadge?: boolean;
 }) {
   const t = uiStrings(lang);
   const catText = categoryLabel(r.category, lang);
   const searchBody = `${r.ingredients ?? ''} ${r.intro ?? ''}`.trim();
   const isCrossLocale = Boolean(currentCountry && r.country && r.country !== currentCountry);
+  const hasBadgeRow = !r.untested || showUntestedBadge || (r.cookedCount ?? 0) >= 2 || r.lang !== lang || isCrossLocale;
   const style = asImageStyle(r.imageStyle);
   const href = recipePathFor(r.country, r.lang, r.slug);
   return (
@@ -524,21 +527,23 @@ export function DiscoveryRowCard({
           <a className="stretched-row" href={href}>{r.title}</a>
         </h3>
         {r.intro ? <p className="card-intro">{r.intro}</p> : null}
-        <div className="row-badges">
-          {r.untested ? (
-            <span className="status-label">{t.untestedBadge}</span>
-          ) : (
-            <span className="tested-badge">
-              <FactIcon kind="check" />
-              {t.testedBadge}
-            </span>
-          )}
-          {(r.cookedCount ?? 0) >= 2 ? (
-            <span className="cooked-count-chip">{t.cookedByCount.replace('{n}', String(r.cookedCount))}</span>
-          ) : null}
-          {r.lang !== lang ? <span className="fallback-language">{LANG_NAMES[r.lang]}</span> : null}
-          {isCrossLocale ? <span className="provenance-badge">{localizedCountryName(r.country, lang)}</span> : null}
-        </div>
+        {hasBadgeRow ? (
+          <div className="row-badges">
+            {!r.untested ? (
+              <span className="tested-badge" data-kitchen-tested>
+                <FactIcon kind="check" />
+                {t.kitchenTestedBadge}
+              </span>
+            ) : showUntestedBadge ? (
+              <span className="status-label">{t.untestedBadge}</span>
+            ) : null}
+            {(r.cookedCount ?? 0) >= 2 ? (
+              <span className="cooked-count-chip">{t.cookedByCount.replace('{n}', String(r.cookedCount))}</span>
+            ) : null}
+            {r.lang !== lang ? <span className="fallback-language">{LANG_NAMES[r.lang]}</span> : null}
+            {isCrossLocale ? <span className="provenance-badge">{localizedCountryName(r.country, lang)}</span> : null}
+          </div>
+        ) : null}
         {pantryMatch ? (
           <span className="pantry-match-pill" data-pantry-match>
             {`\u2713 ${pantryMatch.matchCount}/${pantryMatch.requestedCount}: ${pantryMatch.matched.join(', ')}`}
@@ -636,7 +641,7 @@ export function RecipeCard({
           </span>
         ) : null}
         {cat ? <span className="meta-cat">{cat}</span> : null}
-        {primary.untested ? <span className="badge">{t.untestedBadge}</span> : <span className="tested-badge"><FactIcon kind="check" />{t.testedBadge}</span>}
+        {primary.untested ? <span className="badge">{t.untestedBadge}</span> : <span className="tested-badge" data-kitchen-tested><FactIcon kind="check" />{t.kitchenTestedBadge}</span>}
       </p>
       {others.length > 0 ? (
         <p className="chips">
@@ -710,7 +715,7 @@ export function RecipeIndex({ recipes, lang = 'en' }: { recipes: RecipeRow[]; la
             </div>
             <ul className="discovery-list" data-recipe-list>
               {(groups.get(cat) ?? []).map((r, i) => (
-                <DiscoveryRowCard key={r.id} recipe={r} index={i} lang={lang} numbered />
+                <DiscoveryRowCard key={r.id} recipe={r} index={i} lang={lang} numbered showUntestedBadge />
               ))}
             </ul>
           </section>
@@ -824,22 +829,22 @@ export function Home({ recipes, lang = 'en', activeCategory = null, currentCount
               </a>
             </h2>
           </div>
-          <div className="featured-facts">
-            {featured.totalMinutes != null ? (
-              <span className="icon-stat">
-                <FactIcon />
-                {d.total} · {fmtDuration(featured.totalMinutes)}
-              </span>
-            ) : null}
-            {featured.untested ? (
-              <span className="status-label">{t.untestedBadge}</span>
-            ) : (
-              <span className="tested-badge">
-                <FactIcon kind="check" />
-                {t.testedBadge}
-              </span>
-            )}
-          </div>
+          {featured.totalMinutes != null || !featured.untested ? (
+            <div className="featured-facts">
+              {featured.totalMinutes != null ? (
+                <span className="icon-stat">
+                  <FactIcon />
+                  {d.total} · {fmtDuration(featured.totalMinutes)}
+                </span>
+              ) : null}
+              {!featured.untested ? (
+                <span className="tested-badge" data-kitchen-tested>
+                  <FactIcon kind="check" />
+                  {t.kitchenTestedBadge}
+                </span>
+              ) : null}
+            </div>
+          ) : null}
         </section>
       ) : null}
       <section id="recipes" className="discovery-index">
@@ -2232,7 +2237,7 @@ export function PrivacyView({ lang = 'en' }: { lang?: string }) {
       <main id="main">
         <h1>Privacidad</h1>
         <p>No necesitas iniciar sesi&oacute;n para leer recetas y leer no usa cookies. Si cambias entre unidades de EE. UU. y m&eacute;tricas, eliges tema claro/oscuro, guardas recetas favoritas o abres recetas recientes sin cuenta, tus preferencias se guardan solo en tu propio navegador (almacenamiento local, claves &quot;2y-units&quot;, &quot;2y-theme&quot;, &quot;2y-saved&quot;, &quot;2y-recent&quot; y &quot;2y-recent-q&quot;). Se quedan en tu dispositivo y no se env&iacute;an hasta que inicies sesi&oacute;n y elijas sincronizarlas.</p>
-        <p>Si creas una cuenta para enviar o sincronizar recetas, guardamos tu correo electr&oacute;nico, el nombre de autor que elijas, tus recetas marcadas como guardadas y los borradores que guardes. Para iniciar sesi&oacute;n enviamos un c&oacute;digo de 6 d&iacute;gitos a tu correo mediante el servicio Resend; el c&oacute;digo se guarda solo como hash. Al iniciar sesi&oacute;n se usa una cookie de sesi&oacute;n (&quot;__Host-2y_sid&quot;, HttpOnly, hasta 30 d&iacute;as) que te mantiene conectado en ese navegador, y solo guardamos un hash de su valor. Los borradores son privados hasta que los env&iacute;es para revisi&oacute;n. Nada de lo que env&iacute;es se publica autom&aacute;ticamente. Si subes una foto opcional del plato, se redimensiona en tu dispositivo para quitar metadatos de ubicaci&oacute;n, se guarda de forma privada junto al borrador, solo se publica tras revisi&oacute;n y aprobaci&oacute;n expl&iacute;cita, y se elimina cuando la quitas o borras el borrador.</p>
+        <p>Si creas una cuenta para enviar o sincronizar recetas, guardamos tu correo electr&oacute;nico, el nombre de autor que elijas, tus recetas marcadas como guardadas y los borradores que guardes. Para iniciar sesi&oacute;n enviamos un c&oacute;digo de 6 d&iacute;gitos a tu correo mediante el servicio Resend (el c&oacute;digo se guarda solo como hash), tambi&eacute;n puedes guardar una llave de acceso (solo almacenamos su clave p&uacute;blica; tus datos biom&eacute;tricos nunca salen de tu dispositivo) o usar Google cuando est&eacute; activado para vincular tu correo verificado. Al iniciar sesi&oacute;n se usa una cookie de sesi&oacute;n (&quot;__Host-2y_sid&quot;, HttpOnly, hasta 30 d&iacute;as) que te mantiene conectado en ese navegador, y solo guardamos un hash de su valor. Los borradores son privados hasta que los env&iacute;es para revisi&oacute;n. Nada de lo que env&iacute;es se publica autom&aacute;ticamente. Si subes una foto opcional del plato, se redimensiona en tu dispositivo para quitar metadatos de ubicaci&oacute;n, se guarda de forma privada junto al borrador, solo se publica tras revisi&oacute;n y aprobaci&oacute;n expl&iacute;cita, y se elimina cuando la quitas o borras el borrador.</p>
         <p>Cuando una b&uacute;squeda de recetas no encuentra nada, guardamos las palabras buscadas, el idioma de la p&aacute;gina y la hora (sin cuenta, direcci&oacute;n IP ni cookie) para saber qu&eacute; recetas faltan. Mientras escribes una receta, una copia sin guardar y tu elecci&oacute;n de vista de lista o tarjetas tambi&eacute;n pueden quedar en el almacenamiento local de tu navegador para no perder nada si la p&aacute;gina se recarga; esa copia se queda en tu dispositivo.</p>
         <p>Medimos visitas y velocidad de p&aacute;gina con Cloudflare Web Analytics. Seg&uacute;n Cloudflare, este servicio de anal&iacute;tica no usa cookies ni almacenamiento local, no identifica a los visitantes y no recopila datos personales para estad&iacute;sticas.</p>
       </main>
@@ -2243,7 +2248,7 @@ export function PrivacyView({ lang = 'en' }: { lang?: string }) {
       <main id="main">
         <h1>Confidentialit&eacute;</h1>
         <p>Vous n&apos;avez pas besoin de vous connecter pour lire les recettes, et la lecture ne d&eacute;pose aucun cookie. Si vous changez d&apos;unit&eacute;s, de th&egrave;me clair/sombre, enregistrez des recettes en favoris ou consultez votre historique r&eacute;cent sans compte, ces donn&eacute;es restent dans le stockage local de votre navigateur (&laquo; 2y-units &raquo;, &laquo; 2y-theme &raquo;, &laquo; 2y-saved &raquo;, &laquo; 2y-recent &raquo;, &laquo; 2y-recent-q &raquo;).</p>
-        <p>Si vous cr&eacute;ez un compte pour proposer ou synchroniser des recettes, nous conservons votre adresse e-mail, le nom d&apos;auteur choisi, vos favoris enregistr&eacute;s et vos brouillons priv&eacute;s. La connexion utilise un code &agrave; 6 chiffres envoy&eacute; via Resend (stock&eacute; uniquement sous forme de hachage) et un cookie de session (&laquo; __Host-2y_sid &raquo;, HttpOnly, 30 jours maximum). Rien de ce que vous envoyez n&apos;est publi&eacute; automatiquement. Si vous ajoutez une photo facultative du plat, elle est redimensionn&eacute;e sur votre appareil pour retirer les m&eacute;tadonn&eacute;es de localisation, conserv&eacute;e en priv&eacute; avec votre brouillon, publi&eacute;e uniquement apr&egrave;s examen et approbation explicite, et supprim&eacute;e si vous la retirez ou effacez le brouillon.</p>
+        <p>Si vous cr&eacute;ez un compte pour proposer ou synchroniser des recettes, nous conservons votre adresse e-mail, le nom d&apos;auteur choisi, vos favoris enregistr&eacute;s et vos brouillons priv&eacute;s. La connexion utilise un code &agrave; 6 chiffres envoy&eacute; via Resend (stock&eacute; uniquement sous forme de hachage), une cl&eacute; d&apos;acc&egrave;s facultative (seule la cl&eacute; publique est conserv&eacute;e ; aucune donn&eacute;e biom&eacute;trique ne quitte votre appareil), ou Google lorsqu&apos;il est activ&eacute; pour associer votre adresse e-mail v&eacute;rifi&eacute;e, ainsi qu&apos;un cookie de session (&laquo; __Host-2y_sid &raquo;, HttpOnly, 30 jours maximum). Rien de ce que vous envoyez n&apos;est publi&eacute; automatiquement. Si vous ajoutez une photo facultative du plat, elle est redimensionn&eacute;e sur votre appareil pour retirer les m&eacute;tadonn&eacute;es de localisation, conserv&eacute;e en priv&eacute; avec votre brouillon, publi&eacute;e uniquement apr&egrave;s examen et approbation explicite, et supprim&eacute;e si vous la retirez ou effacez le brouillon.</p>
         <p>Quand une recherche de recette ne trouve rien, nous enregistrons les mots cherch&eacute;s, la langue de la page et l&apos;heure (sans compte, adresse IP ni cookie) pour savoir quelles recettes manquent. Pendant que vous r&eacute;digez une recette, une copie non enregistr&eacute;e et votre choix d&apos;affichage liste ou cartes peuvent aussi rester dans le stockage local de votre navigateur, pour ne rien perdre si la page se recharge ; cette copie reste sur votre appareil.</p>
         <p>Nous mesurons les pages vues et la vitesse avec Cloudflare Web Analytics, un service sans cookies ni suivi individuel.</p>
       </main>
@@ -2253,7 +2258,7 @@ export function PrivacyView({ lang = 'en' }: { lang?: string }) {
     <main id="main">
       <h1>Privacy</h1>
       <p>You do not need to sign in to read recipes, and reading sets no cookies. If you switch between US and metric units, choose a light/dark theme, bookmark recipes, or view recent searches and recipes without an account, that state stays in your own browser (local storage, keys &quot;2y-units&quot;, &quot;2y-theme&quot;, &quot;2y-saved&quot;, &quot;2y-recent&quot;, and &quot;2y-recent-q&quot;). It stays on your device and is never sent to us unless you sign in and sync saved bookmarks.</p>
-      <p>If you create an account to send in a recipe or sync bookmarks, we store your email address, the author name you choose, your saved recipe bookmarks, and the recipe drafts you save. Signing in uses a 6-digit code sent to your email through the email service Resend; the code is stored only as a hash. Signing in sets one session cookie (&quot;__Host-2y_sid&quot;, HttpOnly, up to 30 days) that keeps you signed in on that browser, and we store only a hash of its value. Signing out ends that session. Drafts are private to you until you send one in for review. Nothing you send in is published automatically. If you attach an optional dish photo to a draft, it is resized on your device to strip camera metadata, stored privately with the draft, published only after explicit review approval, and deleted when you remove it or delete the draft.</p>
+      <p>If you create an account to send in a recipe or sync bookmarks, we store your email address, the author name you choose, your saved recipe bookmarks, and the recipe drafts you save. Signing in uses a 6-digit code sent to your email through the email service Resend (stored only as a hash), an optional passkey (only the public key is stored; biometric data never leaves your device), or Google when enabled to link your verified email address. Signing in sets one session cookie (&quot;__Host-2y_sid&quot;, HttpOnly, up to 30 days) that keeps you signed in on that browser, and we store only a hash of its value. Signing out ends that session. Drafts are private to you until you send one in for review. Nothing you send in is published automatically. If you attach an optional dish photo to a draft, it is resized on your device to strip camera metadata, stored privately with the draft, published only after explicit review approval, and deleted when you remove it or delete the draft.</p>
       <p>When a recipe search finds nothing, we record the search words, the page language and the time (no account, IP address or cookie) so we know which recipes people are missing. While you write a recipe, an unsaved copy and your list or card view choice can also be kept in your browser&apos;s local storage so nothing is lost if the page reloads; that copy stays on your device.</p>
       <p>We measure page views and page speed with Cloudflare Web Analytics. Per Cloudflare, this analytics service does not use cookies or local storage, does not fingerprint visitors, and does not collect personal data for analytics. We use the counts only to see which pages people read.</p>
     </main>
@@ -2301,7 +2306,7 @@ export function HowWeTestView({ lang = 'en' }: { lang?: string }) {
           <li><strong>A&uacute;n no probada.</strong> Escrita con t&eacute;cnicas est&aacute;ndar y revisada contra gu&iacute;as de seguridad alimentaria; tiempos y porciones son estimados hasta que alguien la cocine.</li>
           <li><strong>Probada.</strong> Una persona la cocin&oacute; en su cocina, registr&oacute; el rendimiento y tiempo reales y anot&oacute; cualquier ajuste, con fecha visible.</li>
         </ul>
-        <p>Nunca inventamos calificaciones, rese&ntilde;as ni pruebas.</p>
+        <p>Nunca inventamos calificaciones, rese&ntilde;as ni pruebas. En las tarjetas solo destacamos la etiqueta <strong>Probada en cocina</strong> cuando est&aacute; aprobada; cada p&aacute;gina de receta y el &iacute;ndice general muestran el estado completo.</p>
         <h2>Probada por la comunidad</h2>
         <p>Las personas con cuenta pueden reportar que cocinaron una receta (un reporte por persona y receta, nunca sobre sus propias recetas). Un moderador lee cada reporte y la receta solo se marca como probada tras una aprobaci&oacute;n.</p>
       </main>
@@ -2316,7 +2321,7 @@ export function HowWeTestView({ lang = 'en' }: { lang?: string }) {
           <li><strong>Pas encore test&eacute;e.</strong> &Eacute;crite &agrave; partir de techniques courantes et v&eacute;rifi&eacute;e selon les rep&egrave;res de s&eacute;curit&eacute; alimentaire ; les temps et portions restent indicatifs tant qu&apos;elle n&apos;a pas &eacute;t&eacute; cuisin&eacute;e.</li>
           <li><strong>Test&eacute;e.</strong> Une personne l&apos;a cuisin&eacute;e, a not&eacute; le rendement et le temps r&eacute;els ainsi que la date.</li>
         </ul>
-        <p>Nous n&apos;inventons jamais de notes, d&apos;avis ou de tests.</p>
+        <p>Nous n&apos;inventons jamais de notes, d&apos;avis ou de tests. Sur les cartes de d&eacute;couverte, seul le badge <strong>Test&eacute;e en cuisine</strong> s&apos;affiche apr&egrave;s validation ; chaque fiche recette et l&apos;index affichent le statut complet.</p>
         <h2>Test communautaire</h2>
         <p>Les cuisiniers connect&eacute;s peuvent signaler avoir cuisin&eacute; une recette (un signalement par cuisinier et par recette, jamais sur leurs propres recettes). Un mod&eacute;rateur lit chaque signalement et la recette n&apos;est marqu&eacute;e test&eacute;e qu&apos;apr&egrave;s approbation.</p>
       </main>
@@ -2330,7 +2335,7 @@ export function HowWeTestView({ lang = 'en' }: { lang?: string }) {
         <li><strong>Not yet tested.</strong> Written from standard techniques and checked against food-safety guidance (for example USDA safe minimum temperatures). Nobody has cooked it for 2yolks yet, so times and yields are estimates.</li>
         <li><strong>Tested.</strong> A person cooked it, recorded the real yield and time, and noted changes. We show the date.</li>
       </ul>
-      <p>We never invent ratings, reviews or testing. If a recipe has not been cooked, we say so.</p>
+      <p>We never invent ratings, reviews or testing. If a recipe has not been cooked, we say so. Browse cards highlight the bright <strong>Kitchen-tested</strong> badge only once a kitchen test is approved; every recipe page and the A–Z index state <strong>Not yet tested</strong> until then.</p>
       <h2>Community-tested</h2>
       <p>Signed-in cooks can report that they cooked a recipe: one report per cook per recipe, never on their own submissions. A moderator reads every report, and a recipe is marked tested only after a report is approved. Reports we cannot stand behind are hidden, never published.</p>
     </main>

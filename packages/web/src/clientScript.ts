@@ -2190,6 +2190,88 @@ ${CAPTURE_HELPERS_JS}
     }
     if (authSendBtn) authSendBtn.addEventListener('click', requestInlineCode);
     if (authVerifyBtn) authVerifyBtn.addEventListener('click', verifyInlineCode);
+    var inlinePasskeyBtn = inlineAuth.querySelector('[data-inline-passkey-login]');
+    var inlineGoogleBtn = inlineAuth.querySelector('[data-inline-google-login]');
+    if (inlineGoogleBtn) {
+      inlineGoogleBtn.addEventListener('click', function () {
+        persistNow();
+        if (session) { try { session.setItem(PENDING_KEY, KEY); } catch (err) {} }
+      });
+    }
+    if (inlinePasskeyBtn && typeof window !== 'undefined' && typeof window.PublicKeyCredential === 'function' && navigator.credentials && typeof navigator.credentials.get === 'function') {
+      inlinePasskeyBtn.hidden = false;
+      function b64uBuf(s) {
+        var b64 = String(s || '').split('-').join('+').split('_').join('/');
+        while (b64.length % 4) b64 += '=';
+        var bin = atob(b64);
+        var out = new Uint8Array(bin.length);
+        for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+        return out.buffer;
+      }
+      function bufB64u(buf) {
+        var bytes = new Uint8Array(buf);
+        var bin = '';
+        for (var i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+        return btoa(bin).split('+').join('-').split('/').join('_').split('=').join('');
+      }
+      inlinePasskeyBtn.addEventListener('click', function () {
+        if (authSending) return;
+        authSending = true;
+        inlinePasskeyBtn.disabled = true;
+        setAuthStatus('ok', authMsg('working', 'Working…'));
+        var cid = '';
+        fetch(inlinePasskeyBtn.getAttribute('data-options-url') || '/account/passkey/login/options', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+          body: JSON.stringify({ next: '/account/recipes/new' })
+        })
+          .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); })
+          .then(function (res) {
+            if (!res.ok || !res.body || !res.body.ok) throw new Error((res.body && res.body.error) || authMsg('err-generic', 'Something went wrong.'));
+            cid = res.body.challengeId;
+            var opt = res.body.options;
+            return navigator.credentials.get({
+              publicKey: {
+                challenge: b64uBuf(opt.challenge),
+                rpId: opt.rpId,
+                timeout: opt.timeout || 60000,
+                userVerification: opt.userVerification || 'preferred'
+              }
+            });
+          })
+          .then(function (cred) {
+            if (!cred || !cred.response) throw new Error(authMsg('err-passkey-cancel', 'Passkey request was cancelled or did not complete.'));
+            var resp = cred.response;
+            return fetch(inlinePasskeyBtn.getAttribute('data-verify-url') || '/account/passkey/login/verify', {
+              method: 'POST',
+              credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+              body: JSON.stringify({
+                challengeId: cid,
+                credentialId: bufB64u(cred.rawId),
+                clientDataJSON: bufB64u(resp.clientDataJSON),
+                authenticatorData: bufB64u(resp.authenticatorData),
+                signature: bufB64u(resp.signature)
+              })
+            }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); });
+          })
+          .then(function (res) {
+            if (!res.ok || !res.body || !res.body.ok) {
+              setAuthStatus('err', (res.body && res.body.error) || authMsg('err-generic', 'Something went wrong.'));
+              return;
+            }
+            form.setAttribute('data-signed-in', '1');
+            setAuthStatus('ok', authMsg('done', 'Signed in. Saving your recipe…'));
+            submitWithIntent(pendingIntent);
+          })
+          .catch(function (err) {
+            var isCancel = err && (err.name === 'NotAllowedError' || err.name === 'AbortError');
+            setAuthStatus('err', isCancel ? authMsg('err-passkey-cancel', 'Passkey request was cancelled or did not complete.') : (err && err.message) || authMsg('err-generic', 'Something went wrong.'));
+          })
+          .then(function () { authSending = false; inlinePasskeyBtn.disabled = false; });
+      });
+    }
     if (authChangeBtn) authChangeBtn.addEventListener('click', function () {
       if (codeStep) codeStep.hidden = true;
       if (emailStep) emailStep.hidden = false;
@@ -2970,4 +3052,181 @@ export const ACCOUNT_LIVE_SHARE_SCRIPT = `(function () {
         .then(function () { btn.disabled = false; });
     });
   });
+})();`;
+
+export const PASSKEY_CLIENT_SCRIPT = `(function () {
+  if (typeof window === 'undefined' || typeof window.PublicKeyCredential !== 'function') return;
+  if (!navigator.credentials || typeof fetch !== 'function') return;
+  function b64uToBuf(s) {
+    var b64 = String(s || '').split('-').join('+').split('_').join('/');
+    while (b64.length % 4) b64 += '=';
+    var bin = atob(b64);
+    var out = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out.buffer;
+  }
+  function bufToB64u(buf) {
+    var bytes = new Uint8Array(buf);
+    var bin = '';
+    for (var i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+    return btoa(bin).split('+').join('-').split('/').join('_').split('=').join('');
+  }
+  function showStatus(el, kind, msg) {
+    if (!el) return;
+    el.hidden = !msg;
+    el.className = kind;
+    el.textContent = msg;
+  }
+
+  var loginBtn = document.querySelector('[data-passkey-login]');
+  if (loginBtn && typeof navigator.credentials.get === 'function') {
+    loginBtn.hidden = false;
+    var wrap = loginBtn.closest('.alt-auth') || loginBtn.parentElement;
+    if (wrap) wrap.hidden = false;
+    var statusEl = document.querySelector('[data-passkey-status]');
+    var busy = false;
+    loginBtn.addEventListener('click', function () {
+      if (busy) return;
+      busy = true;
+      loginBtn.disabled = true;
+      showStatus(statusEl, 'ok', loginBtn.getAttribute('data-msg-working') || 'Working…');
+      var challengeId = '';
+      var cancelMsg = loginBtn.getAttribute('data-msg-cancel') || 'Passkey request was cancelled or did not complete.';
+      var failMsg = loginBtn.getAttribute('data-msg-fail') || 'Could not verify that passkey.';
+      fetch(loginBtn.getAttribute('data-options-url') || '/account/passkey/login/options', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({ next: loginBtn.getAttribute('data-next') || '' })
+      })
+        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); })
+        .then(function (res) {
+          if (!res.ok || !res.body || !res.body.ok) throw new Error((res.body && res.body.error) || failMsg);
+          challengeId = res.body.challengeId;
+          var opt = res.body.options;
+          return navigator.credentials.get({
+            publicKey: {
+              challenge: b64uToBuf(opt.challenge),
+              rpId: opt.rpId,
+              timeout: opt.timeout || 60000,
+              userVerification: opt.userVerification || 'preferred'
+            }
+          });
+        })
+        .then(function (cred) {
+          if (!cred || !cred.response) throw new Error(cancelMsg);
+          var resp = cred.response;
+          return fetch(loginBtn.getAttribute('data-verify-url') || '/account/passkey/login/verify', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+            body: JSON.stringify({
+              challengeId: challengeId,
+              credentialId: bufToB64u(cred.rawId),
+              clientDataJSON: bufToB64u(resp.clientDataJSON),
+              authenticatorData: bufToB64u(resp.authenticatorData),
+              signature: bufToB64u(resp.signature)
+            })
+          }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); });
+        })
+        .then(function (res) {
+          if (!res.ok || !res.body || !res.body.ok) {
+            showStatus(statusEl, 'err', (res.body && res.body.error) || failMsg);
+            return;
+          }
+          window.location.assign(res.body.next || '/account');
+        })
+        .catch(function (err) {
+          var isCancel = err && (err.name === 'NotAllowedError' || err.name === 'AbortError');
+          showStatus(statusEl, 'err', isCancel ? cancelMsg : (err && err.message) || failMsg);
+        })
+        .then(function () { busy = false; loginBtn.disabled = false; });
+    });
+  }
+
+  var regBtn = document.querySelector('[data-passkey-register]');
+  if (regBtn && typeof navigator.credentials.create === 'function') {
+    regBtn.hidden = false;
+    var regStatus = document.querySelector('[data-passkey-reg-status]');
+    var regBusy = false;
+    regBtn.addEventListener('click', function () {
+      if (regBusy) return;
+      regBusy = true;
+      regBtn.disabled = true;
+      showStatus(regStatus, 'ok', regBtn.getAttribute('data-msg-working') || 'Working…');
+      var challengeId = '';
+      var unsupportedMsg = regBtn.getAttribute('data-msg-unsupported') || 'Passkeys are not supported in this browser.';
+      var cancelMsg = regBtn.getAttribute('data-msg-cancel') || 'Passkey request was cancelled or did not complete.';
+      var failMsg = regBtn.getAttribute('data-msg-fail') || 'Could not verify that passkey.';
+      fetch(regBtn.getAttribute('data-options-url') || '/account/passkey/register/options', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: '{}'
+      })
+        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); })
+        .then(function (res) {
+          if (!res.ok || !res.body || !res.body.ok) throw new Error((res.body && res.body.error) || failMsg);
+          challengeId = res.body.challengeId;
+          var opt = res.body.options;
+          var pk = {
+            challenge: b64uToBuf(opt.challenge),
+            rp: opt.rp,
+            user: {
+              id: b64uToBuf(opt.user.id),
+              name: opt.user.name,
+              displayName: opt.user.displayName
+            },
+            pubKeyCredParams: opt.pubKeyCredParams,
+            timeout: opt.timeout || 60000,
+            attestation: 'none',
+            authenticatorSelection: opt.authenticatorSelection,
+            excludeCredentials: (opt.excludeCredentials || []).map(function (c) {
+              return { type: 'public-key', id: b64uToBuf(c.id) };
+            })
+          };
+          return navigator.credentials.create({ publicKey: pk });
+        })
+        .then(function (cred) {
+          if (!cred || !cred.response) throw new Error(cancelMsg);
+          var resp = cred.response;
+          if (typeof resp.getPublicKey !== 'function' || typeof resp.getAuthenticatorData !== 'function') {
+            throw new Error(unsupportedMsg);
+          }
+          var spki = resp.getPublicKey();
+          var authData = resp.getAuthenticatorData();
+          var alg = typeof resp.getPublicKeyAlgorithm === 'function' ? resp.getPublicKeyAlgorithm() : -7;
+          if (!spki || !authData) throw new Error(unsupportedMsg);
+          var transports = typeof resp.getTransports === 'function' ? resp.getTransports() : [];
+          return fetch(regBtn.getAttribute('data-verify-url') || '/account/passkey/register/verify', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+            body: JSON.stringify({
+              challengeId: challengeId,
+              credentialId: bufToB64u(cred.rawId),
+              clientDataJSON: bufToB64u(resp.clientDataJSON),
+              authenticatorData: bufToB64u(authData),
+              publicKeySpki: bufToB64u(spki),
+              coseAlg: alg,
+              transports: transports
+            })
+          }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); });
+        })
+        .then(function (res) {
+          if (!res.ok || !res.body || !res.body.ok) {
+            showStatus(regStatus, 'err', (res.body && res.body.error) || failMsg);
+            return;
+          }
+          var u = new URL(window.location.href);
+          u.searchParams.set('passkey_added', '1');
+          window.location.assign(u.toString());
+        })
+        .catch(function (err) {
+          var isCancel = err && (err.name === 'NotAllowedError' || err.name === 'AbortError');
+          showStatus(regStatus, 'err', isCancel ? cancelMsg : (err && err.message) || failMsg);
+        })
+        .then(function () { regBusy = false; regBtn.disabled = false; });
+    });
+  }
 })();`;

@@ -58,6 +58,7 @@ import {
   CAPTURE_HELPERS_JS,
   CAPTURE_CHECK_STRINGS,
   ACCOUNT_LIVE_SHARE_SCRIPT,
+  PASSKEY_CLIENT_SCRIPT,
 } from './clientScript';
 import { DRAFT_PHOTO_CLIENT_SCRIPT } from './photoClientScript';
 import type { RecipePage, IngredientEntry } from '@2yolks/contracts';
@@ -1194,6 +1195,15 @@ html[data-theme="dark"] .acct .live-celebration { border-color: var(--lime); bac
 .acct .gap-chip-row button.gap-chip { padding: 0.38rem 0.8rem; font-size: 0.86rem; background: var(--plum); color: var(--lime); border: 1px solid var(--plum); }
 .acct .gap-chip-row button.gap-chip.quiet { background: var(--card); color: var(--ink); border-color: var(--line-strong); }
 .acct .remix-banner { border-left-color: var(--plum); }
+.acct .alt-auth { display: grid; gap: 0.6rem; margin-bottom: 1.15rem; }
+.acct .alt-auth[hidden] { display: none; }
+.acct .alt-auth-actions { display: flex; flex-wrap: wrap; gap: 0.55rem; align-items: center; }
+.acct .btn-google, .acct .btn-passkey { display: inline-flex; align-items: center; justify-content: center; gap: 0.45rem; font-weight: 650; }
+.acct a.btn-google { padding: 0.55rem 1.05rem; border: 1px solid var(--line-strong); background: var(--card); color: var(--ink); text-decoration: none; min-height: 44px; }
+.acct a.btn-google:hover { border-color: var(--plum); }
+.acct .auth-divider { display: flex; align-items: center; gap: 0.75rem; margin: 0.9rem 0; color: var(--muted); font-size: 0.84rem; text-transform: uppercase; letter-spacing: 0.06em; }
+.acct .auth-divider::before, .acct .auth-divider::after { content: ""; flex: 1 1 0; height: 1px; background: var(--line); }
+.acct ul.passkey-list li { align-items: center; }
 @media (max-width: 640px) {
   .acct .ing-row-item { grid-template-columns: 4rem 4.8rem minmax(0, 1fr); }
   .acct .ing-row-item .builder-row-actions { grid-column: 1 / -1; justify-self: end; }
@@ -1218,4 +1228,4 @@ export function renderAccountPage(
   return shell(`<style>${ACCOUNT_CSS}</style><main id="main" class="acct${opts?.wide ? ' acct-capture' : ''}">${bodyHtml}</main>`, { title: `${title} - 2yolks`, noindex: true, lang, nav, currentPath: path });
 }
 
-export { CAPTURE_CLIENT_SCRIPT, CAPTURE_HELPERS_JS, CAPTURE_CHECK_STRINGS, DRAFT_PHOTO_CLIENT_SCRIPT, GLOBAL_CHROME_SCRIPT, DESIGN_SYSTEM_CSS, THEME_CLIENT_SCRIPT, RECIPE_CLIENT_SCRIPT, DISCOVERY_CLIENT_SCRIPT, ACCOUNT_LIVE_SHARE_SCRIPT };
+export { CAPTURE_CLIENT_SCRIPT, CAPTURE_HELPERS_JS, CAPTURE_CHECK_STRINGS, DRAFT_PHOTO_CLIENT_SCRIPT, GLOBAL_CHROME_SCRIPT, DESIGN_SYSTEM_CSS, THEME_CLIENT_SCRIPT, RECIPE_CLIENT_SCRIPT, DISCOVERY_CLIENT_SCRIPT, ACCOUNT_LIVE_SHARE_SCRIPT, PASSKEY_CLIENT_SCRIPT };

@@ -208,6 +208,7 @@ export interface UiStrings {
   viewGrid: string;
   viewList: string;
   testedBadge: string;
+  kitchenTestedBadge: string;
   saveStoryCard: string;
   storyCardReady: string;
   saveOgCard: string;
@@ -282,6 +283,7 @@ const UI_STRINGS: Record<string, UiStrings> = {
     viewGrid: 'Cards',
     viewList: 'Index',
     testedBadge: 'Tested',
+    kitchenTestedBadge: 'Kitchen-tested',
     saveStoryCard: 'Story card (PNG)',
     storyCardReady: 'Story saved',
     saveOgCard: 'Link card (PNG)',
@@ -340,6 +342,7 @@ const UI_STRINGS: Record<string, UiStrings> = {
     viewGrid: 'Tarjetas',
     viewList: '\u00cdndice',
     testedBadge: 'Probada',
+    kitchenTestedBadge: 'Probada en cocina',
     saveStoryCard: 'Tarjeta Story (PNG)',
     storyCardReady: 'Tarjeta guardada',
     saveOgCard: 'Tarjeta enlace (PNG)',
@@ -398,6 +401,7 @@ const UI_STRINGS: Record<string, UiStrings> = {
     viewGrid: 'Cartes',
     viewList: 'Index',
     testedBadge: 'Test\u00e9e',
+    kitchenTestedBadge: 'Test\u00e9e en cuisine',
     saveStoryCard: 'Carte Story (PNG)',
     storyCardReady: 'Carte enregistr\u00e9e',
     saveOgCard: 'Carte lien (PNG)',

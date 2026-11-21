@@ -49,8 +49,9 @@ the table as the audit trail, with `moderated_at` and `moderated_by`.
 - Never set `tested_at`/`tested_by` by hand. The label exists only as the
   result of an approved report (or a first-party kitchen test recorded
   directly on the recipe).
-- A recipe with no approved report keeps the "Not yet tested" label. That
-  honesty is the product; the label is never marketing.
+- Every recipe page and `/recipes` A–Z index row with no approved report keeps
+  the "Not yet tested" label (browse cards highlight "Kitchen-tested" only once
+  approved). That honesty is the product; the label is never marketing.
 - Rate limits: report posts share the submission rate limiter
   (`RL_SUBMIT`). The review-notification email shares the daily notice budget
   with recipe submissions, so the Resend free plan cannot be overrun.
