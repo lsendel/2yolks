@@ -213,6 +213,28 @@ export function SocialIcon({ name, className = 'social-icon' }: { name: string; 
           <circle cx="8.6" cy="8.6" r="5.4" />
           <path d="M12.6 12.6l4.4 4.4" />
         </>
+      ) : name === 'heart' ? (
+        <path d="M10 16.6s-6.3-4.1-6.3-8.4A3.6 3.6 0 0 1 10 5.7a3.6 3.6 0 0 1 6.3 2.5c0 4.3-6.3 8.4-6.3 8.4z" />
+      ) : name === 'heart-filled' ? (
+        <path d="M10 16.6s-6.3-4.1-6.3-8.4A3.6 3.6 0 0 1 10 5.7a3.6 3.6 0 0 1 6.3 2.5c0 4.3-6.3 8.4-6.3 8.4z" fill="currentColor" />
+      ) : name === 'home' ? (
+        <>
+          <path d="M3.2 9.2L10 3.5l6.8 5.7" />
+          <path d="M5 8.5v7.5h10V8.5" />
+        </>
+      ) : name === 'user' ? (
+        <>
+          <circle cx="10" cy="6.6" r="3" />
+          <path d="M4.2 16.5a5.8 5.8 0 0 1 11.6 0" />
+        </>
+      ) : name === 'filter' ? (
+        <>
+          <path d="M3 5h14M5.5 10h9M8 15h4" />
+        </>
+      ) : name === 'close' ? (
+        <>
+          <path d="M5 5l10 10M15 5l-10 10" />
+        </>
       ) : name === 'menu' ? (
         <path d="M3.5 5.5h13M3.5 10h13M3.5 14.5h13" />
       ) : (

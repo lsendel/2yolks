@@ -62,11 +62,11 @@ describe('After hours discovery',()=>{
  });
 });
 
-import { THEME_CLIENT_SCRIPT, CAPTURE_CLIENT_SCRIPT, DISCOVERY_CLIENT_SCRIPT, RECIPE_CLIENT_SCRIPT } from './clientScript';
+import { THEME_CLIENT_SCRIPT, GLOBAL_CHROME_SCRIPT, CAPTURE_CLIENT_SCRIPT, DISCOVERY_CLIENT_SCRIPT, RECIPE_CLIENT_SCRIPT } from './clientScript';
 
 describe('inline client scripts & SVG/theme enhancements', () => {
   it('every inline script is syntactically valid JavaScript', () => {
-    for (const src of [THEME_CLIENT_SCRIPT, CAPTURE_CLIENT_SCRIPT, DISCOVERY_CLIENT_SCRIPT, RECIPE_CLIENT_SCRIPT]) {
+    for (const src of [THEME_CLIENT_SCRIPT, GLOBAL_CHROME_SCRIPT, CAPTURE_CLIENT_SCRIPT, DISCOVERY_CLIENT_SCRIPT, RECIPE_CLIENT_SCRIPT]) {
       expect(() => new Function(src)).not.toThrow();
     }
   });

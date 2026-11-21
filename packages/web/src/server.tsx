@@ -27,20 +27,31 @@ import {
   RecipeIndex,
   CountryHome,
   RecipeView,
+  SearchPage,
+  HubPage,
+  HubDirectoryPage,
+  SavedPage,
   AboutView,
   PrivacyView,
   HowWeTestView,
   NotFoundView,
   SiteHeader,
+  SearchSheet,
+  MobileTabBar,
   SiteFooter,
   discoveryRecipes,
+  buildSearchHref,
   type HomeProps,
   type CountryHomeProps,
+  type SearchPageProps,
+  type HubPageProps,
+  type HubDirectoryItem,
   type SiteNavItem,
   type RecipeRow,
 } from './App';
 import {
   THEME_CLIENT_SCRIPT,
+  GLOBAL_CHROME_SCRIPT,
   RECIPE_CLIENT_SCRIPT,
   DISCOVERY_CLIENT_SCRIPT,
   CAPTURE_CLIENT_SCRIPT,
@@ -58,6 +69,7 @@ import {
   categoryLabel,
   recipePathFor,
   isUntested,
+  MAX_HOME_ITEMS,
 } from '@2yolks/contracts';
 
 export type { SiteNavItem } from './App';
@@ -93,6 +105,9 @@ interface ShellOptions {
   nav?: SiteNavItem[];
   /** Locale for chrome strings (header/footer/skip link). */
   lang?: string;
+  currentPath?: string;
+  initialQuery?: string;
+  cuisines?: { slug: string; label: string }[];
 }
 
 import { AFTER_HOURS_CSS } from './identity';
@@ -244,13 +259,15 @@ const PIN_IMAGE_KEYS = new Set<string>([
 
 const THEME_INIT_SCRIPT = `<script>(function(){try{var t=localStorage.getItem('2y-theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>`;
 
-function shell(body: string, { title, alternates = [], jsonLd, noindex = false, og, nav = [], lang = 'en' }: ShellOptions): string {
+function shell(body: string, { title, alternates = [], jsonLd, noindex = false, og, nav = [], lang = 'en', currentPath = '/', initialQuery = '', cuisines = [] }: ShellOptions): string {
   const links = alternates
     .map((a) => `<link rel="alternate" hreflang="${escapeHtml(a.hreflang)}" href="${escapeHtml(a.href)}" />`)
     .join('\n    ');
   const ldList = Array.isArray(jsonLd) ? jsonLd : jsonLd ? [jsonLd] : [];
   const ld = ldList.map((item) => `<script type="application/ld+json">${safeJsonLd(item)}</script>`).join('\n    ');
-  const header = renderToString(<SiteHeader nav={nav} lang={lang} />);
+  const header = renderToString(<SiteHeader nav={nav} lang={lang} initialQuery={initialQuery} cuisines={cuisines} />);
+  const searchSheet = renderToString(<SearchSheet lang={lang} initialQuery={initialQuery} />);
+  const mobileTabs = renderToString(<MobileTabBar lang={lang} currentPath={currentPath} />);
   const footer = renderToString(<SiteFooter nav={nav} lang={lang} />);
   const ogAlternates = (og?.alternateLocales ?? [])
     .map((loc) => `<meta property="og:locale:alternate" content="${escapeHtml(loc)}" />`)
@@ -284,7 +301,7 @@ function shell(body: string, { title, alternates = [], jsonLd, noindex = false, 
     <style>${BASE_CSS}\n${AFTER_HOURS_CSS}</style>
     ${ANALYTICS_BEACON}
   </head>
-  <body>${header}${body}${footer}<script>${THEME_CLIENT_SCRIPT}</script></body>
+  <body>${header}${body}${footer}${searchSheet}${mobileTabs}<script>${THEME_CLIENT_SCRIPT}</script><script>${GLOBAL_CHROME_SCRIPT}</script></body>
 </html>`;
 }
 
@@ -342,6 +359,7 @@ export function renderHome(props: HomeProps, nav?: SiteNavItem[], origin = 'http
     { hreflang: 'x-default', href: `${origin}/` },
   ];
   const selected = discoveryRecipes(props.recipes, lang);
+  const ldItems = selected.slice(0, MAX_HOME_ITEMS);
   const jsonLd = [
     {
       '@context': 'https://schema.org',
@@ -352,14 +370,14 @@ export function renderHome(props: HomeProps, nav?: SiteNavItem[], origin = 'http
       description: seo.description,
       publisher: { '@type': 'Organization', name: '2yolks', url: `${origin}/` },
     },
-    ...(selected.length > 0
+    ...(ldItems.length > 0
       ? [
           {
             '@context': 'https://schema.org',
             '@type': 'ItemList',
             name: seo.title,
-            numberOfItems: selected.length,
-            itemListElement: selected.map((r, i) => ({
+            numberOfItems: ldItems.length,
+            itemListElement: ldItems.map((r, i) => ({
               '@type': 'ListItem',
               position: i + 1,
               name: r.title,
@@ -374,6 +392,7 @@ export function renderHome(props: HomeProps, nav?: SiteNavItem[], origin = 'http
     title: seo.title,
     nav,
     lang,
+    currentPath: '/',
     alternates,
     jsonLd,
     og: {
@@ -427,6 +446,7 @@ export function renderRecipeIndex(props: { recipes: RecipeRow[]; lang?: string }
     title: seo.title,
     nav,
     lang,
+    currentPath: '/recipes',
     alternates,
     jsonLd,
     og: {
@@ -452,6 +472,7 @@ export function renderCountryHome(props: CountryHomeProps, nav?: SiteNavItem[], 
     title,
     nav,
     lang,
+    currentPath: `/${props.country.toLowerCase()}/`,
     og: {
       type: 'website',
       title,
@@ -486,6 +507,7 @@ export function renderPrivacy(nav?: SiteNavItem[], origin = 'https://2yolks.com'
     title,
     nav,
     lang: l,
+    currentPath: '/privacy',
     alternates: staticAlternates(origin, '/privacy'),
     og: { type: 'website', title, description, url, locale: (HOME_SEO[l] ?? HOME_SEO.en!).locale },
   });
@@ -504,6 +526,7 @@ export function renderAbout(nav?: SiteNavItem[], origin = 'https://2yolks.com', 
     title,
     nav,
     lang: l,
+    currentPath: '/about',
     alternates: staticAlternates(origin, '/about'),
     og: { type: 'website', title, description, url, locale: (HOME_SEO[l] ?? HOME_SEO.en!).locale, image: `${origin}/img/identity/after-hours.webp` },
   });
@@ -526,8 +549,180 @@ export function renderHowWeTest(nav?: SiteNavItem[], origin = 'https://2yolks.co
     title,
     nav,
     lang: l,
+    currentPath: '/how-we-test',
     alternates: staticAlternates(origin, '/how-we-test'),
     og: { type: 'website', title, description, url, locale: (HOME_SEO[l] ?? HOME_SEO.en!).locale, image: `${origin}/img/identity/after-hours.webp` },
+  });
+}
+
+export function renderSearchPage(props: SearchPageProps, nav?: SiteNavItem[], origin = 'https://2yolks.com'): string {
+  const lang = ['en', 'es', 'fr'].includes(props.lang) ? props.lang : 'en';
+  const q = props.query.q?.trim();
+  const baseTitle = lang === 'es' ? 'Buscar recetas - 2yolks' : lang === 'fr' ? 'Rechercher une recette - 2yolks' : 'Search recipes - 2yolks';
+  const title = q ? `${q} — ${baseTitle}` : baseTitle;
+  const description = lang === 'es'
+    ? 'Busca y filtra recetas por tiempo, categoría, dieta, cocina y preparación sin horno.'
+    : lang === 'fr'
+      ? 'Recherchez et filtrez les recettes par durée, catégorie, régime, cuisine et cuisson sans four.'
+      : 'Search and filter recipes by time, category, diet, cuisine, difficulty, or stovetop method.';
+  const canonicalUrl = `${origin}${buildSearchHref(lang, { ...props.query, page: props.query.page && props.query.page > 1 ? props.query.page : undefined })}`;
+  const alternates = [
+    { hreflang: 'en', href: `${origin}${buildSearchHref('en', props.query)}` },
+    { hreflang: 'es', href: `${origin}${buildSearchHref('es', props.query)}` },
+    { hreflang: 'fr', href: `${origin}${buildSearchHref('fr', props.query)}` },
+    { hreflang: 'x-default', href: `${origin}${buildSearchHref('en', props.query)}` },
+  ];
+  const jsonLd = props.result.items.length > 0
+    ? [
+        {
+          '@context': 'https://schema.org',
+          '@type': 'ItemList',
+          name: title,
+          numberOfItems: props.result.total,
+          itemListElement: props.result.items.map((r, i) => ({
+            '@type': 'ListItem',
+            position: (props.result.page - 1) * props.result.pageSize + i + 1,
+            name: r.title,
+            url: `${origin}${recipePathFor(r.country, r.lang, r.slug)}`,
+          })),
+        },
+      ]
+    : [];
+  const body = renderToString(<SearchPage {...props} />);
+  return shell(body, {
+    title,
+    nav,
+    lang,
+    currentPath: '/search',
+    initialQuery: q ?? '',
+    cuisines: props.cuisines,
+    alternates,
+    jsonLd,
+    noindex: props.result.total === 0 || props.result.page > props.result.totalPages,
+    og: {
+      type: 'website',
+      title,
+      description,
+      url: canonicalUrl,
+      locale: (HOME_SEO[lang] ?? HOME_SEO.en!).locale,
+      alternateLocales: ['en_US', 'es_MX', 'fr_FR'].filter((l) => l !== (HOME_SEO[lang] ?? HOME_SEO.en!).locale),
+      image: `${origin}/img/identity/after-hours.webp`,
+      imageAlt: title,
+    },
+  });
+}
+
+export function renderHubPage(
+  props: HubPageProps,
+  opts: { canonicalPath: string; nav?: SiteNavItem[]; origin?: string; parentLabel?: string; parentPath?: string },
+): string {
+  const origin = opts.origin ?? 'https://2yolks.com';
+  const lang = ['en', 'es', 'fr'].includes(props.lang) ? props.lang : 'en';
+  const lq = lang === 'en' ? '' : `?lang=${lang}`;
+  const title = `${props.title} - 2yolks`;
+  const canonicalUrl = `${origin}${opts.canonicalPath}${lq}`;
+  const ogImg = props.heroImage?.style === 'photo'
+    ? `${origin}/img/recipe/${props.heroImage.id}`
+    : `${origin}/img/identity/after-hours.webp`;
+  const listLd = {
+    '@context': 'https://schema.org',
+    '@type': 'CollectionPage',
+    name: props.title,
+    description: props.intro,
+    url: canonicalUrl,
+    ...(props.recipes.length > 0
+      ? {
+          mainEntity: {
+            '@type': 'ItemList',
+            numberOfItems: props.recipes.length,
+            itemListElement: props.recipes.slice(0, 50).map((r, i) => ({
+              '@type': 'ListItem',
+              position: i + 1,
+              name: r.title,
+              url: `${origin}${recipePathFor(r.country, r.lang, r.slug)}`,
+            })),
+          },
+        }
+      : {}),
+  };
+  const crumbs = [
+    { '@type': 'ListItem', position: 1, name: uiStrings(lang).home, item: `${origin}/?lang=${lang}` },
+    ...(opts.parentLabel && opts.parentPath
+      ? [{ '@type': 'ListItem', position: 2, name: opts.parentLabel, item: `${origin}${opts.parentPath}${lq}` }]
+      : []),
+    { '@type': 'ListItem', position: opts.parentLabel && opts.parentPath ? 3 : 2, name: props.title, item: canonicalUrl },
+  ];
+  const breadcrumbLd = { '@context': 'https://schema.org', '@type': 'BreadcrumbList', itemListElement: crumbs };
+  return shell(renderToString(<HubPage {...props} />), {
+    title,
+    nav: opts.nav,
+    lang,
+    currentPath: opts.canonicalPath,
+    alternates: staticAlternates(origin, opts.canonicalPath),
+    jsonLd: [listLd, breadcrumbLd],
+    noindex: props.recipes.length === 0,
+    og: {
+      type: 'website',
+      title,
+      description: props.intro,
+      url: canonicalUrl,
+      locale: (HOME_SEO[lang] ?? HOME_SEO.en!).locale,
+      alternateLocales: ['en_US', 'es_MX', 'fr_FR'].filter((l) => l !== (HOME_SEO[lang] ?? HOME_SEO.en!).locale),
+      image: ogImg,
+      imageAlt: props.title,
+    },
+  });
+}
+
+export function renderHubDirectoryPage(
+  props: { kind: 'collections' | 'cuisine'; lang: string; title: string; intro: string; items: HubDirectoryItem[] },
+  opts: { canonicalPath: string; nav?: SiteNavItem[]; origin?: string },
+): string {
+  const origin = opts.origin ?? 'https://2yolks.com';
+  const lang = ['en', 'es', 'fr'].includes(props.lang) ? props.lang : 'en';
+  const lq = lang === 'en' ? '' : `?lang=${lang}`;
+  const title = `${props.title} - 2yolks`;
+  const canonicalUrl = `${origin}${opts.canonicalPath}${lq}`;
+  const jsonLd = {
+    '@context': 'https://schema.org',
+    '@type': 'CollectionPage',
+    name: props.title,
+    description: props.intro,
+    url: canonicalUrl,
+  };
+  return shell(renderToString(<HubDirectoryPage {...props} />), {
+    title,
+    nav: opts.nav,
+    lang,
+    currentPath: opts.canonicalPath,
+    alternates: staticAlternates(origin, opts.canonicalPath),
+    jsonLd,
+    noindex: props.items.every((i) => i.count === 0),
+    og: {
+      type: 'website',
+      title,
+      description: props.intro,
+      url: canonicalUrl,
+      locale: (HOME_SEO[lang] ?? HOME_SEO.en!).locale,
+      image: `${origin}/img/identity/after-hours.webp`,
+      imageAlt: props.title,
+    },
+  });
+}
+
+export function renderSavedPage(
+  props: { lang: string; signedIn: boolean; userEmail?: string | null; recipes: RecipeRow[]; savedIds: string[] },
+  nav?: SiteNavItem[],
+  _origin = 'https://2yolks.com',
+): string {
+  const lang = ['en', 'es', 'fr'].includes(props.lang) ? props.lang : 'en';
+  const title = `${uiStrings(lang).savedNav} - 2yolks`;
+  return shell(renderToString(<SavedPage {...props} />), {
+    title,
+    nav,
+    lang,
+    currentPath: '/saved',
+    noindex: true,
   });
 }
 
@@ -822,11 +1017,12 @@ export function renderRecipe(
     },
   ];
   if (cat && page.recipe.category) {
+    const lq = page.locale.lang === 'en' ? '' : `?lang=${page.locale.lang}`;
     crumbElements.push({
       '@type': 'ListItem',
       position: 2,
       name: cat,
-      item: `${origin}/?lang=${page.locale.lang}&cat=${page.recipe.category}#recipes`,
+      item: `${origin}/recipes/${page.recipe.category}${lq}`,
     });
   }
   if (canonicalUrl) {
@@ -860,6 +1056,13 @@ export function renderRecipe(
       const [l, c] = a.hreflang.split('-');
       return l && c ? `${l}_${c.toUpperCase()}` : a.hreflang;
     });
+  const recipePath = recipePathFor(page.locale.country, page.locale.lang, page.locale.slug);
+  const recipeMeta = safeJsonLd({
+    id: page.recipe.id,
+    title: page.locale.title,
+    href: recipePath,
+    cat: cat ?? null,
+  });
   const body =
     renderToString(
       <RecipeView
@@ -872,6 +1075,7 @@ export function renderRecipe(
       />,
     ) +
     `<script type="application/json" id="cook-data">${cookData}</script>` +
+    `<script type="application/json" id="recipe-meta-data">${recipeMeta}</script>` +
     `<script>${RECIPE_CLIENT_SCRIPT}</script>`;
   return shell(body, {
     title: `${page.locale.title} - 2yolks`,
@@ -879,6 +1083,7 @@ export function renderRecipe(
     jsonLd: canonicalUrl ? [recipeLd, breadcrumbLd] : recipeLd,
     nav: opts.nav,
     lang: page.locale.lang,
+    currentPath: recipePath,
     og: canonicalUrl
       ? {
           type: 'article',
@@ -1071,7 +1276,7 @@ export function renderAccountPage(
 ): string {
   const nextAmp = next ? `&next=${encodeURIComponent(next)}` : '';
   const nav = ['en', 'es', 'fr'].map((l) => ({ href: `${path}?lang=${l}${nextAmp}`, label: l === 'en' ? 'English' : l === 'es' ? 'Español' : 'Français', current: l === lang }));
-  return shell(`<style>${ACCOUNT_CSS}</style><main id="main" class="acct${opts?.wide ? ' acct-capture' : ''}">${bodyHtml}</main>`, { title: `${title} - 2yolks`, noindex: true, lang, nav });
+  return shell(`<style>${ACCOUNT_CSS}</style><main id="main" class="acct${opts?.wide ? ' acct-capture' : ''}">${bodyHtml}</main>`, { title: `${title} - 2yolks`, noindex: true, lang, nav, currentPath: path });
 }
 
-export { CAPTURE_CLIENT_SCRIPT, CAPTURE_CHECK_STRINGS, DRAFT_PHOTO_CLIENT_SCRIPT };
+export { CAPTURE_CLIENT_SCRIPT, CAPTURE_CHECK_STRINGS, DRAFT_PHOTO_CLIENT_SCRIPT, GLOBAL_CHROME_SCRIPT };

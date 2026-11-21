@@ -213,8 +213,25 @@ export const searchGapLogs = sqliteTable(
   (t) => [index('idx_search_gap_logs_created').on(t.createdAt)],
 );
 
+export const savedRecipes = sqliteTable(
+  'saved_recipes',
+  {
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id),
+    recipeId: text('recipe_id')
+      .notNull()
+      .references(() => recipes.id),
+    createdAt: text('created_at').notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.userId, t.recipeId] }),
+    index('idx_saved_recipes_user').on(t.userId, t.createdAt),
+  ],
+);
+
 export function createDb(d1: D1Database) {
-  return drizzle(d1, { schema: { users, creatorSubscribers, sources, recipes, recipeLocales, recipeImages, draftPhotos, recipeSlugAliases, searchGapLogs, recipeTestReports } });
+  return drizzle(d1, { schema: { users, creatorSubscribers, savedRecipes, sources, recipes, recipeLocales, recipeImages, draftPhotos, recipeSlugAliases, searchGapLogs, recipeTestReports } });
 }
 
 const DEMO_LICENSE = 'internal-demo';

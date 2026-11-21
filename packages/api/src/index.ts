@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
+import { getCookie } from 'hono/cookie';
 import { eq, and, ne, isNotNull, desc } from 'drizzle-orm';
 import {
   COUNTRIES,
@@ -13,14 +14,54 @@ import {
   slugify,
   validateRecipeSubmission,
   isRecipeCategorySlug,
-  type RecipePage, asImageStyle } from '@2yolks/contracts';
-import { browserLang, renderHome, renderRecipeIndex, renderCountryHome, renderRecipe, renderRecipeCardSvg, renderRecipeOgSvg, renderAbout, renderPrivacy, renderHowWeTest, renderNotFound, discoveryRecipes, type SiteNavItem } from '@2yolks/web/server';
+  RECIPE_CATEGORY_SLUGS,
+  categoryLabel,
+  COLLECTION_SLUGS,
+  COLLECTIONS,
+  CUISINES,
+  CATEGORY_INTROS,
+  isCollectionSlug,
+  isDietTag,
+  isTimeBucket,
+  isDifficultyLevel,
+  resolveCuisineSlug,
+  matchesCuisine,
+  matchesCollection,
+  availableCuisines,
+  inferDiets,
+  inferNoOven,
+  inferDifficulty,
+  searchCatalog,
+  suggestCatalog,
+  type SearchQuery,
+  type RecipePage,
+  asImageStyle,
+} from '@2yolks/contracts';
+import {
+  browserLang,
+  renderHome,
+  renderRecipeIndex,
+  renderCountryHome,
+  renderRecipe,
+  renderRecipeCardSvg,
+  renderRecipeOgSvg,
+  renderSearchPage,
+  renderHubPage,
+  renderHubDirectoryPage,
+  renderSavedPage,
+  renderAbout,
+  renderPrivacy,
+  renderHowWeTest,
+  renderNotFound,
+  discoveryRecipes,
+  type SiteNavItem,
+} from '@2yolks/web/server';
 import { isUntested, localizedCountryName } from '@2yolks/contracts';
 import type { ImageStyle } from '@2yolks/contracts';
 import { recipeSlugAliases,  createDb, recipes, recipeLocales, recipeImages, sources, published, imageCleared, searchGapLogs } from './db';
 import { appApi } from './appapi';
 import { mcpApp, getMcpManifest } from './mcp';
-import { accountApp, type AccountBindings } from './account';
+import { accountApp, readSessionUser, loadSavedRecipeIds, SESSION_COOKIE, type AccountBindings } from './account';
 import { build2YolksZelutoLinks, zeluto2YolksSyncApp } from './zeluto';
 
 type Bindings = {
@@ -49,13 +90,46 @@ const app = new Hono<{ Bindings: Bindings }>();
 
 const demoAllowed = (c: Context<{ Bindings: Bindings }>) => c.env.ALLOW_DEMO_SEED === 'true';
 
-/** Global reading languages, drawn only from published rights-cleared content. */
-async function siteNav(db: ReturnType<typeof createDb>, allowDemo: boolean, lang: string): Promise<SiteNavItem[]> {
-  const rows = await db.selectDistinct({lang:recipeLocales.lang}).from(recipeLocales)
-    .innerJoin(recipes,eq(recipeLocales.recipeId,recipes.id)).innerJoin(sources,eq(recipes.sourceId,sources.id))
-    .where(published(db,allowDemo));
-  const names:Record<string,string>={en:'English',es:'Español',fr:'Français'};
-  return rows.sort((a,b)=>a.lang.localeCompare(b.lang)).map(r=>({href:`/?lang=${r.lang}`,label:names[r.lang]??r.lang,current:r.lang===lang}));
+const SAFE_NAV_PARAMS = ['q', 'cat', 'time', 'diet', 'cuisine', 'difficulty', 'tested', 'method', 'page'] as const;
+
+/** Global reading languages, drawn only from published rights-cleared content,
+ * keeping the current page and active query filters when possible. */
+async function siteNav(
+  db: ReturnType<typeof createDb>,
+  allowDemo: boolean,
+  lang: string,
+  currentUrl?: URL,
+): Promise<SiteNavItem[]> {
+  const rows = await db
+    .selectDistinct({ lang: recipeLocales.lang })
+    .from(recipeLocales)
+    .innerJoin(recipes, eq(recipeLocales.recipeId, recipes.id))
+    .innerJoin(sources, eq(recipes.sourceId, sources.id))
+    .where(published(db, allowDemo));
+  const names: Record<string, string> = { en: 'English', es: 'Español', fr: 'Français' };
+  const basePath = currentUrl?.pathname || '/';
+  return rows
+    .sort((a, b) => a.lang.localeCompare(b.lang))
+    .map((r) => {
+      const p = new URLSearchParams();
+      if (currentUrl) {
+        for (const k of SAFE_NAV_PARAMS) {
+          const val = currentUrl.searchParams.get(k);
+          if (val) p.set(k, val);
+        }
+      }
+      if (basePath === '/') {
+        p.set('lang', r.lang);
+      } else if (r.lang !== 'en') {
+        p.set('lang', r.lang);
+      }
+      const qs = p.toString();
+      return {
+        href: qs ? `${basePath}?${qs}` : basePath,
+        label: names[r.lang] ?? r.lang,
+        current: r.lang === lang,
+      };
+    });
 }
 
 // --- API ---------------------------------------------------------------
@@ -180,6 +254,17 @@ app.get('/api/v1/recipes', async (c) => {
   }, 200, { 'cache-control': 'public, max-age=300' });
 });
 
+app.get('/api/v1/search/suggest', async (c) => {
+  const requested = c.req.query('lang') ?? 'en';
+  const lang = ['en', 'es', 'fr'].includes(requested) ? requested : 'en';
+  const q = (c.req.query('q') ?? '').trim().slice(0, 80);
+  if (!q) return c.json({ recipes: [], categories: [], ingredients: [] }, 200, { 'cache-control': 'public, max-age=120' });
+  const db = createDb(c.env.DB);
+  const rows = discoveryRecipes(await loadDiscoveryRecipeRows(db, demoAllowed(c)), lang);
+  const sug = suggestCatalog(rows, q, lang, (r) => recipePathFor(r.country, r.lang, r.slug));
+  return c.json(sug, 200, { 'cache-control': 'public, max-age=120' });
+});
+
 // --- Discovery --------------------------------------------------------------
 
 // Public metadata only. Tool catalogs and calls retain bearer auth.
@@ -190,7 +275,7 @@ app.get('/.well-known/mcp.json', (c) => c.json(getMcpManifest(), 200, {
 app.get('/robots.txt', (c) => {
   const origin = c.env.CANONICAL_ORIGIN ?? new URL(c.req.url).origin;
   return c.text(
-    `User-agent: *\nAllow: /\nDisallow: /api/\nDisallow: /account\nSitemap: ${origin}/sitemap.xml\n`,
+    `User-agent: *\nAllow: /\nDisallow: /api/\nDisallow: /account\nDisallow: /saved\nSitemap: ${origin}/sitemap.xml\n`,
     200,
     { 'content-type': 'text/plain; charset=utf-8' },
   );
@@ -235,6 +320,25 @@ app.get('/sitemap.xml', async (c) => {
   const countriesWithContent = new Set(rows.map((r) => r.country));
   for (const code of countriesWithContent) {
     urls.push(`  <url><loc>${xmlEscape(origin + countryPath(code))}</loc></url>`);
+  }
+  const addHubAlternates = (path: string) => {
+    urls.push(
+      `  <url>\n    <loc>${xmlEscape(origin + path)}</loc>\n    <xhtml:link rel="alternate" hreflang="en" href="${xmlEscape(origin + path)}" />\n    <xhtml:link rel="alternate" hreflang="es" href="${xmlEscape(origin + path + '?lang=es')}" />\n    <xhtml:link rel="alternate" hreflang="fr" href="${xmlEscape(origin + path + '?lang=fr')}" />\n    <xhtml:link rel="alternate" hreflang="x-default" href="${xmlEscape(origin + path)}" />\n  </url>`,
+    );
+  };
+  if (rows.length > 0) {
+    const discRows = discoveryRecipes(await loadDiscoveryRecipeRows(db, demoAllowed(c)), 'en');
+    addHubAlternates('/collections');
+    addHubAlternates('/cuisine');
+    for (const cat of RECIPE_CATEGORY_SLUGS) {
+      if (discRows.some((r) => r.category === cat)) addHubAlternates(`/recipes/${cat}`);
+    }
+    for (const col of COLLECTION_SLUGS) {
+      if (discRows.some((r) => matchesCollection(r, col))) addHubAlternates(`/collections/${col}`);
+    }
+    for (const cItem of availableCuisines(discRows, 'en')) {
+      addHubAlternates(`/cuisine/${cItem.slug}`);
+    }
   }
   for (const list of byRecipe.values()) {
     const linksList = list.map(
@@ -333,6 +437,52 @@ async function heroImagesByRecipe(db: ReturnType<typeof createDb>) {
   return byRecipe;
 }
 
+function parseIngredientsData(json: string | null | undefined): { searchNames: string; fullText: string; count: number } {
+  if (!json) return { searchNames: '', fullText: '', count: 0 };
+  try {
+    const list = JSON.parse(json);
+    if (!Array.isArray(list)) return { searchNames: '', fullText: '', count: 0 };
+    const names: string[] = [];
+    const rawLines: string[] = [];
+    for (const entry of list) {
+      if (typeof entry === 'string') {
+        rawLines.push(entry);
+        const cleaned = entry
+          .replace(
+            /^[0-9/.\s\u00bc-\u00be\u2150-\u215e]+(?:cup|cups|tbsp|tsp|tablespoon|tablespoons|teaspoon|teaspoons|g|gram|grams|kg|ml|oz|ounce|ounces|lb|lbs|pound|pounds|pinch|pinches|can|cans|package|packages|bunch|bunches)?\s*/i,
+            '',
+          )
+          .trim() || entry;
+        if (cleaned) names.push(cleaned);
+      } else if (entry && typeof entry.name === 'string') {
+        const nm = entry.name.trim();
+        const full = entry.note ? `${nm} ${String(entry.note).trim()}` : nm;
+        if (full.trim()) rawLines.push(full.trim());
+        if (nm) names.push(nm);
+      }
+    }
+    return { searchNames: names.join(' '), fullText: rawLines.join(' '), count: list.length };
+  } catch {
+    return { searchNames: '', fullText: '', count: 0 };
+  }
+}
+
+function parseStepsData(json: string | null | undefined): { text: string; count: number } {
+  if (!json) return { text: '', count: 0 };
+  try {
+    const list = JSON.parse(json);
+    if (!Array.isArray(list)) return { text: '', count: 0 };
+    const parts = list.filter((s): s is string => typeof s === 'string');
+    return { text: parts.join(' '), count: parts.length };
+  } catch {
+    return { text: '', count: 0 };
+  }
+}
+
+function extractIngredientNames(json: string | null | undefined): string {
+  return parseIngredientsData(json).searchNames;
+}
+
 async function loadDiscoveryRecipeRows(db: ReturnType<typeof createDb>, demo: boolean) {
   const recipeRows = await db
     .select({
@@ -343,8 +493,12 @@ async function loadDiscoveryRecipeRows(db: ReturnType<typeof createDb>, demo: bo
       title: recipeLocales.title,
       intro: recipeLocales.intro,
       ingredientsJson: recipeLocales.ingredientsJson,
+      stepsJson: recipeLocales.stepsJson,
+      originCountry: recipes.originCountry,
       testedAt: recipes.testedAt,
       category: recipes.category,
+      prepMinutes: recipes.prepMinutes,
+      cookMinutes: recipes.cookMinutes,
       totalMinutes: recipes.totalMinutes,
     })
     .from(recipeLocales)
@@ -352,20 +506,42 @@ async function loadDiscoveryRecipeRows(db: ReturnType<typeof createDb>, demo: bo
     .innerJoin(sources, eq(recipes.sourceId, sources.id))
     .where(published(db, demo));
   const heroByRecipe = await heroImagesByRecipe(db);
-  return recipeRows.map((r) => ({
-    id: r.id,
-    country: r.country,
-    lang: r.lang,
-    slug: r.slug,
-    title: r.title,
-    untested: isUntested({ testedAt: r.testedAt }),
-    category: r.category,
-    totalMinutes: r.totalMinutes,
-    imageId: heroByRecipe.get(r.id)?.id ?? null,
-    imageStyle: heroByRecipe.get(r.id)?.style ?? null,
-    intro: r.intro ?? null,
-    ingredients: extractIngredientNames(r.ingredientsJson),
-  }));
+  return recipeRows.map((r) => {
+    const ings = parseIngredientsData(r.ingredientsJson);
+    const steps = parseStepsData(r.stepsJson);
+    return {
+      id: r.id,
+      country: r.country,
+      lang: r.lang,
+      slug: r.slug,
+      title: r.title,
+      originCountry: r.originCountry ?? null,
+      untested: isUntested({ testedAt: r.testedAt }),
+      category: r.category,
+      prepMinutes: r.prepMinutes,
+      cookMinutes: r.cookMinutes,
+      totalMinutes: r.totalMinutes,
+      imageId: heroByRecipe.get(r.id)?.id ?? null,
+      imageStyle: heroByRecipe.get(r.id)?.style ?? null,
+      intro: r.intro ?? null,
+      ingredients: ings.searchNames,
+      diets: inferDiets(ings.fullText),
+      noOven: inferNoOven(r.title, r.intro, steps.text),
+      difficulty: inferDifficulty({
+        totalMinutes: r.totalMinutes,
+        prepMinutes: r.prepMinutes,
+        cookMinutes: r.cookMinutes,
+        stepsCount: steps.count,
+        ingredientsCount: ings.count,
+      }),
+    };
+  });
+}
+
+function discoveryLang(c: Context<{ Bindings: Bindings }>): { lang: string; explicit: string | null } {
+  const requested = c.req.query('lang');
+  const explicit = ['en', 'es', 'fr'].includes(requested ?? '') ? requested! : null;
+  return { lang: explicit ?? browserLang(c.req.header('accept-language')), explicit };
 }
 
 app.get('/recipes', async (c) => {
@@ -373,21 +549,299 @@ app.get('/recipes', async (c) => {
   const lang = ['en', 'es', 'fr'].includes(requestedLang ?? '') ? requestedLang! : 'en';
   const db = createDb(c.env.DB);
   const rows = await loadDiscoveryRecipeRows(db, demoAllowed(c));
-  const nav = await siteNav(db, demoAllowed(c), lang);
+  const nav = await siteNav(db, demoAllowed(c), lang, new URL(c.req.url));
   const origin = c.env.CANONICAL_ORIGIN ?? new URL(c.req.url).origin;
   return c.html(renderRecipeIndex({ lang, recipes: rows }, nav, origin));
 });
 
+app.get('/recipes/:category', async (c) => {
+  const cat = c.req.param('category');
+  if (!isRecipeCategorySlug(cat)) return c.notFound();
+  const { lang } = discoveryLang(c);
+  const db = createDb(c.env.DB);
+  const selected = discoveryRecipes(await loadDiscoveryRecipeRows(db, demoAllowed(c)), lang);
+  const items = selected.filter((r) => r.category === cat);
+  const hero = items.find((r) => r.imageId && r.imageStyle === 'photo') ?? items.find((r) => r.imageId && r.imageStyle);
+  const l = lang === 'es' || lang === 'fr' ? lang : 'en';
+  const lq = l === 'en' ? '' : `?lang=${l}`;
+  const title = categoryLabel(cat, l) ?? cat;
+  const intro = CATEGORY_INTROS[cat][l];
+  const relatedHubs = RECIPE_CATEGORY_SLUGS
+    .filter((slug) => slug !== cat && selected.some((r) => r.category === slug))
+    .map((slug) => ({
+      href: `/recipes/${slug}${lq}`,
+      label: categoryLabel(slug, l) ?? slug,
+      count: selected.filter((r) => r.category === slug).length,
+    }));
+  const nav = await siteNav(db, demoAllowed(c), l, new URL(c.req.url));
+  const origin = c.env.CANONICAL_ORIGIN ?? new URL(c.req.url).origin;
+  const searchHref = `/search?${l === 'en' ? '' : `lang=${l}&`}cat=${cat}`;
+  return c.html(
+    renderHubPage(
+      {
+        kind: 'category',
+        slug: cat,
+        lang: l,
+        title,
+        intro,
+        iconSlug: cat,
+        heroImage: hero && hero.imageId && hero.imageStyle ? { id: hero.imageId, style: hero.imageStyle, alt: hero.title } : null,
+        recipes: items,
+        searchHref,
+        relatedHubs,
+      },
+      { canonicalPath: `/recipes/${cat}`, nav, origin, parentLabel: title, parentPath: '/recipes' },
+    ),
+    200,
+    items.length === 0 ? { 'x-robots-tag': 'noindex' } : undefined,
+  );
+});
+
+app.get('/collections', async (c) => {
+  const { lang } = discoveryLang(c);
+  const l = lang === 'es' || lang === 'fr' ? lang : 'en';
+  const lq = l === 'en' ? '' : `?lang=${l}`;
+  const db = createDb(c.env.DB);
+  const selected = discoveryRecipes(await loadDiscoveryRecipeRows(db, demoAllowed(c)), l);
+  const items = COLLECTION_SLUGS.map((slug) => ({
+    slug,
+    href: `/collections/${slug}${lq}`,
+    label: COLLECTIONS[slug].title[l],
+    description: COLLECTIONS[slug].intro[l],
+    count: selected.filter((r) => matchesCollection(r, slug)).length,
+    iconSlug: COLLECTIONS[slug].icon,
+  }));
+  const heading = l === 'es' ? 'Colecciones' : l === 'fr' ? 'Collections' : 'Collections';
+  const intro = l === 'es'
+    ? 'Listas temáticas de recetas listas para elegir según tu tiempo y antojo.'
+    : l === 'fr'
+      ? 'Des sélections thématiques de recettes selon votre temps et vos envies.'
+      : 'Curated cooking lists grouped by timing, method, season, and ingredients.';
+  const nav = await siteNav(db, demoAllowed(c), l, new URL(c.req.url));
+  const origin = c.env.CANONICAL_ORIGIN ?? new URL(c.req.url).origin;
+  return c.html(
+    renderHubDirectoryPage({ kind: 'collections', lang: l, title: heading, intro, items }, { canonicalPath: '/collections', nav, origin }),
+    200,
+    items.every((i) => i.count === 0) ? { 'x-robots-tag': 'noindex' } : undefined,
+  );
+});
+
+app.get('/collections/:slug', async (c) => {
+  const slug = c.req.param('slug');
+  if (!isCollectionSlug(slug)) return c.notFound();
+  const { lang } = discoveryLang(c);
+  const l = lang === 'es' || lang === 'fr' ? lang : 'en';
+  const lq = l === 'en' ? '' : `?lang=${l}`;
+  const db = createDb(c.env.DB);
+  const selected = discoveryRecipes(await loadDiscoveryRecipeRows(db, demoAllowed(c)), l);
+  const items = selected.filter((r) => matchesCollection(r, slug));
+  const meta = COLLECTIONS[slug];
+  const hero = items.find((r) => r.imageId && r.imageStyle === 'photo') ?? items.find((r) => r.imageId && r.imageStyle);
+  const searchHref =
+    slug === 'quick'
+      ? `/search?${l === 'en' ? '' : `lang=${l}&`}time=30`
+      : slug === 'no-oven'
+        ? `/search?${l === 'en' ? '' : `lang=${l}&`}method=no-oven`
+        : slug === 'vegetarian'
+          ? `/search?${l === 'en' ? '' : `lang=${l}&`}diet=vegetarian`
+          : `/search${lq}`;
+  const relatedHubs = COLLECTION_SLUGS
+    .filter((s) => s !== slug)
+    .map((s) => ({
+      href: `/collections/${s}${lq}`,
+      label: COLLECTIONS[s].title[l],
+      count: selected.filter((r) => matchesCollection(r, s)).length,
+    }))
+    .filter((h) => h.count > 0);
+  const nav = await siteNav(db, demoAllowed(c), l, new URL(c.req.url));
+  const origin = c.env.CANONICAL_ORIGIN ?? new URL(c.req.url).origin;
+  return c.html(
+    renderHubPage(
+      {
+        kind: 'collection',
+        slug,
+        lang: l,
+        title: meta.title[l],
+        intro: meta.intro[l],
+        iconSlug: meta.icon,
+        heroImage: hero && hero.imageId && hero.imageStyle ? { id: hero.imageId, style: hero.imageStyle, alt: hero.title } : null,
+        recipes: items,
+        searchHref,
+        relatedHubs,
+      },
+      { canonicalPath: `/collections/${slug}`, nav, origin, parentLabel: l === 'es' ? 'Colecciones' : 'Collections', parentPath: '/collections' },
+    ),
+    200,
+    items.length === 0 ? { 'x-robots-tag': 'noindex' } : undefined,
+  );
+});
+
+app.get('/cuisine', async (c) => {
+  const { lang } = discoveryLang(c);
+  const l = lang === 'es' || lang === 'fr' ? lang : 'en';
+  const lq = l === 'en' ? '' : `?lang=${l}`;
+  const db = createDb(c.env.DB);
+  const selected = discoveryRecipes(await loadDiscoveryRecipeRows(db, demoAllowed(c)), l);
+  const items = availableCuisines(selected, l).map((cu) => ({
+    slug: cu.slug,
+    href: `/cuisine/${cu.slug}${lq}`,
+    label: cu.label,
+    description: CUISINES[cu.slug]!.intro[l],
+    count: cu.count,
+  }));
+  const heading = l === 'es' ? 'Cocinas del mundo' : l === 'fr' ? 'Cuisines du monde' : 'Browse by cuisine';
+  const intro = l === 'es'
+    ? 'Explora recetas agrupadas por su cocina de origen.'
+    : l === 'fr'
+      ? 'Explorez les recettes par cuisine d’origine.'
+      : 'Explore published recipes grouped by culinary origin.';
+  const nav = await siteNav(db, demoAllowed(c), l, new URL(c.req.url));
+  const origin = c.env.CANONICAL_ORIGIN ?? new URL(c.req.url).origin;
+  return c.html(
+    renderHubDirectoryPage({ kind: 'cuisine', lang: l, title: heading, intro, items }, { canonicalPath: '/cuisine', nav, origin }),
+    200,
+    items.every((i) => i.count === 0) ? { 'x-robots-tag': 'noindex' } : undefined,
+  );
+});
+
+app.get('/cuisine/:slug', async (c) => {
+  const rawSlug = c.req.param('slug').toLowerCase();
+  const canonicalSlug = resolveCuisineSlug(rawSlug);
+  if (!canonicalSlug) return c.notFound();
+  const { lang } = discoveryLang(c);
+  const l = lang === 'es' || lang === 'fr' ? lang : 'en';
+  const lq = l === 'en' ? '' : `?lang=${l}`;
+  if (rawSlug !== canonicalSlug) {
+    return c.redirect(`/cuisine/${canonicalSlug}${lq}`, 301);
+  }
+  const db = createDb(c.env.DB);
+  const selected = discoveryRecipes(await loadDiscoveryRecipeRows(db, demoAllowed(c)), l);
+  const items = selected.filter((r) => matchesCuisine(r, canonicalSlug));
+  const meta = CUISINES[canonicalSlug]!;
+  const hero = items.find((r) => r.imageId && r.imageStyle === 'photo') ?? items.find((r) => r.imageId && r.imageStyle);
+  const relatedHubs = availableCuisines(selected, l)
+    .filter((cu) => cu.slug !== canonicalSlug)
+    .map((cu) => ({ href: `/cuisine/${cu.slug}${lq}`, label: cu.label, count: cu.count }));
+  const marketHref = meta.marketCountry ? countryPath(meta.marketCountry) : null;
+  const marketLabel = meta.marketCountry
+    ? (l === 'es'
+        ? `Edición ${localizedCountryName(meta.marketCountry, l)}`
+        : l === 'fr'
+          ? `Édition ${localizedCountryName(meta.marketCountry, l)}`
+          : `${localizedCountryName(meta.marketCountry, l)} edition`)
+    : null;
+  const nav = await siteNav(db, demoAllowed(c), l, new URL(c.req.url));
+  const origin = c.env.CANONICAL_ORIGIN ?? new URL(c.req.url).origin;
+  return c.html(
+    renderHubPage(
+      {
+        kind: 'cuisine',
+        slug: canonicalSlug,
+        lang: l,
+        title: meta.title[l],
+        intro: meta.intro[l],
+        heroImage: hero && hero.imageId && hero.imageStyle ? { id: hero.imageId, style: hero.imageStyle, alt: hero.title } : null,
+        marketHref,
+        marketLabel,
+        recipes: items,
+        searchHref: `/search?${l === 'en' ? '' : `lang=${l}&`}cuisine=${canonicalSlug}`,
+        relatedHubs,
+      },
+      { canonicalPath: `/cuisine/${canonicalSlug}`, nav, origin, parentLabel: l === 'es' ? 'Cocinas' : 'Cuisines', parentPath: '/cuisine' },
+    ),
+    200,
+    items.length === 0 ? { 'x-robots-tag': 'noindex' } : undefined,
+  );
+});
+
+app.get('/search', async (c) => {
+  const { lang } = discoveryLang(c);
+  const q = (c.req.query('q') ?? '').trim().slice(0, 120);
+  const rawCat = c.req.query('cat');
+  const cat = rawCat && isRecipeCategorySlug(rawCat) ? rawCat : null;
+  const rawTime = c.req.query('time');
+  const time = isTimeBucket(rawTime) ? rawTime : null;
+  const rawDiet = c.req.query('diet');
+  const diet = isDietTag(rawDiet) ? rawDiet : null;
+  const rawCuisine = c.req.query('cuisine');
+  const cuisine = resolveCuisineSlug(rawCuisine);
+  const rawDiff = c.req.query('difficulty');
+  const difficulty = isDifficultyLevel(rawDiff) ? rawDiff : null;
+  const tested = c.req.query('tested') === '1';
+  const method = c.req.query('method') === 'no-oven' ? 'no-oven' : null;
+  const parsedPage = Number.parseInt(c.req.query('page') ?? '1', 10);
+  const pageNum = Number.isFinite(parsedPage) && parsedPage >= 1 ? Math.min(200, parsedPage) : 1;
+
+  const query: SearchQuery = { q, cat, time, diet, cuisine, difficulty, tested, method, page: pageNum };
+  const db = createDb(c.env.DB);
+  const selected = discoveryRecipes(await loadDiscoveryRecipeRows(db, demoAllowed(c)), lang);
+  const result = searchCatalog(selected, query, lang);
+
+  if (q.length >= 2 && result.total === 0 && pageNum === 1 && !/[<>]/.test(q)) {
+    try {
+      await db.insert(searchGapLogs).values({
+        query: q.slice(0, 100),
+        locale: lang,
+        createdAt: new Date().toISOString(),
+      });
+    } catch { /* gap logging must never fail search */ }
+  }
+
+  const cuisines = availableCuisines(selected, lang);
+  const categories = [...new Set(selected.map((r) => r.category).filter((x): x is string => Boolean(x)))];
+  const nav = await siteNav(db, demoAllowed(c), lang, new URL(c.req.url));
+  const origin = c.env.CANONICAL_ORIGIN ?? new URL(c.req.url).origin;
+  const noindex = result.total === 0 || result.page > result.totalPages;
+  return c.html(
+    renderSearchPage({ lang, query, result, cuisines, categories }, nav, origin),
+    200,
+    noindex ? { 'x-robots-tag': 'noindex' } : undefined,
+  );
+});
+
+app.get('/saved', async (c) => {
+  const requested = c.req.query('lang');
+  const lang = ['en', 'es', 'fr'].includes(requested ?? '') ? requested! : 'en';
+  const db = createDb(c.env.DB);
+  const user = await readSessionUser(c.env.DB, getCookie(c, SESSION_COOKIE));
+  const savedIds = user ? await loadSavedRecipeIds(c.env.DB, user.id) : [];
+  let savedRecipesRows: ReturnType<typeof discoveryRecipes> = [];
+  if (user && savedIds.length > 0) {
+    const selected = discoveryRecipes(await loadDiscoveryRecipeRows(db, demoAllowed(c)), lang);
+    const byId = new Map(selected.map((r) => [r.id, r]));
+    savedRecipesRows = savedIds.map((id) => byId.get(id)).filter((r): r is NonNullable<typeof r> => Boolean(r));
+  }
+  const nav = await siteNav(db, demoAllowed(c), lang, new URL(c.req.url));
+  const origin = c.env.CANONICAL_ORIGIN ?? new URL(c.req.url).origin;
+  return c.html(
+    renderSavedPage(
+      { lang, signedIn: Boolean(user), userEmail: user?.email ?? null, recipes: savedRecipesRows, savedIds },
+      nav,
+      origin,
+    ),
+    200,
+    { 'cache-control': 'private, no-store', 'x-robots-tag': 'noindex' },
+  );
+});
+
 app.get('/', async (c) => {
+  const qRedirect = (c.req.query('q') ?? '').trim();
   const requestedLang=c.req.query('lang');
   // Pick 2A: an explicit ?lang= always wins; otherwise the browser's
   // Accept-Language defaults the catalogue language and the homepage shows
   // the visible switcher confirmation.
   const explicit=['en','es','fr'].includes(requestedLang??'')?requestedLang!:null;
   const lang=explicit ?? browserLang(c.req.header('accept-language'));
-  const langNotice=!explicit && lang!=='en';
   const cat=c.req.query('cat');
   const activeCategory=cat && isRecipeCategorySlug(cat)?cat:null;
+  if (qRedirect) {
+    const p = new URLSearchParams();
+    p.set('q', qRedirect);
+    if (lang !== 'en') p.set('lang', lang);
+    if (activeCategory) p.set('cat', activeCategory);
+    return c.redirect(`/search?${p.toString()}`, 302);
+  }
+  const langNotice=!explicit && lang!=='en';
   // Default locales are always listed (unchanged behavior); additional
   // locales appear only once they have published content, so registering a
   // locale in LOCALES alone never exposes it on the homepage.
@@ -404,7 +858,7 @@ app.get('/', async (c) => {
       .map((lang) => ({ country: ct.code, countryName: ct.name, lang })),
   );
   const mapped = await loadDiscoveryRecipeRows(db, demoAllowed(c));
-  const nav = await siteNav(db, demoAllowed(c), lang);
+  const nav = await siteNav(db, demoAllowed(c), lang, new URL(c.req.url));
   const origin = c.env.CANONICAL_ORIGIN ?? new URL(c.req.url).origin;
   return c.html(
     renderHome(
@@ -420,26 +874,6 @@ app.get('/', async (c) => {
     ),
   );
 });
-
-function extractIngredientNames(json: string | null | undefined): string {
-  if (!json) return '';
-  try {
-    const list = JSON.parse(json);
-    if (!Array.isArray(list)) return '';
-    return list
-      .map((entry) => {
-        if (typeof entry === 'string') {
-          return entry.replace(/^[0-9/.\s\u00bc-\u00be\u2150-\u215e]+(?:cup|cups|tbsp|tsp|tablespoon|tablespoons|teaspoon|teaspoons|g|gram|grams|kg|ml|oz|ounce|ounces|lb|lbs|pound|pounds|pinch|pinches|can|cans|package|packages|bunch|bunches)?\s*/i, '').trim() || entry;
-        }
-        if (entry && typeof entry.name === 'string') return entry.name.trim();
-        return '';
-      })
-      .filter(Boolean)
-      .join(' ');
-  } catch {
-    return '';
-  }
-}
 
 app.post('/api/search-gap', async (c) => {
   try {
@@ -555,15 +989,15 @@ const staticLang = (c: Context<{ Bindings: Bindings }>) => {
 };
 app.get('/about', async (c) => {
   const l = staticLang(c);
-  return c.html(renderAbout(await siteNav(createDb(c.env.DB), demoAllowed(c), l), c.env.CANONICAL_ORIGIN ?? new URL(c.req.url).origin, l));
+  return c.html(renderAbout(await siteNav(createDb(c.env.DB), demoAllowed(c), l, new URL(c.req.url)), c.env.CANONICAL_ORIGIN ?? new URL(c.req.url).origin, l));
 });
 app.get('/privacy', async (c) => {
   const l = staticLang(c);
-  return c.html(renderPrivacy(await siteNav(createDb(c.env.DB), demoAllowed(c), l), c.env.CANONICAL_ORIGIN ?? new URL(c.req.url).origin, l));
+  return c.html(renderPrivacy(await siteNav(createDb(c.env.DB), demoAllowed(c), l, new URL(c.req.url)), c.env.CANONICAL_ORIGIN ?? new URL(c.req.url).origin, l));
 });
 app.get('/how-we-test', async (c) => {
   const l = staticLang(c);
-  return c.html(renderHowWeTest(await siteNav(createDb(c.env.DB), demoAllowed(c), l), c.env.CANONICAL_ORIGIN ?? new URL(c.req.url).origin, l));
+  return c.html(renderHowWeTest(await siteNav(createDb(c.env.DB), demoAllowed(c), l, new URL(c.req.url)), c.env.CANONICAL_ORIGIN ?? new URL(c.req.url).origin, l));
 });
 app.get('/:country', countryHome);
 app.get('/:country/', countryHome);

@@ -95,13 +95,25 @@ export function getCountry(code: string): Country | undefined {
  * countries are translated; the rest fall back to the catalogue (English)
  * name until their market launches. */
 const COUNTRY_DISPLAY: Record<string, Record<string, string>> = {
-  us: { es: 'Estados Unidos', fr: '\u00c9tats-Unis' },
-  mx: { es: 'M\u00e9xico', fr: 'Mexique' },
+  us: { en: 'United States', es: 'Estados Unidos', fr: '\u00c9tats-Unis' },
+  mx: { en: 'Mexico', es: 'M\u00e9xico', fr: 'Mexique' },
+  pl: { en: 'Poland', es: 'Polonia', fr: 'Pologne' },
+  cn: { en: 'China', es: 'China', fr: 'Chine' },
+  it: { en: 'Italy', es: 'Italia', fr: 'Italie' },
+  fr: { en: 'France', es: 'Francia', fr: 'France' },
+  gr: { en: 'Greece', es: 'Grecia', fr: 'Gr\u00e8ce' },
+  de: { en: 'Germany', es: 'Alemania', fr: 'Allemagne' },
+  es: { en: 'Spain', es: 'Espa\u00f1a', fr: 'Espagne' },
+  uk: { en: 'United Kingdom', es: 'Reino Unido', fr: 'Royaume-Uni' },
+  ca: { en: 'Canada', es: 'Canad\u00e1', fr: 'Canada' },
 };
 export function localizedCountryName(code: string, lang: string): string {
-  const ct = getCountry(code);
+  const lower = code.toLowerCase();
+  const ct = getCountry(lower);
+  const localized = COUNTRY_DISPLAY[lower]?.[lang] ?? COUNTRY_DISPLAY[lower]?.['en'];
+  if (localized) return localized;
   if (!ct) return code.toUpperCase();
-  return COUNTRY_DISPLAY[code]?.[lang] ?? ct.name;
+  return ct.name;
 }
 
 export function waveCountries(wave: number): Country[] {
@@ -207,6 +219,17 @@ export interface UiStrings {
   searchNav: string;
   menuNav: string;
   moreShareOptions: string;
+  savedNav: string;
+  meNav: string;
+  saveRecipe: string;
+  savedRecipe: string;
+  removeSaved: string;
+  recentlyViewed: string;
+  collectionsNav: string;
+  cuisinesNav: string;
+  filtersHeading: string;
+  clearFilters: string;
+  mobileTabsLabel: string;
 }
 
 const UI_STRINGS: Record<string, UiStrings> = {
@@ -240,7 +263,7 @@ const UI_STRINGS: Record<string, UiStrings> = {
     searchPlaceholder: 'Search recipes or ingredients…',
     checkedProgress: 'checked',
     shareRecipeNav: 'Share a recipe',
-    myKitchenNav: 'My kitchen',
+    myKitchenNav: 'My recipes',
     themeToggle: 'Switch color theme',
     themeLight: 'Light',
     themeDark: 'Dark',
@@ -256,6 +279,10 @@ const UI_STRINGS: Record<string, UiStrings> = {
     emptyShareCta: 'Have a great recipe for this? Share yours',
     communityTag: 'Cooked it? Tag #CookedWith2Yolks',
     searchNav: 'Search', menuNav: 'Menu', moreShareOptions: 'More ways to share',
+    savedNav: 'Saved', meNav: 'Me', saveRecipe: 'Save recipe', savedRecipe: 'Saved',
+    removeSaved: 'Remove from saved', recentlyViewed: 'Recently viewed',
+    collectionsNav: 'Collections', cuisinesNav: 'Cuisines',
+    filtersHeading: 'Filters', clearFilters: 'Clear filters', mobileTabsLabel: 'Quick navigation',
   },
   es: {
     ingredients: 'Ingredientes', steps: 'Pasos', source: 'Fuente',
@@ -287,7 +314,7 @@ const UI_STRINGS: Record<string, UiStrings> = {
     searchPlaceholder: 'Buscar recetas o ingredientes…',
     checkedProgress: 'marcados',
     shareRecipeNav: 'Enviar receta',
-    myKitchenNav: 'Mi cocina',
+    myKitchenNav: 'Mis recetas',
     themeToggle: 'Cambiar tema de color',
     themeLight: 'Claro',
     themeDark: 'Oscuro',
@@ -303,6 +330,10 @@ const UI_STRINGS: Record<string, UiStrings> = {
     emptyShareCta: '\u00bfTienes una receta para esto? Comp\u00e1rtela',
     communityTag: '\u00bfLa cocinaste? Etiqueta #CookedWith2Yolks',
     searchNav: 'Buscar', menuNav: 'Men\u00fa', moreShareOptions: 'M\u00e1s formas de compartir',
+    savedNav: 'Guardadas', meNav: 'Yo', saveRecipe: 'Guardar receta', savedRecipe: 'Guardada',
+    removeSaved: 'Quitar de guardadas', recentlyViewed: 'Vistas recientemente',
+    collectionsNav: 'Colecciones', cuisinesNav: 'Cocinas',
+    filtersHeading: 'Filtros', clearFilters: 'Limpiar filtros', mobileTabsLabel: 'Navegaci\u00f3n r\u00e1pida',
   },
   fr: {
     ingredients: 'Ingr\u00e9dients', steps: '\u00c9tapes', source: 'Source',
@@ -334,7 +365,7 @@ const UI_STRINGS: Record<string, UiStrings> = {
     searchPlaceholder: 'Chercher une recette ou un ingr\u00e9dient…',
     checkedProgress: 'coch\u00e9s',
     shareRecipeNav: 'Partager une recette',
-    myKitchenNav: 'Ma cuisine',
+    myKitchenNav: 'Mes recettes',
     themeToggle: 'Changer de th\u00e8me',
     themeLight: 'Clair',
     themeDark: 'Sombre',
@@ -350,6 +381,10 @@ const UI_STRINGS: Record<string, UiStrings> = {
     emptyShareCta: 'Vous avez cette recette ? Partagez-la',
     communityTag: 'Cuisin\u00e9e ? Taguez #CookedWith2Yolks',
     searchNav: 'Rechercher', menuNav: 'Menu', moreShareOptions: 'Autres fa\u00e7ons de partager',
+    savedNav: 'Enregistr\u00e9es', meNav: 'Moi', saveRecipe: 'Enregistrer la recette', savedRecipe: 'Enregistr\u00e9e',
+    removeSaved: 'Retirer des favoris', recentlyViewed: 'Consult\u00e9es r\u00e9cemment',
+    collectionsNav: 'Collections', cuisinesNav: 'Cuisines',
+    filtersHeading: 'Filtres', clearFilters: 'Effacer les filtres', mobileTabsLabel: 'Navigation rapide',
   },
 };
 
@@ -934,3 +969,4 @@ export * from './units';
 export * from './render';
 export * from './translation';
 export * from './accountStrings';
+export * from './discovery';

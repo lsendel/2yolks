@@ -1,5 +1,4 @@
-import type { RecipePage } from '@2yolks/contracts';
-import type { IngredientEntry } from '@2yolks/contracts';
+import type { RecipePage, IngredientEntry, DietTag, DifficultyLevel, TimeBucket, SearchQuery, SearchResult } from '@2yolks/contracts';
 import {
   SCALE_MULTIPLIERS,
   defaultUnitSystem,
@@ -18,6 +17,11 @@ import {
   categoryLabel,
   asImageStyle,
   localizedCountryName,
+  MAX_HOME_ITEMS,
+  RECIPE_CATEGORY_SLUGS,
+  DIET_TAGS,
+  TIME_BUCKETS,
+  DIFFICULTY_LEVELS,
 } from '@2yolks/contracts';
 import {
   TwinYolkLogoMark,
@@ -72,9 +76,20 @@ export function BrandMark({ large = false }: { large?: boolean }) {
 
 const langQuery = (lang: string) => (lang === 'en' ? '' : `?lang=${lang}`);
 
-export function SiteHeader({ nav = [], lang = 'en' }: { nav?: SiteNavItem[]; lang?: string }) {
+export function SiteHeader({
+  nav = [],
+  lang = 'en',
+  initialQuery = '',
+  cuisines = [],
+}: {
+  nav?: SiteNavItem[];
+  lang?: string;
+  initialQuery?: string;
+  cuisines?: { slug: string; label: string }[];
+}) {
   const t = uiStrings(lang);
   const lq = langQuery(lang);
+  const searchHref = `/search${lq}`;
   return (
     <header className="site-header">
       <a className="skip" href="#main">{t.skipToContent}</a>
@@ -83,13 +98,36 @@ export function SiteHeader({ nav = [], lang = 'en' }: { nav?: SiteNavItem[]; lan
           <span className="brand-word">2yolks</span>
           <TwinYolkLogoMark />
         </a>
+        <form className="header-search-form" action="/search" method="get" role="search" data-header-search>
+          {lang !== 'en' ? <input type="hidden" name="lang" value={lang} /> : null}
+          <label className="visually-hidden" htmlFor="header-search-q">{t.searchNav}</label>
+          <SocialIcon name="search" className="social-icon header-search-icon" />
+          <input
+            id="header-search-q"
+            type="search"
+            name="q"
+            defaultValue={initialQuery}
+            placeholder={t.searchPlaceholder}
+            autoComplete="off"
+            enterKeyHint="search"
+            data-header-search-input
+            data-suggest-lang={lang}
+          />
+          <button type="submit">{t.searchNav}</button>
+          <div className="search-popover" data-search-popover hidden />
+        </form>
         <nav className="site-nav" aria-label={lang === 'es' ? 'Recetas' : lang === 'fr' ? 'Recettes' : 'Recipes'}>
-          <a className="nav-search" href={`/${lq}#search`} aria-label={t.searchNav}>
+          <a className="nav-search nav-search-mobile" href={searchHref} data-open-search-sheet aria-label={t.searchNav}>
             <SocialIcon name="search" />
             <span className="nav-search-label">{t.searchNav}</span>
           </a>
           <a className="nav-secondary" href={`/recipes${lq}`}>{t.allRecipes}</a>
-          <a className="nav-secondary" href={`/how-we-test${lq}`}>{t.testingShort}</a>
+          <a className="nav-secondary" href={`/collections${lq}`}>{t.collectionsNav}</a>
+          <a className="nav-secondary" href={`/cuisine${lq}`}>{t.cuisinesNav}</a>
+          <a className="nav-secondary nav-saved-link" href={`/saved${lq}`}>
+            {t.savedNav}
+            <span className="saved-count" data-saved-count hidden />
+          </a>
           <a className="nav-secondary" href={`/account${lq}`}>{t.myKitchenNav}</a>
           <a className="nav-share-cta" href={`/account/recipes/new${lq}`}>
             <SocialIcon name="plus" />
@@ -123,6 +161,12 @@ export function SiteHeader({ nav = [], lang = 'en' }: { nav?: SiteNavItem[]; lan
           <div className="mobile-menu-panel">
             <nav aria-label={t.menuNav}>
               <a href={`/recipes${lq}`}>{t.allRecipes}</a>
+              <a href={`/collections${lq}`}>{t.collectionsNav}</a>
+              <a href={`/cuisine${lq}`}>{t.cuisinesNav}</a>
+              {cuisines.slice(0, 4).map((cu) => (
+                <a key={cu.slug} className="mobile-sub-link" href={`/cuisine/${cu.slug}${lq}`}>{cu.label}</a>
+              ))}
+              <a href={`/saved${lq}`}>{t.savedNav}</a>
               <a href={`/account${lq}`}>{t.myKitchenNav}</a>
               <a href={`/how-we-test${lq}`}>{t.testingShort}</a>
             </nav>
@@ -142,6 +186,114 @@ export function SiteHeader({ nav = [], lang = 'en' }: { nav?: SiteNavItem[]; lan
         </details>
       </div>
     </header>
+  );
+}
+
+export function SearchSheet({ lang = 'en', initialQuery = '' }: { lang?: string; initialQuery?: string }) {
+  const t = uiStrings(lang);
+  const lq = langQuery(lang);
+  const langAmp = lang === 'en' ? '' : `lang=${lang}&`;
+  const labels = lang === 'es'
+    ? { close: 'Cerrar buscador', recent: 'Búsquedas recientes', clearRecent: 'Borrar', explore: 'Accesos rápidos', quick: '≤ 30 min', noOven: 'Sin horno', veg: 'Vegetariana', weeknight: 'Entre semana', harvest: 'Otoño y fiesta', cuisines: 'Cocinas', suggestions: 'Sugerencias' }
+    : lang === 'fr'
+      ? { close: 'Fermer la recherche', recent: 'Recherches récentes', clearRecent: 'Effacer', explore: 'Accès rapides', quick: '≤ 30 min', noOven: 'Sans four', veg: 'Végétarien', weeknight: 'Semaine', harvest: 'Fêtes d’automne', cuisines: 'Cuisines', suggestions: 'Suggestions' }
+      : { close: 'Close search', recent: 'Recent searches', clearRecent: 'Clear', explore: 'Quick shortcuts', quick: '30 min or less', noOven: 'No oven', veg: 'Vegetarian', weeknight: 'Weeknight dinners', harvest: 'Thanksgiving', cuisines: 'Cuisines', suggestions: 'Suggestions' };
+  return (
+    <div
+      className="search-sheet"
+      data-search-sheet
+      role="dialog"
+      aria-modal="true"
+      aria-label={t.searchNav}
+      hidden
+    >
+      <div className="search-sheet-head">
+        <span className="search-sheet-title">{t.searchNav}</span>
+        <button type="button" className="search-sheet-close" data-close-search-sheet aria-label={labels.close}>
+          <SocialIcon name="close" />
+        </button>
+      </div>
+      <form className="search-sheet-form" action="/search" method="get" role="search" data-sheet-form>
+        {lang !== 'en' ? <input type="hidden" name="lang" value={lang} /> : null}
+        <label className="visually-hidden" htmlFor="sheet-search-q">{t.searchNav}</label>
+        <input
+          id="sheet-search-q"
+          type="search"
+          name="q"
+          defaultValue={initialQuery}
+          placeholder={t.searchPlaceholder}
+          autoComplete="off"
+          enterKeyHint="search"
+          data-sheet-search-input
+          data-suggest-lang={lang}
+        />
+        <button type="submit">{t.searchNav}</button>
+      </form>
+      <div className="search-sheet-section" data-recent-searches-wrap hidden>
+        <div className="search-sheet-row">
+          <h3>{labels.recent}</h3>
+          <button type="button" className="quiet-link" data-clear-recent-q>{labels.clearRecent}</button>
+        </div>
+        <div className="search-sheet-chips" data-recent-searches />
+      </div>
+      <div className="search-sheet-section" data-sheet-suggestions-wrap hidden>
+        <h3>{labels.suggestions}</h3>
+        <div data-sheet-suggestions />
+      </div>
+      <div className="search-sheet-section">
+        <h3>{labels.explore}</h3>
+        <div className="search-sheet-chips">
+          <a className="chip" href={`/search?${langAmp}time=30`}>{labels.quick}</a>
+          <a className="chip" href={`/search?${langAmp}method=no-oven`}>{labels.noOven}</a>
+          <a className="chip" href={`/search?${langAmp}diet=vegetarian`}>{labels.veg}</a>
+          <a className="chip" href={`/collections/weeknight${lq}`}>{labels.weeknight}</a>
+          <a className="chip" href={`/collections/thanksgiving${lq}`}>{labels.harvest}</a>
+          <a className="chip" href={`/cuisine${lq}`}>{labels.cuisines}</a>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function MobileTabBar({ lang = 'en', currentPath = '/' }: { lang?: string; currentPath?: string }) {
+  const t = uiStrings(lang);
+  const lq = langQuery(lang);
+  const isHome = currentPath === '/';
+  const isSearch = currentPath.startsWith('/search') || currentPath.startsWith('/recipes/') || currentPath.startsWith('/collections') || currentPath.startsWith('/cuisine');
+  const isShare = currentPath === '/account/recipes/new';
+  const isSaved = currentPath === '/saved';
+  const isMe = currentPath.startsWith('/account') && !isShare;
+  return (
+    <nav className="mobile-tab-bar" aria-label={t.mobileTabsLabel} data-mobile-tabs>
+      <a href={`/${lq}`} className="mobile-tab" aria-current={isHome ? 'page' : undefined}>
+        <SocialIcon name="home" />
+        <span>{t.home}</span>
+      </a>
+      <a
+        href={`/search${lq}`}
+        className="mobile-tab"
+        aria-current={isSearch ? 'page' : undefined}
+        data-open-search-sheet={currentPath.startsWith('/search') ? undefined : ''}
+      >
+        <SocialIcon name="search" />
+        <span>{t.searchNav}</span>
+      </a>
+      <a href={`/account/recipes/new${lq}`} className="mobile-tab mobile-tab--share" aria-current={isShare ? 'page' : undefined}>
+        <SocialIcon name="plus" />
+        <span>{t.share}</span>
+      </a>
+      <a href={`/saved${lq}`} className="mobile-tab" aria-current={isSaved ? 'page' : undefined}>
+        <span className="tab-icon-wrap">
+          <SocialIcon name="heart" />
+          <span className="tab-badge" data-saved-count hidden />
+        </span>
+        <span>{t.savedNav}</span>
+      </a>
+      <a href={`/account${lq}`} className="mobile-tab" aria-current={isMe ? 'page' : undefined}>
+        <SocialIcon name="user" />
+        <span>{t.meNav}</span>
+      </a>
+    </nav>
   );
 }
 
@@ -179,10 +331,14 @@ export function SiteFooter({ nav = [], lang = 'en' }: { nav?: SiteNavItem[]; lan
         </nav>
         <nav className="footer-col" aria-label="Kitchen">
           <a href={`/recipes${lq}`}>{t.allRecipes}</a>
+          <a href={`/collections${lq}`}>{t.collectionsNav}</a>
+          <a href={`/cuisine${lq}`}>{t.cuisinesNav}</a>
+          <a href={`/saved${lq}`}>{t.savedNav}</a>
           <a href={`/account/recipes/new${lq}`}>{t.shareRecipeNav}</a>
           <a href={`/account${lq}`}>{t.myKitchenNav}</a>
         </nav>
         <nav className="footer-col" aria-label="2yolks">
+          <a href={`/search${lq}`}>{t.searchNav}</a>
           <a href={`/about${lq}`}>{t.about}</a>
           <a href={`/how-we-test${lq}`}>{t.testingShort}</a>
           <a href={`/privacy${lq}`}>{lang === 'es' ? 'Privacidad' : lang === 'fr' ? 'Confidentialité' : 'Privacy'}</a>
@@ -223,9 +379,12 @@ export interface RecipeRow {
   title: string;
   country: string;
   lang: string;
+  originCountry?: string | null;
   untested?: boolean;
   /** CATEGORIES slug; undefined until the additive column ships. */
   category?: string | null;
+  prepMinutes?: number | null;
+  cookMinutes?: number | null;
   totalMinutes?: number | null;
   /** Latest rights-cleared hero image row id (migration 0004); NULL = text-only row. */
   imageId?: string | null;
@@ -233,6 +392,139 @@ export interface RecipeRow {
   imageStyle?: 'photo' | 'illustration' | 'graphic' | null;
   intro?: string | null;
   ingredients?: string | null;
+  diets?: DietTag[];
+  difficulty?: DifficultyLevel | null;
+  noOven?: boolean;
+}
+
+export function SaveButton({
+  recipe,
+  lang,
+  initialSaved = false,
+  withLabel = false,
+}: {
+  recipe: Pick<RecipeRow, 'id' | 'title' | 'slug' | 'country' | 'lang' | 'category' | 'totalMinutes' | 'imageId' | 'imageStyle'>;
+  lang: string;
+  initialSaved?: boolean;
+  withLabel?: boolean;
+}) {
+  const t = uiStrings(lang);
+  const href = recipePathFor(recipe.country, recipe.lang, recipe.slug);
+  const style = asImageStyle(recipe.imageStyle);
+  const meta = JSON.stringify({
+    id: recipe.id,
+    title: recipe.title,
+    href,
+    cat: categoryLabel(recipe.category, lang),
+    min: recipe.totalMinutes ?? null,
+    img: recipe.imageId && style ? `/img/recipe/${recipe.imageId}` : null,
+    style,
+  });
+  return (
+    <button
+      type="button"
+      className={withLabel ? 'save-btn save-btn--labeled' : 'save-btn'}
+      data-save-recipe={recipe.id}
+      data-recipe-meta={meta}
+      data-label-save={t.saveRecipe}
+      data-label-saved={t.savedRecipe}
+      aria-pressed={initialSaved ? 'true' : 'false'}
+      aria-label={initialSaved ? t.savedRecipe : t.saveRecipe}
+      title={initialSaved ? t.savedRecipe : t.saveRecipe}
+    >
+      <SocialIcon name="heart" className="social-icon icon-heart-outline" />
+      <SocialIcon name="heart-filled" className="social-icon icon-heart-filled" />
+      {withLabel ? <span data-save-label>{initialSaved ? t.savedRecipe : t.saveRecipe}</span> : null}
+    </button>
+  );
+}
+
+const fmtDuration = (n: number) => (n >= 60 ? `${Math.floor(n / 60)} h${n % 60 ? ' ' + (n % 60) + ' min' : ''}` : `${n} min`);
+
+export function DiscoveryRowCard({
+  recipe: r,
+  index,
+  lang,
+  numbered = false,
+  currentCountry = null,
+  savedIds,
+}: {
+  recipe: RecipeRow;
+  index: number;
+  lang: string;
+  numbered?: boolean;
+  currentCountry?: string | null;
+  savedIds?: ReadonlySet<string>;
+}) {
+  const t = uiStrings(lang);
+  const catText = categoryLabel(r.category, lang);
+  const searchBody = `${r.ingredients ?? ''} ${r.intro ?? ''}`.trim();
+  const isCrossLocale = Boolean(currentCountry && r.country && r.country !== currentCountry);
+  const style = asImageStyle(r.imageStyle);
+  const href = recipePathFor(r.country, r.lang, r.slug);
+  return (
+    <li
+      data-recipe-item
+      data-title={r.title}
+      data-category={catText ?? ''}
+      data-body={searchBody}
+      data-search={`${r.title} ${catText ?? ''} ${searchBody}`.toLowerCase()}
+      className={r.imageId && style ? 'has-thumb' : undefined}
+    >
+      {/* Always render .recipe-number so the grid title column stays aligned. */}
+      <span className="recipe-number">{numbered ? String(index + 1).padStart(2, '0') : ''}</span>
+      {r.imageId && style ? (
+        <span className="recipe-thumb">
+          <img src={`/img/recipe/${r.imageId}`} alt="" loading="lazy" width="96" height="96" />
+          <span className="thumb-label">
+            {style === 'illustration'
+              ? t.imageLabelIllustration
+              : style === 'graphic'
+                ? t.imageLabelGraphic
+                : t.imageLabelPhoto}
+          </span>
+        </span>
+      ) : null}
+      <div>
+        {catText ? (
+          <span className="eyebrow">
+            <CategoryIcon slug={r.category} />
+            {catText}
+          </span>
+        ) : null}
+        <h3>
+          <a className="stretched-row" href={href}>{r.title}</a>
+        </h3>
+        {r.intro ? <p className="card-intro">{r.intro}</p> : null}
+        <div className="row-badges">
+          {r.untested ? (
+            <span className="status-label">{t.untestedBadge}</span>
+          ) : (
+            <span className="tested-badge">
+              <FactIcon kind="check" />
+              {t.testedBadge}
+            </span>
+          )}
+          {r.lang !== lang ? <span className="fallback-language">{LANG_NAMES[r.lang]}</span> : null}
+          {isCrossLocale ? <span className="provenance-badge">{localizedCountryName(r.country, lang)}</span> : null}
+        </div>
+      </div>
+      <div className="row-end">
+        {r.totalMinutes != null ? (
+          <span className="icon-stat">
+            <FactIcon />
+            {fmtDuration(r.totalMinutes)}
+          </span>
+        ) : null}
+        <div className="row-end-actions">
+          <SaveButton recipe={r} lang={lang} initialSaved={Boolean(savedIds?.has(r.id))} />
+          <a href={href} aria-label={r.title} tabIndex={-1}>
+            <ArrowUpRightIcon />
+          </a>
+        </div>
+      </div>
+    </li>
+  );
 }
 
 interface RecipeGroup {
@@ -323,10 +615,10 @@ export interface HomeProps {
   langNotice?: boolean;
 }
 
-const DISCOVERY: Record<string, { eyebrow: string; title: string; intro: string; cta: string; index: string; all: string; note: string; illustration: string; total: string; empty: string; noExact: string; nothingMatches: string; didYouMean: string; clearSearch: string; seeAll: string; langNotice: string; heroSearchLabel: string; heroSearchPlaceholder: string; heroSearchButton: string; quickSearches: string[]; resultsOne: string; resultsMany: string; searchAll: string }> = {
-  en: { eyebrow: 'RECIPES WITHOUT BORDERS', title: 'Small kitchen. Big appetite.', intro: 'Find something worth cooking. Recipes to read, make and share.', cta: "What's cooking?", index: 'Find your flavor', all: 'All recipes', note: 'Every recipe, honestly labeled.', illustration: 'AI-generated ingredient illustration, not a dish photograph', total: 'Total', empty: 'No recipes in this filter yet.', noExact: 'No exact match — closest matches:', nothingMatches: "Nothing matches '{q}' yet", didYouMean: 'Did you mean:', clearSearch: 'Clear search', seeAll: 'See all', langNotice: 'Showing recipes in your browser language. Switch:', heroSearchLabel: 'Search recipes', heroSearchPlaceholder: 'Chicken, pasta, soup…', heroSearchButton: 'Search', quickSearches: ['chicken', 'pasta', 'soup', 'tacos', 'pie'], resultsOne: '1 recipe found', resultsMany: '{n} recipes found', searchAll: 'Search all categories' },
-  es: { eyebrow: 'RECETAS SIN FRONTERAS', title: 'Cocina pequeña. Gran apetito.', intro: 'Encuentra algo que quieras cocinar. Recetas para leer, preparar y compartir.', cta: '¿Qué cocinamos?', index: 'Encuentra tu sabor', all: 'Todas las recetas', note: 'Cada receta, con su estado real.', illustration: 'Ilustración de ingredientes generada por IA, no es una foto del plato', total: 'Total', empty: 'Aún no hay recetas en este filtro.', noExact: 'Sin coincidencias exactas — resultados más cercanos:', nothingMatches: "Aún no hay coincidencias para '{q}'", didYouMean: 'Quizás quisiste decir:', clearSearch: 'Borrar búsqueda', seeAll: 'Ver todas', langNotice: 'Mostrando recetas en el idioma de tu navegador. Cambiar:', heroSearchLabel: 'Buscar recetas', heroSearchPlaceholder: 'Pollo, pasta, sopa…', heroSearchButton: 'Buscar', quickSearches: ['pollo', 'pasta', 'sopa', 'tacos', 'pay'], resultsOne: '1 receta encontrada', resultsMany: '{n} recetas encontradas', searchAll: 'Buscar en todas las categorías' },
-  fr: { eyebrow: 'RECETTES SANS FRONTIÈRES', title: 'Petite cuisine. Grand appétit.', intro: 'Trouvez une recette à cuisiner. Des recettes à lire, préparer et partager.', cta: 'On cuisine quoi ?', index: 'Trouvez votre saveur', all: 'Toutes les recettes', note: 'Chaque recette, avec son statut réel.', illustration: 'Illustration d’ingrédients générée par IA, pas une photo du plat', total: 'Total', empty: 'Aucune recette dans ce filtre.', noExact: 'Aucune correspondance exacte — résultats les plus proches :', nothingMatches: "Aucune correspondance pour « {q} » pour l'instant", didYouMean: 'Vouliez-vous dire :', clearSearch: 'Effacer la recherche', seeAll: 'Tout voir', langNotice: 'Recettes affichées dans la langue de votre navigateur. Changer :', heroSearchLabel: 'Chercher une recette', heroSearchPlaceholder: 'Poulet, pâtes, soupe…', heroSearchButton: 'Chercher', quickSearches: ['poulet', 'pâtes', 'soupe', 'tacos', 'tarte'], resultsOne: '1 recette trouvée', resultsMany: '{n} recettes trouvées', searchAll: 'Chercher dans toutes les catégories' },
+const DISCOVERY: Record<string, { eyebrow: string; title: string; intro: string; cta: string; index: string; all: string; note: string; illustration: string; total: string; empty: string; noExact: string; nothingMatches: string; didYouMean: string; clearSearch: string; seeAll: string; langNotice: string; heroSearchLabel: string; heroSearchPlaceholder: string; heroSearchButton: string; quickChips: { label: string; kind: 'time30' | 'q' | 'noOven' | 'veg' | 'thanksgiving'; value: string }[]; resultsOne: string; resultsMany: string; searchAll: string; browseAllCount: string }> = {
+  en: { eyebrow: 'RECIPES WITHOUT BORDERS', title: 'Small kitchen. Big appetite.', intro: 'Find something worth cooking. Recipes to read, make and share.', cta: "What's cooking?", index: 'Find your flavor', all: 'All recipes', note: 'Every recipe, honestly labeled.', illustration: 'AI-generated ingredient illustration, not a dish photograph', total: 'Total', empty: 'No recipes in this filter yet.', noExact: 'No exact match — closest matches:', nothingMatches: "Nothing matches '{q}' yet", didYouMean: 'Did you mean:', clearSearch: 'Clear search', seeAll: 'See all', langNotice: 'Showing recipes in your browser language. Switch:', heroSearchLabel: 'What do you want to cook?', heroSearchPlaceholder: 'Chicken, pasta, soup…', heroSearchButton: 'Search', quickChips: [{ label: '30-min dinners', kind: 'time30', value: '30' }, { label: 'chicken', kind: 'q', value: 'chicken' }, { label: 'no oven', kind: 'noOven', value: 'no-oven' }, { label: 'vegetarian', kind: 'veg', value: 'vegetarian' }, { label: 'Thanksgiving', kind: 'thanksgiving', value: 'thanksgiving' }], resultsOne: '1 recipe found', resultsMany: '{n} recipes found', searchAll: 'Search all categories', browseAllCount: 'Search & filter all {n} recipes' },
+  es: { eyebrow: 'RECETAS SIN FRONTERAS', title: 'Cocina pequeña. Gran apetito.', intro: 'Encuentra algo que quieras cocinar. Recetas para leer, preparar y compartir.', cta: '¿Qué cocinamos?', index: 'Encuentra tu sabor', all: 'Todas las recetas', note: 'Cada receta, con su estado real.', illustration: 'Ilustración de ingredientes generada por IA, no es una foto del plato', total: 'Total', empty: 'Aún no hay recetas en este filtro.', noExact: 'Sin coincidencias exactas — resultados más cercanos:', nothingMatches: "Aún no hay coincidencias para '{q}'", didYouMean: 'Quizás quisiste decir:', clearSearch: 'Borrar búsqueda', seeAll: 'Ver todas', langNotice: 'Mostrando recetas en el idioma de tu navegador. Cambiar:', heroSearchLabel: '¿Qué quieres cocinar hoy?', heroSearchPlaceholder: 'Pollo, pasta, sopa…', heroSearchButton: 'Buscar', quickChips: [{ label: 'Cenas en 30 min', kind: 'time30', value: '30' }, { label: 'pollo', kind: 'q', value: 'pollo' }, { label: 'sin horno', kind: 'noOven', value: 'no-oven' }, { label: 'vegetariana', kind: 'veg', value: 'vegetarian' }, { label: 'Otoño y fiesta', kind: 'thanksgiving', value: 'thanksgiving' }], resultsOne: '1 receta encontrada', resultsMany: '{n} recetas encontradas', searchAll: 'Buscar en todas las categorías', browseAllCount: 'Buscar y filtrar las {n} recetas' },
+  fr: { eyebrow: 'RECETTES SANS FRONTIÈRES', title: 'Petite cuisine. Grand appétit.', intro: 'Trouvez une recette à cuisiner. Des recettes à lire, préparer et partager.', cta: 'On cuisine quoi ?', index: 'Trouvez votre saveur', all: 'Toutes les recettes', note: 'Chaque recette, avec son statut réel.', illustration: 'Illustration d’ingrédients générée par IA, pas une photo du plat', total: 'Total', empty: 'Aucune recette dans ce filtre.', noExact: 'Aucune correspondance exacte — résultats les plus proches :', nothingMatches: "Aucune correspondance pour « {q} » pour l'instant", didYouMean: 'Vouliez-vous dire :', clearSearch: 'Effacer la recherche', seeAll: 'Tout voir', langNotice: 'Recettes affichées dans la langue de votre navigateur. Changer :', heroSearchLabel: 'Qu’avez-vous envie de cuisiner ?', heroSearchPlaceholder: 'Poulet, pâtes, soupe…', heroSearchButton: 'Chercher', quickChips: [{ label: 'Dîners en 30 min', kind: 'time30', value: '30' }, { label: 'poulet', kind: 'q', value: 'poulet' }, { label: 'sans four', kind: 'noOven', value: 'no-oven' }, { label: 'végétarien', kind: 'veg', value: 'vegetarian' }, { label: 'Fêtes d’automne', kind: 'thanksgiving', value: 'thanksgiving' }], resultsOne: '1 recette trouvée', resultsMany: '{n} recettes trouvées', searchAll: 'Chercher dans toutes les catégories', browseAllCount: 'Rechercher et filtrer les {n} recettes' },
 };
 
 export function discoveryRecipes(rows: RecipeRow[], lang: string): RecipeRow[] {
@@ -339,7 +631,6 @@ export function discoveryRecipes(rows: RecipeRow[], lang: string): RecipeRow[] {
 
 export function RecipeIndex({ recipes, lang = 'en' }: { recipes: RecipeRow[]; lang?: string }) {
   const d = DISCOVERY[lang] ?? DISCOVERY.en!;
-  const t = uiStrings(lang);
   const selected = discoveryRecipes(recipes, lang);
   const groups = new Map<string, RecipeRow[]>();
   for (const r of selected) groups.set(r.category ?? '', [...(groups.get(r.category ?? '') ?? []), r]);
@@ -348,7 +639,6 @@ export function RecipeIndex({ recipes, lang = 'en' }: { recipes: RecipeRow[]; la
     if (!b) return -1;
     return (categoryLabel(a, lang) ?? a).localeCompare(categoryLabel(b, lang) ?? b);
   });
-  const time = (n: number) => (n >= 60 ? `${Math.floor(n / 60)} h${n % 60 ? ' ' + (n % 60) + ' min' : ''}` : `${n} min`);
   return (
     <main className="wide discovery" id="main">
       <section className="discovery-index">
@@ -358,56 +648,19 @@ export function RecipeIndex({ recipes, lang = 'en' }: { recipes: RecipeRow[]; la
         </div>
         {categories.map((cat) => (
           <section key={cat || 'uncategorized'} className="index-category">
-            <h2>{cat ? (categoryLabel(cat, lang) ?? cat) : d.all}</h2>
-            <ul className="discovery-list">
-              {(groups.get(cat) ?? []).map((r, i) => {
-                const catText = categoryLabel(r.category, lang);
-                const href = recipePathFor(r.country, r.lang, r.slug);
-                return (
-                  <li key={r.id} data-recipe-item className={r.imageId && asImageStyle(r.imageStyle) ? 'has-thumb' : undefined}>
-                    <span className="recipe-number">{String(i + 1).padStart(2, '0')}</span>
-                    {r.imageId && asImageStyle(r.imageStyle) ? (
-                      <span className="recipe-thumb">
-                        <img src={`/img/recipe/${r.imageId}`} alt="" loading="lazy" width="96" height="96" />
-                        <span className="thumb-label">
-                          {r.imageStyle === 'illustration'
-                            ? t.imageLabelIllustration
-                            : r.imageStyle === 'graphic'
-                              ? t.imageLabelGraphic
-                              : r.imageStyle === 'photo'
-                                ? t.imageLabelPhoto
-                                : null}
-                        </span>
-                      </span>
-                    ) : null}
-                    <div>
-                      {catText ? (
-                        <span className="eyebrow">
-                          <CategoryIcon slug={r.category} />
-                          {catText}
-                        </span>
-                      ) : null}
-                      <h3>
-                        <a className="stretched-row" href={href}>{r.title}</a>
-                      </h3>
-                      <div className="row-badges">
-                        {r.untested ? (
-                          <span className="status-label">{t.untestedBadge}</span>
-                        ) : (
-                          <span className="tested-badge"><FactIcon kind="check" />{t.testedBadge}</span>
-                        )}
-                        {r.lang !== lang ? <span className="fallback-language">{LANG_NAMES[r.lang]}</span> : null}
-                      </div>
-                    </div>
-                    <div className="row-end">
-                      {r.totalMinutes != null ? <span className="icon-stat"><FactIcon />{time(r.totalMinutes)}</span> : null}
-                      <a href={href} aria-label={r.title} tabIndex={-1}>
-                        <ArrowUpRightIcon />
-                      </a>
-                    </div>
-                  </li>
-                );
-              })}
+            <div className="index-group-head">
+              <h2>{cat ? (categoryLabel(cat, lang) ?? cat) : d.all}</h2>
+              {cat ? (
+                <a className="see-all" href={`/recipes/${cat}${langQuery(lang)}`}>
+                  {d.seeAll}
+                  <ArrowUpRightIcon />
+                </a>
+              ) : null}
+            </div>
+            <ul className="discovery-list" data-recipe-list>
+              {(groups.get(cat) ?? []).map((r, i) => (
+                <DiscoveryRowCard key={r.id} recipe={r} index={i} lang={lang} numbered />
+              ))}
             </ul>
           </section>
         ))}
@@ -421,6 +674,7 @@ export function Home({ recipes, lang = 'en', activeCategory = null, currentCount
   const selected = discoveryRecipes(recipes, lang);
   const t = uiStrings(lang);
   const lq = langQuery(lang);
+  const langAmp = lang === 'en' ? '' : `lang=${lang}&`;
   const counts = new Map<string, number>();
   for (const r of selected) {
     if (r.category && categoryLabel(r.category, lang)) {
@@ -434,7 +688,13 @@ export function Home({ recipes, lang = 'en', activeCategory = null, currentCount
   const filtered = activeCategory ? selected.filter((r) => r.category === activeCategory) : selected;
   const featured = selected.find((r) => r.id === 'w1pozole') ?? selected[0];
   const href = (r: RecipeRow) => recipePathFor(r.country, r.lang, r.slug);
-  const time = (n: number) => (n >= 60 ? `${Math.floor(n / 60)} h${n % 60 ? ' ' + (n % 60) + ' min' : ''}` : `${n} min`);
+  const chipHref = (chip: { kind: string; value: string }) => {
+    if (chip.kind === 'time30') return `/search?${langAmp}time=30`;
+    if (chip.kind === 'noOven') return `/search?${langAmp}method=no-oven`;
+    if (chip.kind === 'veg') return `/search?${langAmp}diet=vegetarian`;
+    if (chip.kind === 'thanksgiving') return `/collections/thanksgiving${lq}`;
+    return `/search?${langAmp}q=${encodeURIComponent(chip.value)}`;
+  };
   return (
     <main className="wide discovery" id="main">
       {langNotice ? (
@@ -452,17 +712,19 @@ export function Home({ recipes, lang = 'en', activeCategory = null, currentCount
           <span className="eyebrow">{d.eyebrow}</span>
           <h1>{d.title}</h1>
           <p>{d.intro}</p>
-          {/* Plain GET form: works without JS; the fragment keeps results in view. */}
-          <form className="hero-search" action="/#recipes" method="get" role="search">
+          {/* Plain GET form submitting straight to server-rendered /search. */}
+          <form className="hero-search" action="/search" method="get" role="search">
             {lang !== 'en' ? <input type="hidden" name="lang" value={lang} /> : null}
-            <label className="visually-hidden" htmlFor="hero-q">{d.heroSearchLabel}</label>
-            <SocialIcon name="search" className="social-icon hero-search-icon" />
-            <input id="hero-q" type="search" name="q" placeholder={d.heroSearchPlaceholder} autoComplete="off" enterKeyHint="search" />
-            <button type="submit">{d.heroSearchButton}</button>
+            <label className="hero-prompt" htmlFor="hero-q">{d.heroSearchLabel}</label>
+            <div className="hero-search-row">
+              <SocialIcon name="search" className="social-icon hero-search-icon" />
+              <input id="hero-q" type="search" name="q" placeholder={d.heroSearchPlaceholder} autoComplete="off" enterKeyHint="search" />
+              <button type="submit">{d.heroSearchButton}</button>
+            </div>
           </form>
           <p className="hero-quick">
-            {d.quickSearches.map((q) => (
-              <a key={q} href={`/?${lang !== 'en' ? `lang=${lang}&` : ''}q=${encodeURIComponent(q)}#recipes`}>{q}</a>
+            {d.quickChips.map((chip) => (
+              <a key={chip.label} href={chipHref(chip)}>{chip.label}</a>
             ))}
           </p>
           <div className="hero-cta-row">
@@ -496,7 +758,7 @@ export function Home({ recipes, lang = 'en', activeCategory = null, currentCount
             {featured.totalMinutes != null ? (
               <span className="icon-stat">
                 <FactIcon />
-                {d.total} · {time(featured.totalMinutes)}
+                {d.total} · {fmtDuration(featured.totalMinutes)}
               </span>
             ) : null}
             {featured.untested ? (
@@ -558,118 +820,71 @@ export function Home({ recipes, lang = 'en', activeCategory = null, currentCount
         <p className="closest-match-note" data-closest-note hidden>{d.noExact}</p>
         <p className="visually-hidden" role="status" aria-live="polite" data-search-status data-one={d.resultsOne} data-many={d.resultsMany}></p>
         {(() => {
-          // One row per section with "see all" (Luis's pick 4A, 2026-11-19):
-          // the default homepage groups by category, capped at one row each;
-          // a picked category keeps the flat ranked list.
-          const renderRow = (r: RecipeRow, i: number, numbered: boolean) => {
-            const catText = categoryLabel(r.category, lang);
-            const searchBody = `${r.ingredients ?? ''} ${r.intro ?? ''}`.trim();
-            const isCrossLocale = Boolean(currentCountry && r.country && r.country !== currentCountry);
-            return (
-              <li
-                key={r.id}
-                data-recipe-item
-                data-title={r.title}
-                data-category={catText ?? ''}
-                data-body={searchBody}
-                data-search={`${r.title} ${catText ?? ''} ${searchBody}`.toLowerCase()}
-                className={r.imageId && asImageStyle(r.imageStyle) ? 'has-thumb' : undefined}
-              >
-                {/* The grid's first track is 2.2rem; always render the span so
-                    the content column stays in place (the /recipes squeeze bug
-                    fixed in #33 was exactly this shift). */}
-                <span className="recipe-number">{numbered ? String(i + 1).padStart(2, '0') : ''}</span>
-                {r.imageId && asImageStyle(r.imageStyle) ? (
-                  <span className="recipe-thumb">
-                    <img src={`/img/recipe/${r.imageId}`} alt="" loading="lazy" width="96" height="96" />
-                    <span className="thumb-label">
-                      {r.imageStyle === 'illustration'
-                        ? t.imageLabelIllustration
-                        : r.imageStyle === 'graphic'
-                          ? t.imageLabelGraphic
-                          : r.imageStyle === 'photo'
-                            ? t.imageLabelPhoto
-                            : null}
-                    </span>
-                  </span>
-                ) : null}
-                <div>
-                  {catText ? (
-                    <span className="eyebrow">
-                      <CategoryIcon slug={r.category} />
-                      {catText}
-                    </span>
-                  ) : null}
-                  <h3>
-                    <a className="stretched-row" href={href(r)}>{r.title}</a>
-                  </h3>
-                  {r.intro ? <p className="card-intro">{r.intro}</p> : null}
-                  <div className="row-badges">
-                    {r.untested ? (
-                      <span className="status-label">{t.untestedBadge}</span>
-                    ) : (
-                      <span className="tested-badge">
-                        <FactIcon kind="check" />
-                        {t.testedBadge}
-                      </span>
-                    )}
-                    {r.lang !== lang ? <span className="fallback-language">{LANG_NAMES[r.lang]}</span> : null}
-                    {isCrossLocale ? <span className="provenance-badge">{localizedCountryName(r.country, lang)}</span> : null}
-                  </div>
-                </div>
-                <div className="row-end">
-                  {r.totalMinutes != null ? (
-                    <span className="icon-stat">
-                      <FactIcon />
-                      {time(r.totalMinutes)}
-                    </span>
-                  ) : null}
-                  <a href={href(r)} aria-label={r.title} tabIndex={-1}>
-                    <ArrowUpRightIcon />
-                  </a>
-                </div>
-              </li>
-            );
-          };
           if (activeCategory) {
             return (
               <ul className="discovery-list" data-recipe-list>
-                {filtered.map((r, i) => renderRow(r, i, true))}
+                {filtered.map((r, i) => (
+                  <DiscoveryRowCard key={r.id} recipe={r} index={i} lang={lang} numbered currentCountry={currentCountry} />
+                ))}
               </ul>
             );
           }
           const SECTION_CAP = 4;
-          const groups: { key: string; cat: string | null; label: string; rows: RecipeRow[]; href: string }[] = [];
+          const allGroups: { key: string; cat: string | null; label: string; rows: RecipeRow[]; href: string }[] = [];
           for (const cat of categories) {
-            groups.push({
+            allGroups.push({
               key: cat,
               cat,
               label: categoryLabel(cat, lang) ?? cat,
               rows: filtered.filter((r) => r.category === cat),
-              href: `/?lang=${lang}&cat=${cat}#recipes`,
+              href: `/recipes/${cat}${lq}`,
             });
           }
           const rest = filtered.filter((r) => !r.category || !categoryLabel(r.category, lang));
-          if (rest.length) groups.push({ key: 'more', cat: null, label: d.all, rows: rest, href: `/recipes${lq}` });
-          return groups.map((g) => (
-            <section key={g.key} className="index-group" data-recipe-group>
-              <div className="index-group-head">
-                <h3 className="index-group-title">
-                  {g.cat ? <CategoryIcon slug={g.cat} /> : null}
-                  {g.label}
-                </h3>
-                {g.rows.length > SECTION_CAP ? (
-                  <a className="see-all" href={g.href}>
-                    {d.seeAll}
-                    <ArrowUpRightIcon />
+          if (rest.length) allGroups.push({ key: 'more', cat: null, label: d.all, rows: rest, href: `/recipes${lq}` });
+          let remaining = MAX_HOME_ITEMS;
+          const renderedGroups: { key: string; cat: string | null; label: string; rows: RecipeRow[]; shown: RecipeRow[]; href: string }[] = [];
+          for (const g of allGroups) {
+            if (remaining <= 0) break;
+            const take = Math.min(SECTION_CAP, remaining, g.rows.length);
+            if (take <= 0) continue;
+            renderedGroups.push({ ...g, shown: g.rows.slice(0, take) });
+            remaining -= take;
+          }
+          const shownTotal = MAX_HOME_ITEMS - remaining;
+          return (
+            <>
+              {renderedGroups.map((g) => (
+                <section key={g.key} className="index-group" data-recipe-group>
+                  <div className="index-group-head">
+                    <h3 className="index-group-title">
+                      {g.cat ? <CategoryIcon slug={g.cat} /> : null}
+                      {g.cat ? <a className="cat-heading-link" href={g.href}>{g.label}</a> : g.label}
+                    </h3>
+                    {g.rows.length > SECTION_CAP ? (
+                      <a className="see-all" href={g.href}>
+                        {d.seeAll}
+                        <ArrowUpRightIcon />
+                      </a>
+                    ) : null}
+                  </div>
+                  <ul className="discovery-list" data-recipe-list>
+                    {g.shown.map((r, i) => (
+                      <DiscoveryRowCard key={r.id} recipe={r} index={i} lang={lang} currentCountry={currentCountry} />
+                    ))}
+                  </ul>
+                </section>
+              ))}
+              {selected.length > shownTotal ? (
+                <p className="home-browse-all">
+                  <a className="discovery-cta-secondary" href={`/search${lq}`}>
+                    <SocialIcon name="search" />
+                    {d.browseAllCount.replace('{n}', String(selected.length))}
                   </a>
-                ) : null}
-              </div>
-              <ul className="discovery-list" data-recipe-list>
-                {g.rows.slice(0, SECTION_CAP).map((r, i) => renderRow(r, i, false))}
-              </ul>
-            </section>
-          ));
+                </p>
+              ) : null}
+            </>
+          );
         })()}
         <div className="empty-note empty-search-card" data-search-empty data-nothing-matches={d.nothingMatches} hidden>
           <EmptySkilletIllustration />
@@ -780,22 +995,35 @@ export function RecipeView({
   if (r.cookMinutes != null) timeItems.push({ kind: 'cook', label: t.timeCook, value: fmtMin(r.cookMinutes) });
   if (r.restMinutes != null) timeItems.push({ kind: 'rest', label: t.timeRest, value: fmtMin(r.restMinutes) });
   if (r.totalMinutes != null) timeItems.push({ kind: 'clock', label: t.timeTotal, value: fmtMin(r.totalMinutes) });
+  const lq = langQuery(lang);
+  const catHref = page.recipe.category ? `/recipes/${page.recipe.category}${lq}` : null;
   const crumbItems: { href?: string; label: string }[] = [
     { href: `/?lang=${lang}`, label: t.home },
   ];
-  if (cat && page.recipe.category) {
-    crumbItems.push({ href: `/?lang=${lang}&cat=${page.recipe.category}#recipes`, label: cat });
+  if (cat && catHref) {
+    crumbItems.push({ href: catHref, label: cat });
   }
   crumbItems.push({ label: page.locale.title });
   const recipeBasePath = recipePathFor(page.locale.country, page.locale.lang, page.locale.slug);
   const cardSvgPath = `${recipeBasePath}/card.svg`;
   const ogSvgPath = `${recipeBasePath}/og.svg`;
+  const saveMetaRecipe = {
+    id: r.id,
+    title: page.locale.title,
+    slug: page.locale.slug,
+    country: page.locale.country,
+    lang: page.locale.lang,
+    category: r.category,
+    totalMinutes: r.totalMinutes,
+    imageId: page.heroImage ? page.heroImage.url.split('/').pop() ?? null : null,
+    imageStyle: page.heroImage?.style ?? null,
+  };
   return (
     <main id="main" className="recipe-page">
       <Crumbs items={crumbItems} />
       <header className="recipe-header">
-        {cat && page.recipe.category ? (
-          <a className="recipe-eyebrow" href={`/?lang=${lang}&cat=${page.recipe.category}#recipes`}>
+        {cat && catHref ? (
+          <a className="recipe-eyebrow" href={catHref}>
             <CategoryIcon slug={page.recipe.category} />
             {cat}
           </a>
@@ -823,6 +1051,7 @@ export function RecipeView({
         <a href="#recipe" className="jump">
           {t.jumpToRecipe} &darr;
         </a>
+        <SaveButton recipe={saveMetaRecipe} lang={lang} withLabel />
         {canonicalUrl ? (
           <a href="#share-bar" className="share-jump">
             <SocialIcon name="share" />
@@ -836,10 +1065,10 @@ export function RecipeView({
           {t.cookMode}
         </button>
       </p>
-      {others.length > 0 || cat ? (
+      {others.length > 0 || (cat && catHref) ? (
         <p className="langs">
-          {cat ? (
-            <a className="chip" href={`/?lang=${lang}&cat=${page.recipe.category}#recipes`}>
+          {cat && catHref ? (
+            <a className="chip" href={catHref}>
               {cat}
             </a>
           ) : null}
@@ -1014,9 +1243,12 @@ export function RecipeView({
                         {fmtMin(rel.totalMinutes)}
                       </span>
                     ) : null}
-                    <span className="related-arrow" aria-hidden="true">
-                      <ArrowUpRightIcon />
-                    </span>
+                    <div className="row-end-actions">
+                      <SaveButton recipe={rel} lang={lang} />
+                      <span className="related-arrow" aria-hidden="true">
+                        <ArrowUpRightIcon />
+                      </span>
+                    </div>
                   </div>
                 </li>
               );
@@ -1053,6 +1285,628 @@ export function RecipeView({
 }
 
 // ---------------------------------------------------------------------------
+// Phase 3: Server-rendered /search, category/collection/cuisine hubs, /saved
+// ---------------------------------------------------------------------------
+
+const SEARCH_LABELS: Record<string, {
+  title: string; lead: string; placeholder: string; submit: string; apply: string;
+  catLabel: string; anyOption: string; timeLabel: string; times: Record<TimeBucket, string>;
+  dietLabel: string; diets: Record<DietTag, string>; cuisineLabel: string;
+  diffLabel: string; diffs: Record<DifficultyLevel, string>;
+  testedOnly: string; noOvenOnly: string;
+  dietNote: string; closestNote: string;
+  countOne: string; countMany: string; countZero: string;
+  didYouMean: string; showUnfiltered: string;
+  prev: string; next: string; pageOf: string;
+}> = {
+  en: {
+    title: 'Search recipes',
+    lead: 'Filter by category, cook time, diet, cuisine, difficulty, or stovetop method.',
+    placeholder: 'Search by recipe name, ingredient, or cuisine…',
+    submit: 'Search',
+    apply: 'Apply filters',
+    catLabel: 'Category',
+    anyOption: 'Any',
+    timeLabel: 'Total time',
+    times: { '15': '≤ 15 min', '30': '≤ 30 min', '60': '≤ 1 hour', '60plus': 'Over 1 hour' },
+    dietLabel: 'Diet (inferred)',
+    diets: { vegetarian: 'Vegetarian', vegan: 'Vegan', 'gluten-free': 'Gluten-free', 'dairy-free': 'Dairy-free' },
+    cuisineLabel: 'Cuisine',
+    diffLabel: 'Effort',
+    diffs: { easy: 'Easy', medium: 'Medium', project: 'Weekend project' },
+    testedOnly: 'Kitchen-tested only',
+    noOvenOnly: 'No oven needed',
+    dietNote: 'Diet and no-oven labels are inferred from listed ingredients and steps. Always check ingredient lines for allergies.',
+    closestNote: 'No exact match — closest title or category matches:',
+    countOne: '1 recipe found',
+    countMany: '{n} recipes found',
+    countZero: "Nothing matches '{q}' with those filters.",
+    didYouMean: 'Did you mean:',
+    showUnfiltered: 'Show {n} matches across all filters',
+    prev: 'Previous',
+    next: 'Next',
+    pageOf: 'Page {page} of {total}',
+  },
+  es: {
+    title: 'Buscar recetas',
+    lead: 'Filtra por categoría, tiempo, dieta, cocina, dificultad o preparación sin horno.',
+    placeholder: 'Busca por nombre, ingrediente o cocina…',
+    submit: 'Buscar',
+    apply: 'Aplicar filtros',
+    catLabel: 'Categoría',
+    anyOption: 'Todas',
+    timeLabel: 'Tiempo total',
+    times: { '15': '≤ 15 min', '30': '≤ 30 min', '60': '≤ 1 hora', '60plus': 'Más de 1 hora' },
+    dietLabel: 'Dieta (inferida)',
+    diets: { vegetarian: 'Vegetariana', vegan: 'Vegana', 'gluten-free': 'Sin gluten', 'dairy-free': 'Sin lácteos' },
+    cuisineLabel: 'Cocina',
+    diffLabel: 'Dificultad',
+    diffs: { easy: 'Fácil', medium: 'Media', project: 'De fin de semana' },
+    testedOnly: 'Solo probadas en cocina',
+    noOvenOnly: 'Sin horno',
+    dietNote: 'Las etiquetas de dieta y sin horno se infieren de los ingredientes y pasos. Revisa cada ingrediente en caso de alergias.',
+    closestNote: 'Sin coincidencias exactas — resultados más cercanos:',
+    countOne: '1 receta encontrada',
+    countMany: '{n} recetas encontradas',
+    countZero: "Nada coincide con '{q}' y estos filtros.",
+    didYouMean: 'Quizás quisiste decir:',
+    showUnfiltered: 'Ver {n} resultados sin filtros',
+    prev: 'Anterior',
+    next: 'Siguiente',
+    pageOf: 'Página {page} de {total}',
+  },
+  fr: {
+    title: 'Rechercher une recette',
+    lead: 'Filtrez par catégorie, durée, régime, cuisine, difficulté ou cuisson sans four.',
+    placeholder: 'Chercher un plat, un ingrédient ou une cuisine…',
+    submit: 'Chercher',
+    apply: 'Appliquer',
+    catLabel: 'Catégorie',
+    anyOption: 'Toutes',
+    timeLabel: 'Durée totale',
+    times: { '15': '≤ 15 min', '30': '≤ 30 min', '60': '≤ 1 heure', '60plus': 'Plus d’1 heure' },
+    dietLabel: 'Régime (déduit)',
+    diets: { vegetarian: 'Végétarien', vegan: 'Végan', 'gluten-free': 'Sans gluten', 'dairy-free': 'Sans lactose' },
+    cuisineLabel: 'Cuisine',
+    diffLabel: 'Niveau',
+    diffs: { easy: 'Facile', medium: 'Intermédiaire', project: 'Projet week-end' },
+    testedOnly: 'Testées en cuisine uniquement',
+    noOvenOnly: 'Sans four',
+    dietNote: 'Les filtres de régime et sans four sont déduits des ingrédients et étapes. Vérifiez toujours chaque ligne en cas d’allergie.',
+    closestNote: 'Aucune correspondance exacte — résultats les plus proches :',
+    countOne: '1 recette trouvée',
+    countMany: '{n} recettes trouvées',
+    countZero: 'Aucune recette pour « {q} » avec ces filtres.',
+    didYouMean: 'Vouliez-vous dire :',
+    showUnfiltered: 'Voir {n} résultats sans filtres',
+    prev: 'Précédent',
+    next: 'Suivant',
+    pageOf: 'Page {page} sur {total}',
+  },
+};
+
+export function buildSearchHref(lang: string, query: SearchQuery): string {
+  const params = new URLSearchParams();
+  if (lang && lang !== 'en') params.set('lang', lang);
+  if (query.q && query.q.trim()) params.set('q', query.q.trim());
+  if (query.cat) params.set('cat', query.cat);
+  if (query.time) params.set('time', query.time);
+  if (query.diet) params.set('diet', query.diet);
+  if (query.cuisine) params.set('cuisine', query.cuisine);
+  if (query.difficulty) params.set('difficulty', query.difficulty);
+  if (query.tested) params.set('tested', '1');
+  if (query.method) params.set('method', query.method);
+  if (query.page && query.page > 1) params.set('page', String(query.page));
+  const qsStr = params.toString();
+  return qsStr ? `/search?${qsStr}` : '/search';
+}
+
+export interface SearchPageProps {
+  lang: string;
+  query: SearchQuery;
+  result: SearchResult<RecipeRow>;
+  cuisines: { slug: string; label: string; count: number }[];
+  categories: string[];
+  savedIds?: ReadonlySet<string>;
+}
+
+export function SearchPage({ lang, query, result, cuisines, categories, savedIds }: SearchPageProps) {
+  const s = SEARCH_LABELS[lang] ?? SEARCH_LABELS.en!;
+  const t = uiStrings(lang);
+  const d = DISCOVERY[lang] ?? DISCOVERY.en!;
+  const lq = langQuery(lang);
+  const pills: { label: string; removeHref: string }[] = [];
+  if (query.cat) {
+    pills.push({ label: `${s.catLabel}: ${categoryLabel(query.cat, lang) ?? query.cat}`, removeHref: buildSearchHref(lang, { ...query, cat: null, page: 1 }) });
+  }
+  if (query.time) {
+    pills.push({ label: `${s.timeLabel}: ${s.times[query.time]}`, removeHref: buildSearchHref(lang, { ...query, time: null, page: 1 }) });
+  }
+  if (query.diet) {
+    pills.push({ label: s.diets[query.diet], removeHref: buildSearchHref(lang, { ...query, diet: null, page: 1 }) });
+  }
+  if (query.cuisine) {
+    const cLabel = cuisines.find((c) => c.slug === query.cuisine)?.label ?? query.cuisine;
+    pills.push({ label: `${s.cuisineLabel}: ${cLabel}`, removeHref: buildSearchHref(lang, { ...query, cuisine: null, page: 1 }) });
+  }
+  if (query.difficulty) {
+    pills.push({ label: `${s.diffLabel}: ${s.diffs[query.difficulty]}`, removeHref: buildSearchHref(lang, { ...query, difficulty: null, page: 1 }) });
+  }
+  if (query.method === 'no-oven') {
+    pills.push({ label: s.noOvenOnly, removeHref: buildSearchHref(lang, { ...query, method: null, page: 1 }) });
+  }
+  if (query.tested) {
+    pills.push({ label: s.testedOnly, removeHref: buildSearchHref(lang, { ...query, tested: false, page: 1 }) });
+  }
+  const hasFiltersOrQ = pills.length > 0 || Boolean(query.q?.trim());
+  const countText = result.total === 1 ? s.countOne : s.countMany.replace('{n}', String(result.total));
+  const emptyText = query.q?.trim() ? s.countZero.replace('{q}', query.q.trim()) : d.empty;
+
+  return (
+    <main className="wide discovery" id="main">
+      <section className="discovery-index search-page">
+        <Crumbs items={[{ href: `/${lq}`, label: t.home }, { label: s.title }]} />
+        <div className="index-heading">
+          <h1>{s.title}</h1>
+          <p>{s.lead}</p>
+        </div>
+        <form className="search-page-form" action="/search" method="get" role="search" data-search-page-form>
+          {lang !== 'en' ? <input type="hidden" name="lang" value={lang} /> : null}
+          <div className="search-main-row">
+            <label className="visually-hidden" htmlFor="sp-q">{s.title}</label>
+            <SocialIcon name="search" className="social-icon search-bar-icon" />
+            <input
+              id="sp-q"
+              type="search"
+              name="q"
+              defaultValue={query.q ?? ''}
+              placeholder={s.placeholder}
+              autoComplete="off"
+              enterKeyHint="search"
+            />
+            <button type="submit">{s.submit}</button>
+          </div>
+          <div className="search-filters" role="group" aria-label={t.filtersHeading}>
+            <label>
+              <span>{s.catLabel}</span>
+              <select name="cat" defaultValue={query.cat ?? ''}>
+                <option value="">{s.anyOption}</option>
+                {(categories.length ? categories : [...RECIPE_CATEGORY_SLUGS]).map((slug) => (
+                  <option key={slug} value={slug}>{categoryLabel(slug, lang) ?? slug}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>{s.timeLabel}</span>
+              <select name="time" defaultValue={query.time ?? ''}>
+                <option value="">{s.anyOption}</option>
+                {TIME_BUCKETS.map((b) => (
+                  <option key={b} value={b}>{s.times[b]}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>{s.dietLabel}</span>
+              <select name="diet" defaultValue={query.diet ?? ''}>
+                <option value="">{s.anyOption}</option>
+                {DIET_TAGS.map((tag) => (
+                  <option key={tag} value={tag}>{s.diets[tag]}</option>
+                ))}
+              </select>
+            </label>
+            {cuisines.length > 0 ? (
+              <label>
+                <span>{s.cuisineLabel}</span>
+                <select name="cuisine" defaultValue={query.cuisine ?? ''}>
+                  <option value="">{s.anyOption}</option>
+                  {cuisines.map((c) => (
+                    <option key={c.slug} value={c.slug}>{c.label} ({c.count})</option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+            <label>
+              <span>{s.diffLabel}</span>
+              <select name="difficulty" defaultValue={query.difficulty ?? ''}>
+                <option value="">{s.anyOption}</option>
+                {DIFFICULTY_LEVELS.map((lvl) => (
+                  <option key={lvl} value={lvl}>{s.diffs[lvl]}</option>
+                ))}
+              </select>
+            </label>
+            <label className="filter-check">
+              <input type="checkbox" name="method" value="no-oven" defaultChecked={query.method === 'no-oven'} />
+              <span>{s.noOvenOnly}</span>
+            </label>
+            <label className="filter-check">
+              <input type="checkbox" name="tested" value="1" defaultChecked={Boolean(query.tested)} />
+              <span>{s.testedOnly}</span>
+            </label>
+            <button type="submit" className="apply-filters-btn">{s.apply}</button>
+          </div>
+        </form>
+        {pills.length > 0 || hasFiltersOrQ ? (
+          <div className="filter-pills">
+            {pills.map((p) => (
+              <a key={p.label} className="chip active-filter-chip" href={p.removeHref}>
+                {p.label} <span aria-hidden="true">×</span>
+              </a>
+            ))}
+            {hasFiltersOrQ ? (
+              <a className="chip clear-filters-link" href={`/search${lq}`}>{t.clearFilters}</a>
+            ) : null}
+          </div>
+        ) : null}
+        {(query.diet || query.method === 'no-oven') ? (
+          <p className="inferred-note" role="note">{s.dietNote}</p>
+        ) : null}
+        <div className="search-results-bar">
+          <p className="search-count" role="status" aria-live="polite">{countText}</p>
+          <div className="view-toggle" role="group" aria-label={d.index} data-view-toggle>
+            <button type="button" data-view-btn="list" aria-pressed="true" title={t.viewList}>
+              <SocialIcon name="index" />
+              {t.viewList}
+            </button>
+            <button type="button" data-view-btn="grid" aria-pressed="false" title={t.viewGrid}>
+              <SocialIcon name="grid" />
+              {t.viewGrid}
+            </button>
+          </div>
+        </div>
+        {result.usedFuzzy && result.total > 0 ? (
+          <p className="closest-match-note">{s.closestNote}</p>
+        ) : null}
+        {result.items.length > 0 ? (
+          <ul className="discovery-list" data-recipe-list>
+            {result.items.map((r, i) => (
+              <DiscoveryRowCard
+                key={r.id}
+                recipe={r}
+                index={(result.page - 1) * result.pageSize + i}
+                lang={lang}
+                numbered
+                savedIds={savedIds}
+              />
+            ))}
+          </ul>
+        ) : (
+          <div className="empty-note empty-search-card">
+            <EmptySkilletIllustration />
+            <p>{emptyText}</p>
+            {result.unfilteredCount > 0 && query.q ? (
+              <p>
+                <a className="btn-clear" href={buildSearchHref(lang, { q: query.q })}>
+                  {s.showUnfiltered.replace('{n}', String(result.unfilteredCount))}
+                </a>
+              </p>
+            ) : null}
+            {result.suggestions.length > 0 ? (
+              <div>
+                <p className="suggestions-heading">{s.didYouMean}</p>
+                <ul className="suggestions-list">
+                  {result.suggestions.map((sug) => (
+                    <li key={sug.id}>
+                      <a href={recipePathFor(sug.country, sug.lang, sug.slug)}>{sug.title}</a>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            <div className="empty-actions">
+              <a className="btn-clear" href={`/search${lq}`}>{t.clearFilters}</a>
+              <a className="empty-share-link" href={`/account/recipes/new${lq}`}>
+                <SocialIcon name="plus" />
+                {t.emptyShareCta}
+              </a>
+            </div>
+          </div>
+        )}
+        {result.totalPages > 1 ? (
+          <nav className="pagination" aria-label={s.title}>
+            {result.page > 1 ? (
+              <a className="chip" href={buildSearchHref(lang, { ...query, page: result.page - 1 })}>&larr; {s.prev}</a>
+            ) : <span />}
+            <span className="pagination-info">{s.pageOf.replace('{page}', String(result.page)).replace('{total}', String(result.totalPages))}</span>
+            {result.page < result.totalPages ? (
+              <a className="chip" href={buildSearchHref(lang, { ...query, page: result.page + 1 })}>{s.next} &rarr;</a>
+            ) : <span />}
+          </nav>
+        ) : null}
+      </section>
+    </main>
+  );
+}
+
+export interface HubPageProps {
+  kind: 'category' | 'collection' | 'cuisine';
+  slug: string;
+  lang: string;
+  title: string;
+  intro: string;
+  iconSlug?: string | null;
+  heroImage?: { id: string; style: 'photo' | 'illustration' | 'graphic'; alt: string } | null;
+  marketHref?: string | null;
+  marketLabel?: string | null;
+  recipes: RecipeRow[];
+  searchHref: string;
+  relatedHubs: { href: string; label: string; count?: number }[];
+  savedIds?: ReadonlySet<string>;
+}
+
+export function HubPage({
+  kind,
+  lang,
+  title,
+  intro,
+  iconSlug,
+  heroImage,
+  marketHref,
+  marketLabel,
+  recipes,
+  searchHref,
+  relatedHubs,
+  savedIds,
+}: HubPageProps) {
+  const t = uiStrings(lang);
+  const d = DISCOVERY[lang] ?? DISCOVERY.en!;
+  const lq = langQuery(lang);
+  const parentCrumb =
+    kind === 'collection'
+      ? { href: `/collections${lq}`, label: t.collectionsNav }
+      : kind === 'cuisine'
+        ? { href: `/cuisine${lq}`, label: t.cuisinesNav }
+        : { href: `/recipes${lq}`, label: t.allRecipes };
+  return (
+    <main className="wide discovery" id="main">
+      <section className="discovery-index">
+        <Crumbs items={[{ href: `/${lq}`, label: t.home }, parentCrumb, { label: title }]} />
+        <header className="hub-hero">
+          <div className="hub-hero-copy">
+            <span className="eyebrow">
+              {iconSlug ? <CategoryIcon slug={iconSlug} /> : null}
+              {parentCrumb.label}
+            </span>
+            <h1>{title}</h1>
+            <p className="hub-intro">{intro}</p>
+            <div className="hub-actions">
+              <a className="chip" href={searchHref}>
+                <SocialIcon name="filter" />
+                {t.filtersHeading}
+              </a>
+              {marketHref && marketLabel ? (
+                <a className="chip" href={marketHref}>
+                  {marketLabel}
+                  <ArrowUpRightIcon />
+                </a>
+              ) : null}
+            </div>
+          </div>
+          {heroImage && asImageStyle(heroImage.style) ? (
+            <figure className="hub-hero-media">
+              <img src={`/img/recipe/${heroImage.id}`} alt={heroImage.alt} width="480" height="320" />
+              <figcaption>
+                {heroImage.style === 'illustration'
+                  ? t.imageLabelIllustration
+                  : heroImage.style === 'graphic'
+                    ? t.imageLabelGraphic
+                    : t.imageLabelPhoto}
+              </figcaption>
+            </figure>
+          ) : null}
+        </header>
+        {relatedHubs.length > 0 ? (
+          <nav className="cat-nav hub-related-nav" aria-label={parentCrumb.label}>
+            {relatedHubs.map((h) => (
+              <a key={h.href} className="chip" href={h.href}>
+                {h.label}{h.count != null ? ` (${h.count})` : ''}
+              </a>
+            ))}
+          </nav>
+        ) : null}
+        <div className="search-results-bar">
+          <p className="search-count">{recipes.length} {recipes.length === 1 ? t.recipeWord : t.recipesWord}</p>
+          <div className="view-toggle" role="group" aria-label={d.index} data-view-toggle>
+            <button type="button" data-view-btn="list" aria-pressed="true" title={t.viewList}>
+              <SocialIcon name="index" />
+              {t.viewList}
+            </button>
+            <button type="button" data-view-btn="grid" aria-pressed="false" title={t.viewGrid}>
+              <SocialIcon name="grid" />
+              {t.viewGrid}
+            </button>
+          </div>
+        </div>
+        {recipes.length > 0 ? (
+          <ul className="discovery-list" data-recipe-list>
+            {recipes.map((r, i) => (
+              <DiscoveryRowCard key={r.id} recipe={r} index={i} lang={lang} numbered savedIds={savedIds} />
+            ))}
+          </ul>
+        ) : (
+          <div className="empty-note empty-search-card">
+            <EmptySkilletIllustration />
+            <p>{t.emptyCategory}</p>
+            <div className="empty-actions">
+              <a className="empty-share-link" href={`/account/recipes/new${lq}`}>
+                <SocialIcon name="plus" />
+                {t.emptyShareCta}
+              </a>
+            </div>
+          </div>
+        )}
+      </section>
+    </main>
+  );
+}
+
+export interface HubDirectoryItem {
+  slug: string;
+  href: string;
+  label: string;
+  description: string;
+  count: number;
+  iconSlug?: string | null;
+}
+
+export function HubDirectoryPage({
+  lang,
+  title,
+  intro,
+  items,
+}: {
+  kind: 'collections' | 'cuisine';
+  lang: string;
+  title: string;
+  intro: string;
+  items: HubDirectoryItem[];
+}) {
+  const t = uiStrings(lang);
+  const lq = langQuery(lang);
+  return (
+    <main className="wide discovery" id="main">
+      <section className="discovery-index">
+        <Crumbs items={[{ href: `/${lq}`, label: t.home }, { label: title }]} />
+        <div className="index-heading">
+          <h1>{title}</h1>
+          <p>{intro}</p>
+        </div>
+        <ul className="hub-directory-grid">
+          {items.map((it) => (
+            <li key={it.slug} className="hub-directory-card">
+              <span className="eyebrow">
+                {it.iconSlug ? <CategoryIcon slug={it.iconSlug} /> : null}
+                {it.count} {it.count === 1 ? t.recipeWord : t.recipesWord}
+              </span>
+              <h2>
+                <a className="stretched" href={it.href}>{it.label}</a>
+              </h2>
+              <p>{it.description}</p>
+            </li>
+          ))}
+        </ul>
+      </section>
+    </main>
+  );
+}
+
+const SAVED_COPY: Record<string, {
+  title: string; leadAnon: string; leadSigned: string; syncPrompt: string; syncCta: string;
+  savedHeading: string; emptySaved: string; browseCta: string; removeLabel: string;
+  recentEmpty: string;
+}> = {
+  en: {
+    title: 'Saved recipes',
+    leadAnon: 'Recipes you tap with ♥ stay here on this browser even without an account.',
+    leadSigned: 'Signed in as {email}. Your saved recipes sync across devices.',
+    syncPrompt: 'Connect an email in My recipes to keep your saved list across devices.',
+    syncCta: 'Connect email to sync',
+    savedHeading: 'Saved bookmarks',
+    emptySaved: 'No saved recipes yet. Tap the ♥ heart on any recipe to bookmark it for later.',
+    browseCta: 'Browse recipes',
+    removeLabel: 'Remove',
+    recentEmpty: 'Recipes you open appear here automatically for quick backtracking while cooking.',
+  },
+  es: {
+    title: 'Recetas guardadas',
+    leadAnon: 'Las recetas que marques con ♥ se guardan en este navegador incluso sin cuenta.',
+    leadSigned: 'Sesión iniciada como {email}. Tus recetas guardadas se sincronizan entre dispositivos.',
+    syncPrompt: 'Conecta un correo en Mis recetas para conservar tu lista en otros dispositivos.',
+    syncCta: 'Conectar correo para sincronizar',
+    savedHeading: 'Marcadas con ♥',
+    emptySaved: 'Aún no tienes recetas guardadas. Toca el ♥ en cualquier receta para guardarla.',
+    browseCta: 'Explorar recetas',
+    removeLabel: 'Quitar',
+    recentEmpty: 'Las recetas que abras aparecerán aquí para volver rápido mientras cocinas.',
+  },
+  fr: {
+    title: 'Recettes enregistrées',
+    leadAnon: 'Les recettes marquées d’un ♥ restent ici dans ce navigateur, même sans compte.',
+    leadSigned: 'Connecté en tant que {email}. Vos recettes enregistrées sont synchronisées sur vos appareils.',
+    syncPrompt: 'Reliez votre e-mail dans Mes recettes pour retrouver vos favoris sur tous vos appareils.',
+    syncCta: 'Relier un e-mail',
+    savedHeading: 'Favoris ♥',
+    emptySaved: 'Aucune recette enregistrée pour le moment. Touchez ♥ sur n’importe quelle recette pour la garder.',
+    browseCta: 'Explorer les recettes',
+    removeLabel: 'Retirer',
+    recentEmpty: 'Les recettes que vous ouvrez s’affichent ici pour y revenir vite pendant la cuisine.',
+  },
+};
+
+export function SavedPage({
+  lang,
+  signedIn,
+  userEmail,
+  recipes,
+  savedIds,
+}: {
+  lang: string;
+  signedIn: boolean;
+  userEmail?: string | null;
+  recipes: RecipeRow[];
+  savedIds: string[];
+}) {
+  const c = SAVED_COPY[lang] ?? SAVED_COPY.en!;
+  const t = uiStrings(lang);
+  const lq = langQuery(lang);
+  const savedSet = new Set(savedIds);
+  return (
+    <main className="wide discovery" id="main" data-saved-page data-signed-in={signedIn ? '1' : '0'}>
+      <section className="discovery-index">
+        <Crumbs items={[{ href: `/${lq}`, label: t.home }, { label: c.title }]} />
+        <div className="index-heading">
+          <h1>{c.title}</h1>
+          <p>{signedIn && userEmail ? c.leadSigned.replace('{email}', userEmail) : c.leadAnon}</p>
+        </div>
+        {!signedIn ? (
+          <div className="saved-sync-banner" data-sync-banner>
+            <p>{c.syncPrompt}</p>
+            <a className="discovery-cta-secondary" href={`/account${lq ? `${lq}&next=%2Fsaved` : '?next=%2Fsaved'}`}>
+              {c.syncCta}
+            </a>
+          </div>
+        ) : null}
+        <section className="saved-section">
+          <h2>{c.savedHeading}</h2>
+          {signedIn ? (
+            recipes.length > 0 ? (
+              <ul className="discovery-list" data-recipe-list data-saved-server-list>
+                {recipes.map((r, i) => (
+                  <DiscoveryRowCard key={r.id} recipe={r} index={i} lang={lang} numbered savedIds={savedSet} />
+                ))}
+              </ul>
+            ) : (
+              <div className="empty-note empty-search-card">
+                <EmptySkilletIllustration />
+                <p>{c.emptySaved}</p>
+                <div className="empty-actions">
+                  <a className="empty-share-link" href={`/search${lq}`}>{c.browseCta}</a>
+                </div>
+              </div>
+            )
+          ) : (
+            <div data-saved-local-root data-empty-text={c.emptySaved} data-browse-href={`/search${lq}`} data-browse-label={c.browseCta} data-remove-label={c.removeLabel}>
+              <div className="empty-note empty-search-card">
+                <EmptySkilletIllustration />
+                <p>{c.emptySaved}</p>
+                <div className="empty-actions">
+                  <a className="empty-share-link" href={`/search${lq}`}>{c.browseCta}</a>
+                </div>
+              </div>
+            </div>
+          )}
+        </section>
+        <section className="saved-section recent-section">
+          <h2>{t.recentlyViewed}</h2>
+          <div data-recent-local-root data-empty-text={c.recentEmpty}>
+            <p className="empty-note">{c.recentEmpty}</p>
+          </div>
+        </section>
+      </section>
+    </main>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Static pages (localized by active lang instead of stacking 3 languages)
 // ---------------------------------------------------------------------------
 
@@ -1061,8 +1915,8 @@ export function PrivacyView({ lang = 'en' }: { lang?: string }) {
     return (
       <main id="main">
         <h1>Privacidad</h1>
-        <p>No necesitas iniciar sesi&oacute;n para leer recetas y leer no usa cookies. Si cambias entre unidades de EE. UU. y m&eacute;tricas o eliges tema claro/oscuro, tu preferencia se guarda en tu propio navegador (almacenamiento local, claves &quot;2y-units&quot; y &quot;2y-theme&quot;) para recordarla. Se queda en tu dispositivo y no se nos env&iacute;a.</p>
-        <p>Si creas una cuenta para enviar una receta, guardamos tu correo electr&oacute;nico, el nombre de autor que elijas y los borradores que guardes. Para iniciar sesi&oacute;n enviamos un c&oacute;digo de 6 d&iacute;gitos a tu correo mediante el servicio Resend; el c&oacute;digo se guarda solo como hash. Al iniciar sesi&oacute;n se usa una cookie de sesi&oacute;n (&quot;__Host-2y_sid&quot;, HttpOnly, hasta 30 d&iacute;as) que te mantiene conectado en ese navegador, y solo guardamos un hash de su valor. Los borradores son privados hasta que los env&iacute;es para revisi&oacute;n. Nada de lo que env&iacute;es se publica autom&aacute;ticamente. Si subes una foto opcional del plato, se redimensiona en tu dispositivo para quitar metadatos de ubicaci&oacute;n, se guarda de forma privada junto al borrador, solo se publica tras revisi&oacute;n y aprobaci&oacute;n expl&iacute;cita, y se elimina cuando la quitas o borras el borrador.</p>
+        <p>No necesitas iniciar sesi&oacute;n para leer recetas y leer no usa cookies. Si cambias entre unidades de EE. UU. y m&eacute;tricas, eliges tema claro/oscuro, guardas recetas favoritas o abres recetas recientes sin cuenta, tus preferencias se guardan solo en tu propio navegador (almacenamiento local, claves &quot;2y-units&quot;, &quot;2y-theme&quot;, &quot;2y-saved&quot;, &quot;2y-recent&quot; y &quot;2y-recent-q&quot;). Se quedan en tu dispositivo y no se env&iacute;an hasta que inicies sesi&oacute;n y elijas sincronizarlas.</p>
+        <p>Si creas una cuenta para enviar o sincronizar recetas, guardamos tu correo electr&oacute;nico, el nombre de autor que elijas, tus recetas marcadas como guardadas y los borradores que guardes. Para iniciar sesi&oacute;n enviamos un c&oacute;digo de 6 d&iacute;gitos a tu correo mediante el servicio Resend; el c&oacute;digo se guarda solo como hash. Al iniciar sesi&oacute;n se usa una cookie de sesi&oacute;n (&quot;__Host-2y_sid&quot;, HttpOnly, hasta 30 d&iacute;as) que te mantiene conectado en ese navegador, y solo guardamos un hash de su valor. Los borradores son privados hasta que los env&iacute;es para revisi&oacute;n. Nada de lo que env&iacute;es se publica autom&aacute;ticamente. Si subes una foto opcional del plato, se redimensiona en tu dispositivo para quitar metadatos de ubicaci&oacute;n, se guarda de forma privada junto al borrador, solo se publica tras revisi&oacute;n y aprobaci&oacute;n expl&iacute;cita, y se elimina cuando la quitas o borras el borrador.</p>
         <p>Cuando una b&uacute;squeda de recetas no encuentra nada, guardamos las palabras buscadas, el idioma de la p&aacute;gina y la hora (sin cuenta, direcci&oacute;n IP ni cookie) para saber qu&eacute; recetas faltan. Mientras escribes una receta, una copia sin guardar y tu elecci&oacute;n de vista de lista o tarjetas tambi&eacute;n pueden quedar en el almacenamiento local de tu navegador para no perder nada si la p&aacute;gina se recarga; esa copia se queda en tu dispositivo.</p>
         <p>Medimos visitas y velocidad de p&aacute;gina con Cloudflare Web Analytics. Seg&uacute;n Cloudflare, este servicio de anal&iacute;tica no usa cookies ni almacenamiento local, no identifica a los visitantes y no recopila datos personales para estad&iacute;sticas.</p>
       </main>
@@ -1072,8 +1926,8 @@ export function PrivacyView({ lang = 'en' }: { lang?: string }) {
     return (
       <main id="main">
         <h1>Confidentialit&eacute;</h1>
-        <p>Vous n&apos;avez pas besoin de vous connecter pour lire les recettes, et la lecture ne d&eacute;pose aucun cookie. Si vous changez d&apos;unit&eacute;s ou de th&egrave;me clair/sombre, votre choix reste uniquement dans le stockage local de votre navigateur (&laquo; 2y-units &raquo;, &laquo; 2y-theme &raquo;).</p>
-        <p>Si vous cr&eacute;ez un compte pour proposer une recette, nous conservons votre adresse e-mail, le nom d&apos;auteur choisi et vos brouillons priv&eacute;s. La connexion utilise un code &agrave; 6 chiffres envoy&eacute; via Resend (stock&eacute; uniquement sous forme de hachage) et un cookie de session (&laquo; __Host-2y_sid &raquo;, HttpOnly, 30 jours maximum). Rien de ce que vous envoyez n&apos;est publi&eacute; automatiquement. Si vous ajoutez une photo facultative du plat, elle est redimensionn&eacute;e sur votre appareil pour retirer les m&eacute;tadonn&eacute;es de localisation, conserv&eacute;e en priv&eacute; avec votre brouillon, publi&eacute;e uniquement apr&egrave;s examen et approbation explicite, et supprim&eacute;e si vous la retirez ou effacez le brouillon.</p>
+        <p>Vous n&apos;avez pas besoin de vous connecter pour lire les recettes, et la lecture ne d&eacute;pose aucun cookie. Si vous changez d&apos;unit&eacute;s, de th&egrave;me clair/sombre, enregistrez des recettes en favoris ou consultez votre historique r&eacute;cent sans compte, ces donn&eacute;es restent dans le stockage local de votre navigateur (&laquo; 2y-units &raquo;, &laquo; 2y-theme &raquo;, &laquo; 2y-saved &raquo;, &laquo; 2y-recent &raquo;, &laquo; 2y-recent-q &raquo;).</p>
+        <p>Si vous cr&eacute;ez un compte pour proposer ou synchroniser des recettes, nous conservons votre adresse e-mail, le nom d&apos;auteur choisi, vos favoris enregistr&eacute;s et vos brouillons priv&eacute;s. La connexion utilise un code &agrave; 6 chiffres envoy&eacute; via Resend (stock&eacute; uniquement sous forme de hachage) et un cookie de session (&laquo; __Host-2y_sid &raquo;, HttpOnly, 30 jours maximum). Rien de ce que vous envoyez n&apos;est publi&eacute; automatiquement. Si vous ajoutez une photo facultative du plat, elle est redimensionn&eacute;e sur votre appareil pour retirer les m&eacute;tadonn&eacute;es de localisation, conserv&eacute;e en priv&eacute; avec votre brouillon, publi&eacute;e uniquement apr&egrave;s examen et approbation explicite, et supprim&eacute;e si vous la retirez ou effacez le brouillon.</p>
         <p>Quand une recherche de recette ne trouve rien, nous enregistrons les mots cherch&eacute;s, la langue de la page et l&apos;heure (sans compte, adresse IP ni cookie) pour savoir quelles recettes manquent. Pendant que vous r&eacute;digez une recette, une copie non enregistr&eacute;e et votre choix d&apos;affichage liste ou cartes peuvent aussi rester dans le stockage local de votre navigateur, pour ne rien perdre si la page se recharge ; cette copie reste sur votre appareil.</p>
         <p>Nous mesurons les pages vues et la vitesse avec Cloudflare Web Analytics, un service sans cookies ni suivi individuel.</p>
       </main>
@@ -1082,8 +1936,8 @@ export function PrivacyView({ lang = 'en' }: { lang?: string }) {
   return (
     <main id="main">
       <h1>Privacy</h1>
-      <p>You do not need to sign in to read recipes, and reading sets no cookies. If you switch between US and metric units or choose a light/dark theme, your choice is saved in your own browser (local storage, keys &quot;2y-units&quot; and &quot;2y-theme&quot;) so the page remembers it. It stays on your device and is not sent to us.</p>
-      <p>If you create an account to send in a recipe, we store your email address, the author name you choose, and the recipe drafts you save. Signing in uses a 6-digit code sent to your email through the email service Resend; the code is stored only as a hash. Signing in sets one session cookie (&quot;__Host-2y_sid&quot;, HttpOnly, up to 30 days) that keeps you signed in on that browser, and we store only a hash of its value. Signing out ends that session. Drafts are private to you until you send one in for review. Nothing you send in is published automatically. If you attach an optional dish photo to a draft, it is resized on your device to strip camera metadata, stored privately with the draft, published only after explicit review approval, and deleted when you remove it or delete the draft.</p>
+      <p>You do not need to sign in to read recipes, and reading sets no cookies. If you switch between US and metric units, choose a light/dark theme, bookmark recipes, or view recent searches and recipes without an account, that state stays in your own browser (local storage, keys &quot;2y-units&quot;, &quot;2y-theme&quot;, &quot;2y-saved&quot;, &quot;2y-recent&quot;, and &quot;2y-recent-q&quot;). It stays on your device and is never sent to us unless you sign in and sync saved bookmarks.</p>
+      <p>If you create an account to send in a recipe or sync bookmarks, we store your email address, the author name you choose, your saved recipe bookmarks, and the recipe drafts you save. Signing in uses a 6-digit code sent to your email through the email service Resend; the code is stored only as a hash. Signing in sets one session cookie (&quot;__Host-2y_sid&quot;, HttpOnly, up to 30 days) that keeps you signed in on that browser, and we store only a hash of its value. Signing out ends that session. Drafts are private to you until you send one in for review. Nothing you send in is published automatically. If you attach an optional dish photo to a draft, it is resized on your device to strip camera metadata, stored privately with the draft, published only after explicit review approval, and deleted when you remove it or delete the draft.</p>
       <p>When a recipe search finds nothing, we record the search words, the page language and the time (no account, IP address or cookie) so we know which recipes people are missing. While you write a recipe, an unsaved copy and your list or card view choice can also be kept in your browser&apos;s local storage so nothing is lost if the page reloads; that copy stays on your device.</p>
       <p>We measure page views and page speed with Cloudflare Web Analytics. Per Cloudflare, this analytics service does not use cookies or local storage, does not fingerprint visitors, and does not collect personal data for analytics. We use the counts only to see which pages people read.</p>
     </main>
