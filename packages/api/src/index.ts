@@ -33,6 +33,7 @@ import {
   inferDifficulty,
   searchCatalog,
   suggestCatalog,
+  parseHaveParam,
   type SearchQuery,
   type RecipePage,
   asImageStyle,
@@ -64,7 +65,7 @@ import type { ImageStyle } from '@2yolks/contracts';
 import { recipeSlugAliases, createDb, recipes, recipeLocales, recipeImages, sources, published, imageCleared, searchGapLogs, recipeTestReports } from './db';
 import { appApi } from './appapi';
 import { mcpApp, getMcpManifest } from './mcp';
-import { accountApp, readSessionUser, loadSavedRecipeIds, SESSION_COOKIE, type AccountBindings } from './account';
+import { accountApp, readSessionUser, loadSavedRecipeIds, loadTopSearchGaps, SESSION_COOKIE, type AccountBindings } from './account';
 import { build2YolksZelutoLinks, zeluto2YolksSyncApp } from './zeluto';
 
 type Bindings = {
@@ -886,10 +887,12 @@ app.get('/search', async (c) => {
   const difficulty = isDifficultyLevel(rawDiff) ? rawDiff : null;
   const tested = c.req.query('tested') === '1';
   const method = c.req.query('method') === 'no-oven' ? 'no-oven' : null;
+  const rawHave = c.req.queries('have') ?? (c.req.query('have') ? [c.req.query('have')!] : []);
+  const have = parseHaveParam(rawHave);
   const parsedPage = Number.parseInt(c.req.query('page') ?? '1', 10);
   const pageNum = Number.isFinite(parsedPage) && parsedPage >= 1 ? Math.min(200, parsedPage) : 1;
 
-  const query: SearchQuery = { q, cat, time, diet, cuisine, difficulty, tested, method, page: pageNum };
+  const query: SearchQuery = { q, cat, time, diet, cuisine, difficulty, tested, method, have, page: pageNum };
   const db = createDb(c.env.DB);
   const selected = discoveryRecipes(await loadDiscoveryRecipeRows(db, demoAllowed(c)), lang);
   const result = searchCatalog(selected, query, lang);
@@ -904,13 +907,19 @@ app.get('/search', async (c) => {
     } catch { /* gap logging must never fail search */ }
   }
 
+  let missingPrompts: string[] = [];
+  if (result.total === 0) {
+    const rawGaps = await loadTopSearchGaps(c.env.DB, lang, 5, selected);
+    missingPrompts = rawGaps.filter((g) => g.toLowerCase() !== q.toLowerCase()).slice(0, 4);
+  }
+
   const cuisines = availableCuisines(selected, lang);
   const categories = [...new Set(selected.map((r) => r.category).filter((x): x is string => Boolean(x)))];
   const nav = await siteNav(db, demoAllowed(c), lang, new URL(c.req.url));
   const origin = c.env.CANONICAL_ORIGIN ?? new URL(c.req.url).origin;
-  const noindex = result.total === 0 || result.page > result.totalPages;
+  const noindex = result.total === 0 || result.page > result.totalPages || have.length > 0;
   return c.html(
-    renderSearchPage({ lang, query, result, cuisines, categories }, nav, origin),
+    renderSearchPage({ lang, query, result, cuisines, categories, missingPrompts }, nav, origin),
     200,
     noindex ? { 'x-robots-tag': 'noindex' } : undefined,
   );

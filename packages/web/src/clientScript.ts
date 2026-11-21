@@ -111,6 +111,92 @@ export const GLOBAL_CHROME_SCRIPT = `(function () {
     });
   }
 
+  // --- 2b. Cook with what you have pantry picker on /search (Q6) ------------
+  var pantryPicker = document.querySelector ? document.querySelector('[data-pantry-picker]') : null;
+  if (pantryPicker) {
+    var haveInput = pantryPicker.querySelector('[data-have-input]') || (spForm && spForm.querySelector('[data-have-input]'));
+    var pantryChips = qsa(pantryPicker, '[data-pantry-chip]');
+    var pantrySelected = pantryPicker.querySelector('[data-pantry-selected]');
+    var pantryAddInput = pantryPicker.querySelector('[data-pantry-add-input]');
+    var pantryAddBtn = pantryPicker.querySelector('[data-pantry-add-btn]');
+    var pantryStatus = pantryPicker.querySelector('[data-pantry-status]');
+    var maxItems = 5;
+    function normHave(s) {
+      return String(s || '').trim().replace(/\\s+/g, ' ').toLowerCase();
+    }
+    var pantryList = haveInput && haveInput.value
+      ? haveInput.value.split(',').map(function (s) { return s.trim().replace(/\\s+/g, ' '); }).filter(Boolean).slice(0, maxItems)
+      : [];
+    function renderPantryState() {
+      if (haveInput) haveInput.value = pantryList.join(',');
+      pantryChips.forEach(function (chip) {
+        var key = normHave(chip.getAttribute('data-pantry-chip') || chip.textContent);
+        var active = pantryList.some(function (x) { return normHave(x) === key; });
+        chip.setAttribute('aria-pressed', active ? 'true' : 'false');
+      });
+      if (pantrySelected) {
+        while (pantrySelected.firstChild) pantrySelected.removeChild(pantrySelected.firstChild);
+        pantrySelected.hidden = pantryList.length === 0;
+        pantryList.forEach(function (item) {
+          var b = document.createElement('button');
+          b.type = 'button';
+          b.className = 'pantry-selected-pill';
+          b.setAttribute('data-pantry-remove', item);
+          b.textContent = item + ' ×';
+          b.addEventListener('click', function () {
+            pantryList = pantryList.filter(function (x) { return normHave(x) !== normHave(item); });
+            if (pantryStatus) pantryStatus.hidden = true;
+            renderPantryState();
+          });
+          pantrySelected.appendChild(b);
+        });
+      }
+    }
+    function togglePantryItem(rawItem, addOnly) {
+      var clean = String(rawItem || '').trim().replace(/\\s+/g, ' ');
+      if (clean.length < 2 || clean.length > 32) return;
+      var k = normHave(clean);
+      var exists = pantryList.some(function (x) { return normHave(x) === k; });
+      if (exists) {
+        if (!addOnly) pantryList = pantryList.filter(function (x) { return normHave(x) !== k; });
+        if (pantryStatus) pantryStatus.hidden = true;
+        renderPantryState();
+        return;
+      }
+      if (pantryList.length >= maxItems) {
+        if (pantryStatus) {
+          pantryStatus.textContent = pantryPicker.getAttribute('data-max-msg') || 'Pick up to 5 ingredients.';
+          pantryStatus.hidden = false;
+        }
+        return;
+      }
+      pantryList.push(clean);
+      if (pantryStatus) pantryStatus.hidden = true;
+      renderPantryState();
+    }
+    pantryChips.forEach(function (chip) {
+      chip.addEventListener('click', function (e) {
+        e.preventDefault();
+        togglePantryItem(chip.getAttribute('data-pantry-chip') || chip.textContent, false);
+      });
+    });
+    function addCustomPantry() {
+      if (!pantryAddInput) return;
+      togglePantryItem(pantryAddInput.value, true);
+      pantryAddInput.value = '';
+    }
+    if (pantryAddBtn) pantryAddBtn.addEventListener('click', addCustomPantry);
+    if (pantryAddInput) {
+      pantryAddInput.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          addCustomPantry();
+        }
+      });
+    }
+    renderPantryState();
+  }
+
   // --- 3. Save ♥ (bookmarks) + Recently Viewed + optional server sync --------
   var SAVED_KEY = '2y-saved';
   var RECENT_KEY = '2y-recent';
@@ -676,6 +762,8 @@ export const DISCOVERY_CLIENT_SCRIPT = `(function () {
   var emptyMsg = document.querySelector('[data-empty-msg]');
   var emptySuggestions = document.querySelector('[data-empty-suggestions]');
   var suggestionsList = document.querySelector('[data-suggestions-list]');
+  var emptyShareLink = emptyEl && emptyEl.querySelector ? emptyEl.querySelector('[data-empty-share-link]') : null;
+  var baseShareHref = emptyShareLink ? (emptyShareLink.getAttribute('data-base-href') || emptyShareLink.getAttribute('href') || '/account/recipes/new') : '/account/recipes/new';
 
   function norm(s) {
     return (s || '')
@@ -838,6 +926,7 @@ export const DISCOVERY_CLIENT_SCRIPT = `(function () {
     if (!q) {
       if (closestNote) closestNote.hidden = true;
       if (emptyEl) emptyEl.hidden = true;
+      if (emptyShareLink) emptyShareLink.setAttribute('href', baseShareHref);
       records.forEach(function (r) {
         r.el.hidden = false;
         var num = r.el.querySelector('.recipe-number');
@@ -861,6 +950,7 @@ export const DISCOVERY_CLIENT_SCRIPT = `(function () {
 
     if (matched.length > 0) {
       if (emptyEl) emptyEl.hidden = true;
+      if (emptyShareLink) emptyShareLink.setAttribute('href', baseShareHref);
       if (closestNote) {
         closestNote.hidden = !usedFuzzy;
       }
@@ -920,6 +1010,10 @@ export const DISCOVERY_CLIENT_SCRIPT = `(function () {
           } else {
             emptySuggestions.hidden = true;
           }
+        }
+        if (emptyShareLink && rawQ) {
+          var sep = baseShareHref.indexOf('?') === -1 ? '?' : '&';
+          emptyShareLink.setAttribute('href', baseShareHref + sep + 'prompt=' + encodeURIComponent(rawQ));
         }
       }
       reportZeroMatch(rawQ);
@@ -1425,6 +1519,58 @@ function mergeIngredientLine(text, answer, target) {
   var cur = src.replace(/\s+$/, '');
   return cur ? cur + '\n' + ans : ans;
 }
+var CAPTURE_UNITS_MAP = {
+  g:1,kg:1,mg:1,ml:1,cl:1,dl:1,l:1,oz:1,lb:1,lbs:1,
+  cup:1,cups:1,tbsp:1,tbsps:1,tablespoon:1,tablespoons:1,
+  tsp:1,tsps:1,teaspoon:1,teaspoons:1,
+  taza:1,tazas:1,cda:1,cdas:1,cucharada:1,cucharadas:1,
+  cdta:1,cdtas:1,cucharadita:1,cucharaditas:1,
+  tasse:1,tasses:1,
+  pinch:1,pinches:1,pizca:1,pizcas:1,pincee:1,
+  clove:1,cloves:1,diente:1,dientes:1,gousse:1,gousses:1,
+  can:1,cans:1,lata:1,latas:1,
+  slice:1,slices:1,piece:1,pieces:1,pieza:1,piezas:1,
+  bunch:1,manojo:1,sprig:1,sprigs:1,rama:1,ramas:1
+};
+var CAPTURE_QTY_RE = /^\s*((?:\d+\s+\d+\/\d+|\d+\/\d+|\d+(?:[.,]\d+)?|[\u00BC-\u00BE\u2150-\u215E])(?:\s*[-\u2013]\s*(?:\d+\s+\d+\/\d+|\d+\/\d+|\d+(?:[.,]\d+)?|[\u00BC-\u00BE\u2150-\u215E]))?)\s*(.*)$/;
+function normUnitKey(s) {
+  return String(s || '').toLowerCase().replace(/\u00e9|\u00e8|\u00ea/g, 'e').replace(/[^a-z]/g, '');
+}
+function parseIngRow(line) {
+  var cleaned = String(line == null ? '' : line).replace(/^\s*(?:[-*\u2022\u00B7]\s+)/, '').replace(/\s+/g, ' ').trim();
+  if (!cleaned) return { isSection: false, qty: '', unit: '', item: '' };
+  if (!CAPTURE_QTY_RE.test(cleaned)) {
+    var sec = /^(?:#+\s*(.+?)\s*|\[(.+?)\]|([A-Za-z\u00C0-\u024F][^0-9,;]{1,48}):)$/.exec(cleaned);
+    if (sec) {
+      var heading = (sec[1] || sec[2] || sec[3] || '').replace(/:+$/, '').trim();
+      if (heading) return { isSection: true, qty: '', unit: '', item: heading };
+    }
+  }
+  var qm = CAPTURE_QTY_RE.exec(cleaned);
+  if (!qm) return { isSection: false, qty: '', unit: '', item: cleaned };
+  var qty = qm[1].replace(/\s+/g, ' ').trim();
+  var rest = (qm[2] || '').trim();
+  var unit = '';
+  var um = /^([A-Za-z\u00C0-\u024F]+)\.?(?=\s|$)\s*(.*)$/.exec(rest);
+  if (um && CAPTURE_UNITS_MAP[normUnitKey(um[1])]) {
+    unit = um[1];
+    rest = (um[2] || '').trim().replace(/^of\s+/i, '');
+  }
+  return { isSection: false, qty: qty, unit: unit, item: rest };
+}
+function formatIngRow(row) {
+  if (!row) return '';
+  var item = String(row.item == null ? '' : row.item).replace(/\s+/g, ' ').trim();
+  if (row.isSection) {
+    var h = item.replace(/:+$/, '').trim();
+    return h ? h + ':' : '';
+  }
+  var parts = [];
+  if (row.qty && String(row.qty).trim()) parts.push(String(row.qty).trim());
+  if (row.unit && String(row.unit).trim()) parts.push(String(row.unit).trim());
+  if (item) parts.push(item);
+  return parts.join(' ');
+}
 `;
 
 export const CAPTURE_CLIENT_SCRIPT = `(function () {
@@ -1585,6 +1731,15 @@ ${CAPTURE_HELPERS_JS}
     });
   }
 
+  var syncBuildersFromForm = null;
+  function updateLineCounter(sel, count) {
+    var el = form.querySelector ? form.querySelector(sel) : null;
+    if (!el) return;
+    var tpl = el.getAttribute('data-tpl') || '{n} / {max} lines';
+    el.textContent = tpl.replace('{n}', String(count)).replace('{max}', '80');
+    if (el.classList && typeof el.classList.toggle === 'function') el.classList.toggle('is-over', count > 80);
+  }
+
   function run() {
     var T = ALL[lang()];
     localizeChrome();
@@ -1592,6 +1747,7 @@ ${CAPTURE_HELPERS_JS}
     var title = (field('title').value || '').trim();
     set('title', title.length >= 3 ? 'ok' : title.length ? 'todo' : 'idle', T.title);
     var ings = lines(field('ingredients').value || '');
+    updateLineCounter('[data-ing-counter]', ings.length);
     set('ingredients', ings.length > 0 ? 'ok' : 'idle', T.ingredients);
     if (ings.length === 0) {
       set('qty', 'idle', T.qty_ok);
@@ -1599,12 +1755,13 @@ ${CAPTURE_HELPERS_JS}
     } else {
       // Leading amount only: a digit or unicode fraction at the START of the
       // line. 'stock for 2 people' does not count; '½ onion' does.
-      var noQty = ings.filter(function (l) { return !/^[0-9\\u00BC-\\u00BE\\u2150-\\u215E]/.test(l); }).length;
+      var noQty = ings.filter(function (l) { return !parseIngRow(l).isSection && !/^[0-9\\u00BC-\\u00BE\\u2150-\\u215E]/.test(l); }).length;
       set('qty', noQty === 0 ? 'ok' : 'todo', noQty === 0 ? T.qty_ok : T.qty_todo.replace('##', String(noQty)));
       var cups = ings.filter(function (l) { return /\\b(cups?|tazas?|tasses?)\\b/i.test(l); }).length;
       set('cups', cups === 0 ? 'ok' : 'todo', cups === 0 ? T.cups_ok : T.cups_todo);
     }
     var steps = lines(field('steps').value || '');
+    updateLineCounter('[data-step-counter]', steps.length);
     set('steps', steps.length > 0 ? 'ok' : 'idle', T.steps);
     var sv = (field('servings').value || '').trim();
     set('servings', sv === '' ? 'idle' : Number(sv) > 0 ? 'ok' : 'todo', sv === '' ? T.servings_ok : Number(sv) > 0 ? T.servings_ok : T.servings_bad);
@@ -1618,7 +1775,14 @@ ${CAPTURE_HELPERS_JS}
 
   var FIELDS = ['category', 'title', 'locale', 'intro', 'ingredients', 'steps', 'prep', 'cook', 'servings', 'display_name', 'source_kind', 'source_url'];
   var idEl = form.querySelector('input[name="id"]');
-  var KEY = DRAFT_PREFIX + (idEl && idEl.value ? idEl.value : 'new');
+  var keySuffix = idEl && idEl.value ? idEl.value : 'new';
+  if (!(idEl && idEl.value) && W && W.location && W.location.search) {
+    var rmM = /[?&]remix=([A-Za-z0-9_-]+)/.exec(W.location.search);
+    var prM = !rmM ? /[?&]prompt=([^&#]+)/.exec(W.location.search) : null;
+    if (rmM) keySuffix = 'remix:' + rmM[1];
+    else if (prM) { try { keySuffix = 'prompt:' + decodeURIComponent(prM[1]).slice(0, 32); } catch (eP) {} }
+  }
+  var KEY = DRAFT_PREFIX + keySuffix;
   function readForm() {
     var o = {};
     FIELDS.forEach(function (n) { var el = field(n); if (el) o[n] = el.value; });
@@ -1626,6 +1790,7 @@ ${CAPTURE_HELPERS_JS}
   }
   function writeForm(o) {
     FIELDS.forEach(function (n) { var el = field(n); if (el && typeof o[n] === 'string') el.value = o[n]; });
+    if (syncBuildersFromForm) syncBuildersFromForm();
     run();
   }
   var saveTimer = null;
@@ -1772,6 +1937,7 @@ ${CAPTURE_HELPERS_JS}
           ['title', 'intro', 'ingredients', 'steps', 'prep', 'cook', 'servings'].forEach(function (k) {
             if (typeof d[k] === 'string' && d[k] && field(k)) field(k).value = d[k];
           });
+          if (syncBuildersFromForm) syncBuildersFromForm();
           changed();
           if (pasteUndo) pasteUndo.hidden = false;
           var warns = Array.isArray(res.body.warnings) ? res.body.warnings : [];
@@ -2240,6 +2406,7 @@ ${CAPTURE_HELPERS_JS}
         var curSt = field('steps').value.trim();
         field('steps').value = curSt ? curSt + '\\n' + answer : answer;
       }
+      if (syncBuildersFromForm) syncBuildersFromForm();
       changed();
     }
 
@@ -2379,6 +2546,7 @@ ${CAPTURE_HELPERS_JS}
           if (d.cookMinutes != null && d.cookMinutes > 0 && field('cook')) field('cook').value = String(d.cookMinutes);
           if (d.servings != null && d.servings > 0 && field('servings')) field('servings').value = String(d.servings);
           if (mode === 'translate' && targetLocale && field('locale')) field('locale').value = targetLocale;
+          if (syncBuildersFromForm) syncBuildersFromForm();
           changed();
           renderFeedback(res.body);
           setStatus('ok', res.body.provider === 'deterministic' ? doneMsg + ' ' + msg('fallback', '') : doneMsg);
@@ -2397,4 +2565,409 @@ ${CAPTURE_HELPERS_JS}
     if (polishBtn) polishBtn.addEventListener('click', function () { callAi('polish'); });
     if (translateBtn) translateBtn.addEventListener('click', function () { callAi('translate'); });
   }
+
+  // --- S4 Structured ingredient builder & numbered step cards ----------------
+  function makeMoveBtn(cls, attrName, symbol, labelText, disabled, onClick) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'quiet builder-icon-btn ' + cls;
+    b.setAttribute(attrName, '1');
+    b.setAttribute('aria-label', labelText);
+    b.setAttribute('title', labelText);
+    b.textContent = symbol;
+    b.disabled = !!disabled;
+    b.addEventListener('click', onClick);
+    return b;
+  }
+
+  var ingBuilder = form.querySelector ? form.querySelector('[data-ing-builder]') : null;
+  var loadIngFromTextarea = null;
+  if (ingBuilder) {
+    var ingField = field('ingredients');
+    var ingRowsWrap = ingBuilder.querySelector('[data-ing-rows]');
+    var ingAddBtn = ingBuilder.querySelector('[data-ing-add]');
+    var ingAddSectionBtn = ingBuilder.querySelector('[data-ing-add-section]');
+    var ingModeRowsBtn = ingBuilder.querySelector('[data-ing-mode-rows]');
+    var ingModeRawBtn = ingBuilder.querySelector('[data-ing-mode-raw]');
+    var qtyPh = ingBuilder.getAttribute('data-ph-qty') || 'Qty';
+    var unitPh = ingBuilder.getAttribute('data-ph-unit') || 'Unit';
+    var itemPh = ingBuilder.getAttribute('data-ph-item') || 'Ingredient…';
+    var secPh = ingBuilder.getAttribute('data-ph-section') || 'Section…';
+    var lblUp = ingBuilder.getAttribute('data-lbl-up') || 'Move up';
+    var lblDown = ingBuilder.getAttribute('data-lbl-down') || 'Move down';
+    var lblDel = ingBuilder.getAttribute('data-lbl-del') || 'Remove';
+    var ingState = [];
+
+    function syncIngToTextarea(runChanged) {
+      if (!ingField) return;
+      ingField.value = ingState.map(formatIngRow).filter(Boolean).join('\\n');
+      if (runChanged) changed();
+      else run();
+    }
+
+    function renderIngRows() {
+      if (!ingRowsWrap) return;
+      while (ingRowsWrap.firstChild) ingRowsWrap.removeChild(ingRowsWrap.firstChild);
+      ingState.forEach(function (row, idx) {
+        var rowEl = document.createElement('div');
+        rowEl.className = row.isSection ? 'ing-row-item ing-section-row' : 'ing-row-item';
+        rowEl.setAttribute('data-ing-row', String(idx));
+        function onMultiPaste(ev) {
+          var clip = ev.clipboardData || (W && W.clipboardData);
+          var text = clip && typeof clip.getData === 'function' ? clip.getData('text') : '';
+          if (text && (text.indexOf('\\n') !== -1 || text.indexOf('\\r') !== -1)) {
+            ev.preventDefault();
+            var pasted = text.split(/\\r?\\n/).map(function (l) { return l.trim(); }).filter(Boolean);
+            if (pasted.length) {
+              var parsedNew = pasted.map(parseIngRow);
+              ingState.splice.apply(ingState, [idx, 1].concat(parsedNew));
+              renderIngRows();
+              syncIngToTextarea(true);
+            }
+          }
+        }
+        if (row.isSection) {
+          var secIn = document.createElement('input');
+          secIn.type = 'text';
+          secIn.className = 'ing-chip-section';
+          secIn.placeholder = secPh;
+          secIn.setAttribute('aria-label', secPh);
+          secIn.value = row.item || '';
+          secIn.addEventListener('input', function () {
+            ingState[idx].item = secIn.value;
+            syncIngToTextarea(true);
+          });
+          secIn.addEventListener('paste', onMultiPaste);
+          rowEl.appendChild(secIn);
+        } else {
+          var qIn = document.createElement('input');
+          qIn.type = 'text';
+          qIn.className = 'ing-chip-qty';
+          qIn.placeholder = qtyPh;
+          qIn.setAttribute('aria-label', qtyPh);
+          qIn.value = row.qty || '';
+          qIn.addEventListener('input', function () {
+            ingState[idx].qty = qIn.value;
+            syncIngToTextarea(true);
+          });
+          qIn.addEventListener('paste', onMultiPaste);
+          var uIn = document.createElement('input');
+          uIn.type = 'text';
+          uIn.className = 'ing-chip-unit';
+          uIn.setAttribute('list', 'capture-units');
+          uIn.placeholder = unitPh;
+          uIn.setAttribute('aria-label', unitPh);
+          uIn.value = row.unit || '';
+          uIn.addEventListener('input', function () {
+            ingState[idx].unit = uIn.value;
+            syncIngToTextarea(true);
+          });
+          var itIn = document.createElement('input');
+          itIn.type = 'text';
+          itIn.className = 'ing-chip-item';
+          itIn.placeholder = itemPh;
+          itIn.setAttribute('aria-label', itemPh);
+          itIn.value = row.item || '';
+          itIn.addEventListener('input', function () {
+            ingState[idx].item = itIn.value;
+            syncIngToTextarea(true);
+          });
+          itIn.addEventListener('paste', onMultiPaste);
+          rowEl.appendChild(qIn);
+          rowEl.appendChild(uIn);
+          rowEl.appendChild(itIn);
+        }
+        var actions = document.createElement('div');
+        actions.className = 'builder-row-actions';
+        actions.appendChild(makeMoveBtn('is-up', 'data-ing-up', '\\u2191', lblUp, idx === 0, function () {
+          var tmp = ingState[idx - 1]; ingState[idx - 1] = ingState[idx]; ingState[idx] = tmp;
+          renderIngRows(); syncIngToTextarea(true);
+        }));
+        actions.appendChild(makeMoveBtn('is-down', 'data-ing-down', '\\u2193', lblDown, idx === ingState.length - 1, function () {
+          var tmp = ingState[idx + 1]; ingState[idx + 1] = ingState[idx]; ingState[idx] = tmp;
+          renderIngRows(); syncIngToTextarea(true);
+        }));
+        actions.appendChild(makeMoveBtn('is-del', 'data-ing-del', '\\u00D7', lblDel, false, function () {
+          ingState.splice(idx, 1);
+          if (!ingState.length) ingState.push({ isSection: false, qty: '', unit: '', item: '' });
+          renderIngRows(); syncIngToTextarea(true);
+        }));
+        rowEl.appendChild(actions);
+        ingRowsWrap.appendChild(rowEl);
+      });
+    }
+
+    loadIngFromTextarea = function () {
+      var listLines = ingField ? lines(ingField.value || '') : [];
+      ingState = listLines.length
+        ? listLines.map(parseIngRow)
+        : [{ isSection: false, qty: '', unit: '', item: '' }, { isSection: false, qty: '', unit: '', item: '' }];
+      renderIngRows();
+    };
+    function setIngRawMode(raw) {
+      if (ingBuilder.classList) ingBuilder.classList.toggle('is-raw', !!raw);
+      if (ingModeRowsBtn) ingModeRowsBtn.setAttribute('aria-pressed', raw ? 'false' : 'true');
+      if (ingModeRawBtn) ingModeRawBtn.setAttribute('aria-pressed', raw ? 'true' : 'false');
+      if (!raw) loadIngFromTextarea();
+    }
+    if (ingBuilder.classList) ingBuilder.classList.add('is-enhanced');
+    loadIngFromTextarea();
+    if (ingModeRowsBtn) ingModeRowsBtn.addEventListener('click', function () { setIngRawMode(false); });
+    if (ingModeRawBtn) ingModeRawBtn.addEventListener('click', function () { setIngRawMode(true); if (ingField && ingField.focus) ingField.focus(); });
+    if (ingAddBtn) {
+      ingAddBtn.addEventListener('click', function () {
+        ingState.push({ isSection: false, qty: '', unit: '', item: '' });
+        renderIngRows();
+        var added = ingRowsWrap && ingRowsWrap.querySelectorAll ? ingRowsWrap.querySelectorAll('[data-ing-row]') : [];
+        var last = added[added.length - 1];
+        var focusIn = last && last.querySelector ? last.querySelector('input') : null;
+        if (focusIn && typeof focusIn.focus === 'function') focusIn.focus();
+      });
+    }
+    if (ingAddSectionBtn) {
+      ingAddSectionBtn.addEventListener('click', function () {
+        ingState.push({ isSection: true, qty: '', unit: '', item: '' });
+        renderIngRows();
+        var added = ingRowsWrap && ingRowsWrap.querySelectorAll ? ingRowsWrap.querySelectorAll('[data-ing-row]') : [];
+        var last = added[added.length - 1];
+        var focusIn = last && last.querySelector ? last.querySelector('input') : null;
+        if (focusIn && typeof focusIn.focus === 'function') focusIn.focus();
+      });
+    }
+  }
+
+  var stepBuilder = form.querySelector ? form.querySelector('[data-step-builder]') : null;
+  var loadStepsFromTextarea = null;
+  if (stepBuilder) {
+    var stepField = field('steps');
+    var stepCardsWrap = stepBuilder.querySelector('[data-step-cards]');
+    var stepAddBtn = stepBuilder.querySelector('[data-step-add]');
+    var stepPhotoJumpBtn = stepBuilder.querySelector('[data-step-photo-jump]');
+    var stepModeCardsBtn = stepBuilder.querySelector('[data-step-mode-cards]');
+    var stepModeRawBtn = stepBuilder.querySelector('[data-step-mode-raw]');
+    var stepPh = stepBuilder.getAttribute('data-ph-step') || 'Describe this step…';
+    var timerLbl = stepBuilder.getAttribute('data-lbl-timer') || 'Timer (min)';
+    var sLblUp = stepBuilder.getAttribute('data-lbl-up') || 'Move up';
+    var sLblDown = stepBuilder.getAttribute('data-lbl-down') || 'Move down';
+    var sLblDel = stepBuilder.getAttribute('data-lbl-del') || 'Remove';
+    var stepState = [];
+
+    function parseStepCard(rawLine) {
+      var s = String(rawLine || '').trim();
+      if (!s) return { text: '', mins: '' };
+      var trailing = /\\s*\\((\\d{1,4})\\s*min\\)\\s*$/i.exec(s);
+      if (trailing) {
+        return { text: s.slice(0, trailing.index).trim(), mins: trailing[1] };
+      }
+      var inlineMin = /\\b(\\d{1,3})\\s*min(?:ute)?s?\\b/i.exec(s);
+      return { text: s, mins: inlineMin ? inlineMin[1] : '' };
+    }
+    function formatStepCard(card) {
+      var txt = String(card && card.text ? card.text : '').replace(/\\s+/g, ' ').trim();
+      if (!txt) return '';
+      var m = parseInt((card && card.mins) || '', 10);
+      if (m > 0 && m <= 1440 && !/\\b\\d{1,3}\\s*(?:min|minute|minutes|minuto|minutos|h|hr|hrs|hour|hours|hora|horas|heure|heures)/i.test(txt)) {
+        return txt + ' (' + m + ' min)';
+      }
+      return txt;
+    }
+    function syncStepsToTextarea(runChanged) {
+      if (!stepField) return;
+      stepField.value = stepState.map(formatStepCard).filter(Boolean).join('\\n');
+      if (runChanged) changed();
+      else run();
+    }
+    function renderStepCards() {
+      if (!stepCardsWrap) return;
+      while (stepCardsWrap.firstChild) stepCardsWrap.removeChild(stepCardsWrap.firstChild);
+      stepState.forEach(function (card, idx) {
+        var el = document.createElement('div');
+        el.className = 'step-card-item';
+        el.setAttribute('data-step-card', String(idx));
+        var head = document.createElement('div');
+        head.className = 'step-card-head';
+        var num = document.createElement('span');
+        num.className = 'step-card-num';
+        num.textContent = (idx + 1 < 10 ? '0' : '') + (idx + 1);
+        head.appendChild(num);
+        var actions = document.createElement('div');
+        actions.className = 'builder-row-actions';
+        actions.appendChild(makeMoveBtn('is-up', 'data-step-up', '\\u2191', sLblUp, idx === 0, function () {
+          var tmp = stepState[idx - 1]; stepState[idx - 1] = stepState[idx]; stepState[idx] = tmp;
+          renderStepCards(); syncStepsToTextarea(true);
+        }));
+        actions.appendChild(makeMoveBtn('is-down', 'data-step-down', '\\u2193', sLblDown, idx === stepState.length - 1, function () {
+          var tmp = stepState[idx + 1]; stepState[idx + 1] = stepState[idx]; stepState[idx] = tmp;
+          renderStepCards(); syncStepsToTextarea(true);
+        }));
+        actions.appendChild(makeMoveBtn('is-del', 'data-step-del', '\\u00D7', sLblDel, false, function () {
+          stepState.splice(idx, 1);
+          if (!stepState.length) stepState.push({ text: '', mins: '' });
+          renderStepCards(); syncStepsToTextarea(true);
+        }));
+        head.appendChild(actions);
+        el.appendChild(head);
+
+        var ta = document.createElement('textarea');
+        ta.rows = 2;
+        ta.className = 'step-card-text';
+        ta.placeholder = stepPh;
+        ta.setAttribute('aria-label', stepPh + ' ' + (idx + 1));
+        ta.value = card.text || '';
+        ta.addEventListener('input', function () {
+          stepState[idx].text = ta.value;
+          syncStepsToTextarea(true);
+        });
+        el.appendChild(ta);
+
+        var timerRow = document.createElement('label');
+        timerRow.className = 'step-card-timer';
+        var timerSpan = document.createElement('span');
+        timerSpan.textContent = timerLbl;
+        var timerIn = document.createElement('input');
+        timerIn.type = 'number';
+        timerIn.min = '1';
+        timerIn.max = '1440';
+        timerIn.placeholder = '0';
+        timerIn.value = card.mins || '';
+        timerIn.addEventListener('input', function () {
+          stepState[idx].mins = timerIn.value;
+          syncStepsToTextarea(true);
+        });
+        timerRow.appendChild(timerSpan);
+        timerRow.appendChild(timerIn);
+        el.appendChild(timerRow);
+
+        stepCardsWrap.appendChild(el);
+      });
+    }
+    loadStepsFromTextarea = function () {
+      var listLines = stepField ? lines(stepField.value || '') : [];
+      stepState = listLines.length
+        ? listLines.map(parseStepCard)
+        : [{ text: '', mins: '' }, { text: '', mins: '' }];
+      renderStepCards();
+    };
+    function setStepRawMode(raw) {
+      if (stepBuilder.classList) stepBuilder.classList.toggle('is-raw', !!raw);
+      if (stepModeCardsBtn) stepModeCardsBtn.setAttribute('aria-pressed', raw ? 'false' : 'true');
+      if (stepModeRawBtn) stepModeRawBtn.setAttribute('aria-pressed', raw ? 'true' : 'false');
+      if (!raw) loadStepsFromTextarea();
+    }
+    if (stepBuilder.classList) stepBuilder.classList.add('is-enhanced');
+    loadStepsFromTextarea();
+    if (stepModeCardsBtn) stepModeCardsBtn.addEventListener('click', function () { setStepRawMode(false); });
+    if (stepModeRawBtn) stepModeRawBtn.addEventListener('click', function () { setStepRawMode(true); if (stepField && stepField.focus) stepField.focus(); });
+    if (stepAddBtn) {
+      stepAddBtn.addEventListener('click', function () {
+        stepState.push({ text: '', mins: '' });
+        renderStepCards();
+        var added = stepCardsWrap && stepCardsWrap.querySelectorAll ? stepCardsWrap.querySelectorAll('[data-step-card]') : [];
+        var last = added[added.length - 1];
+        var ta = last && last.querySelector ? last.querySelector('textarea') : null;
+        if (ta && typeof ta.focus === 'function') ta.focus();
+      });
+    }
+    if (stepPhotoJumpBtn) {
+      stepPhotoJumpBtn.addEventListener('click', function () {
+        if (stepList.length > 3) showStep(3, false);
+        var ph = document.getElementById('f-dish_photo');
+        if (ph && typeof ph.scrollIntoView === 'function') {
+          try { ph.scrollIntoView({ block: 'center' }); } catch (err) {}
+        }
+        if (ph && typeof ph.focus === 'function') ph.focus();
+      });
+    }
+  }
+
+  syncBuildersFromForm = function () {
+    if (loadIngFromTextarea) loadIngFromTextarea();
+    if (loadStepsFromTextarea) loadStepsFromTextarea();
+  };
+
+  // --- S12 Search-gap prompt quick-fill chips --------------------------------
+  qsa(document, '[data-gap-chip]').forEach(function (chip) {
+    chip.addEventListener('click', function (e) {
+      e.preventDefault();
+      var qVal = chip.getAttribute('data-gap-chip') || '';
+      var tField = field('title');
+      if (tField && qVal) {
+        tField.value = qVal;
+        if (startTiles.length) selectStartTile('type', false);
+        changed();
+        if (typeof tField.focus === 'function') tField.focus();
+      }
+    });
+  });
+})();`;
+
+export const ACCOUNT_LIVE_SHARE_SCRIPT = `(function () {
+  var qsa = function (sel) {
+    return document && typeof document.querySelectorAll === 'function' ? Array.prototype.slice.call(document.querySelectorAll(sel)) : [];
+  };
+  qsa('[data-acct-copy-url]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var url = btn.getAttribute('data-acct-copy-url') || '';
+      if (!url) return;
+      var orig = btn.textContent;
+      var done = btn.getAttribute('data-copied') || 'Copied';
+      function flash() {
+        btn.textContent = done;
+        setTimeout(function () { btn.textContent = orig; }, 1800);
+      }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(url).then(flash).catch(function () {});
+      }
+    });
+  });
+  qsa('[data-acct-story-card]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var svgUrl = btn.getAttribute('data-card-svg');
+      var slug = btn.getAttribute('data-recipe-slug') || 'recipe';
+      var liveUrl = btn.getAttribute('data-live-url') || '';
+      var orig = btn.textContent;
+      var ready = btn.getAttribute('data-copied') || orig;
+      if (!svgUrl || typeof fetch !== 'function') return;
+      btn.disabled = true;
+      fetch(svgUrl)
+        .then(function (r) { if (!r.ok) throw new Error('fetch'); return r.text(); })
+        .then(function (svg) {
+          return new Promise(function (resolve, reject) {
+            var blob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
+            var u = URL.createObjectURL(blob);
+            var img = new Image();
+            img.onload = function () {
+              var canvas = document.createElement('canvas');
+              canvas.width = 1080;
+              canvas.height = 1920;
+              var ctx = canvas.getContext('2d');
+              ctx.drawImage(img, 0, 0, 1080, 1920);
+              URL.revokeObjectURL(u);
+              canvas.toBlob(function (png) { if (png) resolve(png); else reject(new Error('png')); }, 'image/png');
+            };
+            img.onerror = function () { URL.revokeObjectURL(u); reject(new Error('img')); };
+            img.src = u;
+          });
+        })
+        .then(function (pngBlob) {
+          var fname = slug + '-2yolks-story.png';
+          var file = typeof File === 'function' ? new File([pngBlob], fname, { type: 'image/png' }) : null;
+          if (file && navigator.canShare && navigator.canShare({ files: [file] }) && navigator.share) {
+            return navigator.share({ files: [file], url: liveUrl }).catch(function () {});
+          }
+          var dl = URL.createObjectURL(pngBlob);
+          var a = document.createElement('a');
+          a.href = dl;
+          a.download = fname;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          setTimeout(function () { URL.revokeObjectURL(dl); }, 2000);
+          btn.textContent = ready;
+          setTimeout(function () { btn.textContent = orig; }, 1800);
+        })
+        .catch(function () { window.open(svgUrl, '_blank', 'noopener'); })
+        .then(function () { btn.disabled = false; });
+    });
+  });
 })();`;

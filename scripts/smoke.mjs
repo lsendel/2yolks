@@ -133,6 +133,7 @@ try {
   check('code request without mail key answers 503, not a crash', r.status === 503);
   r = await get('/account/recipes/new');
   check('recipe form opens anonymously (200, noindex, no-store, draft-first)', r.status === 200 && r.headers.get('x-robots-tag') === 'noindex' && r.headers.get('cache-control') === 'no-store' && r.body.includes('data-signed-in="0"'));
+  check('phase 5 capture form: structured builders + 80-line counter', r.body.includes('data-ing-builder') && r.body.includes('data-step-builder') && r.body.includes('0 / 80 lines'));
   r = await get('/account/recipes/abc123/edit');
   check('edit draft needs sign-in (303 to /account?next=...)', r.status === 303 && r.location === '/account?next=%2Faccount%2Frecipes%2Fabc123%2Fedit');
   r = await get('/robots.txt');
@@ -144,6 +145,8 @@ try {
   check('home query redirects 302 to /search', r.status === 302 && r.location === '/search?q=ranch');
   r = await get('/search?q=ranch');
   check('prod mode: search without demo hits returns 200 with noindex', r.status === 200 && r.headers.get('x-robots-tag') === 'noindex');
+  r = await get('/search?have=eggs,garlic');
+  check('prod mode: pantry search 200 with noindex and picker', r.status === 200 && r.headers.get('x-robots-tag') === 'noindex' && r.body.includes('data-pantry-picker'));
 
   // dev mode: demo seed visible
   await stopServer(server);
@@ -174,6 +177,9 @@ try {
 
     r = await get2('/us/recipes/ranch-eggs');
     check('phase 4 recipe enhancements: meter, ingredient icons, inline step timer', r.status === 200 && r.body.includes('class="recipe-meter"') && r.body.includes('class="ing-icon') && r.body.includes('data-inline-timer="3"'));
+    check('phase 5 recipe remix cta link', r.body.includes('data-remix-cta') && r.body.includes('/account/recipes/new?remix=r1'));
+    r = await get2('/account/recipes/new?remix=r1');
+    check('phase 5 remix prefill: adapted draft from published recipe', r.status === 200 && r.body.includes('data-remix-banner') && r.body.includes('My Ranch Eggs') && r.body.includes('<option value="adapted" selected>'));
 
     r = await get2('/mx/recipes/r1-huevos-rancheros');
     check('legacy URL 301 directly to clean canonical', r.status === 301 && r.location === '/mx/recipes/huevos-rancheros');

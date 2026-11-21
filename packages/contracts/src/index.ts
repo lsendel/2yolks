@@ -238,6 +238,10 @@ export interface UiStrings {
   difficultyMedium: string;
   difficultyProject: string;
   tapTimer: string;
+  remixHeading: string;
+  remixSubhead: string;
+  remixButton: string;
+  cookWithWhatYouHave: string;
 }
 
 const UI_STRINGS: Record<string, UiStrings> = {
@@ -294,6 +298,10 @@ const UI_STRINGS: Record<string, UiStrings> = {
     sharedBy: 'Shared by {name}', cookedByCount: 'Cooked by {n}', cooksNav: 'Cooks',
     effortLabel: 'Effort', difficultyEasy: 'Easy', difficultyMedium: 'Medium',
     difficultyProject: 'Weekend project', tapTimer: 'Timer',
+    remixHeading: 'Cooked it? Share your version',
+    remixSubhead: 'Changed the spice, swapped an ingredient, or made it faster? Start a draft pre-filled with credit to the original.',
+    remixButton: 'Remix this recipe',
+    cookWithWhatYouHave: 'Cook with what you have',
   },
   es: {
     ingredients: 'Ingredientes', steps: 'Pasos', source: 'Fuente',
@@ -348,6 +356,10 @@ const UI_STRINGS: Record<string, UiStrings> = {
     sharedBy: 'Compartida por {name}', cookedByCount: 'Cocinada por {n}', cooksNav: 'Cocineros',
     effortLabel: 'Dificultad', difficultyEasy: 'F\u00e1cil', difficultyMedium: 'Media',
     difficultyProject: 'De fin de semana', tapTimer: 'Temporizador',
+    remixHeading: '¿La cocinaste? Comparte tu versión',
+    remixSubhead: '¿Cambiaste un ingrediente o el punto de picante? Empieza un borrador prellenado con crédito a la receta original.',
+    remixButton: 'Adaptar esta receta',
+    cookWithWhatYouHave: 'Cocina con lo que tienes',
   },
   fr: {
     ingredients: 'Ingr\u00e9dients', steps: '\u00c9tapes', source: 'Source',
@@ -402,6 +414,10 @@ const UI_STRINGS: Record<string, UiStrings> = {
     sharedBy: 'Partag\u00e9e par {name}', cookedByCount: 'Cuisin\u00e9e par {n}', cooksNav: 'Cuisiniers',
     effortLabel: 'Niveau', difficultyEasy: 'Facile', difficultyMedium: 'Interm\u00e9diaire',
     difficultyProject: 'Projet week-end', tapTimer: 'Minuteur',
+    remixHeading: 'Vous l’avez cuisinée ? Partagez votre version',
+    remixSubhead: 'Un ingrédient changé ou une cuisson plus rapide ? Démarrez un brouillon prérempli avec crédit à l’originale.',
+    remixButton: 'Adapter cette recette',
+    cookWithWhatYouHave: 'Cuisiner avec ce que vous avez',
   },
 };
 
@@ -608,6 +624,7 @@ export type ValidationResult =
   | { ok: true; value: RecipeSubmission }
   | { ok: false; errors: ValidationFailure[] };
 
+export const MAX_RECIPE_LINES = 80;
 const MAX_LEN = { title: 200, intro: 2000, item: 1000, name: 200, url: 2000 };
 
 export function validateRecipeSubmission(input: unknown): ValidationResult {

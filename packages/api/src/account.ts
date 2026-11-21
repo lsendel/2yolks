@@ -7,8 +7,8 @@ import type { Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import { eq, and, ne, desc, isNull, or } from 'drizzle-orm';
-import { LOCALES, getCountry, localizedCountryName, slugify, recipePathFor, validateRecipeSubmission, RECIPE_CATEGORY_SLUGS, categoryLabel, isRecipeCategorySlug, CATEGORIES, accountStrings, fill, isAccountLang, validatorMessage, parseWarningMessage, ssrfMessage, type AccountStrings } from '@2yolks/contracts';
-import { renderAccountPage, escapeHtml as esc, CAPTURE_CLIENT_SCRIPT, CAPTURE_CHECK_STRINGS, DRAFT_PHOTO_CLIENT_SCRIPT } from '@2yolks/web/server';
+import { LOCALES, getCountry, localizedCountryName, slugify, recipePathFor, validateRecipeSubmission, RECIPE_CATEGORY_SLUGS, categoryLabel, isRecipeCategorySlug, CATEGORIES, accountStrings, fill, isAccountLang, validatorMessage, parseWarningMessage, ssrfMessage, MAX_RECIPE_LINES, sanitizeSearchGapPrompt, titleCasePrompt, searchCatalog, renderIngredient, renderStep, defaultUnitSystem, type AccountStrings, type IngredientEntry, type SearchableRecipe } from '@2yolks/contracts';
+import { renderAccountPage, escapeHtml as esc, CAPTURE_CLIENT_SCRIPT, CAPTURE_CHECK_STRINGS, DRAFT_PHOTO_CLIENT_SCRIPT, ACCOUNT_LIVE_SHARE_SCRIPT } from '@2yolks/web/server';
 import { createDb, hasUserSharedRecipe, recipes, recipeLocales, sources, users } from './db';
 import { sendMail, type MailEnv } from './email';
 import { parseRecipeText, parseJsonLdRecipe, type ParsedRecipe } from './parse';
@@ -336,6 +336,50 @@ function renderTimeline(t: AccountStrings, state: RecipeLifecycle): string {
 const copyDeclinedForm = (t: AccountStrings, lang: string, id: string) =>
   `<form method="post" action="/account/recipes/${esc(id)}/copy${qs(lang)}" class="actions"><button type="submit" class="quiet">${t.makeCopy}</button></form>`;
 
+function rawLineCount(v: string): number {
+  return v.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).length;
+}
+
+/** Load sanitized top zero-result search queries from search_gap_logs (tolerating sparse D1 schemas). */
+export async function loadTopSearchGaps(
+  db: D1Database,
+  lang: string,
+  limit = 4,
+  excludeSatisfiedBy?: readonly SearchableRecipe[],
+): Promise<string[]> {
+  if (limit <= 0) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const acceptRows = (rows: ReadonlyArray<{ query?: unknown }>) => {
+    for (const row of rows) {
+      const clean = sanitizeSearchGapPrompt(row?.query);
+      if (!clean) continue;
+      const key = clean.toLowerCase();
+      if (seen.has(key)) continue;
+      if (excludeSatisfiedBy && excludeSatisfiedBy.length > 0 && searchCatalog(excludeSatisfiedBy, { q: clean, pageSize: 1 }, lang).total > 0) {
+        continue;
+      }
+      seen.add(key);
+      out.push(clean);
+      if (out.length >= limit) break;
+    }
+  };
+  try {
+    const localRows = await db
+      .prepare('SELECT query, COUNT(*) AS cnt, MAX(created_at) AS latest FROM search_gap_logs WHERE locale = ? GROUP BY lower(trim(query)) ORDER BY cnt DESC, latest DESC LIMIT 30')
+      .bind(lang)
+      .all<{ query: string }>();
+    acceptRows(localRows.results ?? []);
+    if (out.length < limit) {
+      const anyRows = await db
+        .prepare('SELECT query, COUNT(*) AS cnt, MAX(created_at) AS latest FROM search_gap_logs GROUP BY lower(trim(query)) ORDER BY cnt DESC, latest DESC LIMIT 30')
+        .all<{ query: string }>();
+      acceptRows(anyRows.results ?? []);
+    }
+  } catch { /* tolerate sparse test DBs lacking migration 0007 */ }
+  return out;
+}
+
 accountApp.get('/', async (c) => {
   const lang = langOf(c);
   const t = accountStrings(lang);
@@ -344,6 +388,7 @@ accountApp.get('/', async (c) => {
   if (!user) return page(c, t.signInPageTitle, signInForm(t, lang, '', next), 200, next);
   if (next && next !== '/account') return c.redirect(`${next}${qs(lang)}`, 303);
   const db = createDb(c.env.DB);
+  const origin = (c.env.CANONICAL_ORIGIN || new URL(c.req.url).origin).replace(/\/+$/, '');
   const rawRows = await db.select({
     id: recipes.id,
     submittedAt: recipes.submittedAt,
@@ -373,6 +418,7 @@ accountApp.get('/', async (c) => {
     }
   }
 
+  let hasLiveRecipe = false;
   const items = [...byId.values()].map((r) => {
     const state = recipeLifecycle(r);
     const badgeCls =
@@ -387,14 +433,20 @@ accountApp.get('/', async (c) => {
       : state === 'needs_changes' ? t.statusNeedsChanges
       : state === 'in_review' ? t.statusSubmitted
       : t.statusDraft;
+    const livePath = recipePathFor(r.country, r.lang, r.slug);
+    const liveUrl = `${origin}${livePath}`;
+    if (state === 'published') hasLiveRecipe = true;
+    const celebration = state === 'published'
+      ? `<div class="live-celebration" data-live-celebration><strong>${esc(t.celebrateLiveTitle)}</strong><span>${esc(t.celebrateLiveLead)}</span><div class="live-celebration-actions"><button type="button" class="quiet" data-acct-story-card data-card-svg="${esc(`${livePath}/card.svg`)}" data-recipe-slug="${esc(r.slug)}" data-live-url="${esc(liveUrl)}" data-copied="${esc(t.celebrateStoryReady)}">${esc(t.celebrateStoryBtn)}</button><button type="button" class="quiet" data-acct-copy-url="${esc(liveUrl)}" data-copied="${esc(t.celebrateLinkCopied)}">${esc(t.celebrateCopyBtn)}</button><a class="btn-quiet" href="https://wa.me/?text=${encodeURIComponent(`${r.title} — ${liveUrl}`)}" target="_blank" rel="noopener noreferrer">${esc(t.celebrateWhatsApp)}</a></div></div>`
+      : '';
     const note =
       (state === 'needs_changes' || state === 'declined') && r.reviewNote
         ? `<p class="review-note${state === 'declined' ? ' review-note--declined' : ''}">${esc(r.reviewNote)}</p>`
         : state === 'in_review'
           ? `<p class="hint">${t.inReviewNote}</p>`
-          : '';
+          : celebration;
     const action =
-      state === 'published' ? `<a href="${esc(recipePathFor(r.country, r.lang, r.slug))}">${t.viewLiveRecipe}</a>`
+      state === 'published' ? `<a href="${esc(livePath)}">${t.viewLiveRecipe}</a>`
       : state === 'declined' ? copyDeclinedForm(t, lang, r.id)
       : state === 'needs_changes' ? `<a href="/account/recipes/${esc(r.id)}/edit${qs(lang)}">${t.editAndResend}</a>`
       : state === 'in_review' ? ''
@@ -412,7 +464,7 @@ accountApp.get('/', async (c) => {
 ${savedPanel}
 ${creatorSection}
 <div class="panel"><h2>${t.yourDrafts}</h2>${items ? `<ul class="mine">${items}</ul>` : `<p class="hint">${t.emptyDrafts}</p>`}</div>
-<form method="post" action="/account/logout${qs(lang)}"><button class="quiet" type="submit">${t.signOut}</button></form>`);
+<form method="post" action="/account/logout${qs(lang)}"><button class="quiet" type="submit">${t.signOut}</button></form>${hasLiveRecipe ? `<script>${ACCOUNT_LIVE_SHARE_SCRIPT}</script>` : ''}`);
 });
 
 // --- Saved recipes (bookmarks) -----------------------------------------------
@@ -720,7 +772,7 @@ export function fieldForValidatorPath(path: string, message: string): FormField 
 const removeDraftForm = (t: AccountStrings, lang: string, id: string) =>
   `<form method="post" action="/account/recipes/${esc(id)}/delete${qs(lang)}"><button class="quiet" type="submit">${t.removeDraft}</button></form>`;
 
-function renderForm(s: FormState, t: AccountStrings, acctLang: string, errors: ReadonlyArray<string | FieldError> = [], note = '', importOn = false, extras = '', signedIn = true): string {
+function renderForm(s: FormState, t: AccountStrings, acctLang: string, errors: ReadonlyArray<string | FieldError> = [], note = '', importOn = false, extras = '', signedIn = true, gapPrompts: string[] = []): string {
   // Errors show twice: a linked summary at the top (role=alert) and inline
   // next to the offending control (aria-invalid + aria-describedby).
   const errs: FieldError[] = errors.map((e) => (typeof e === 'string' ? { msg: e } : e));
@@ -830,10 +882,16 @@ ${idx < 4 ? `<button type="button" data-step-next>${t.stepNext}</button>` : ''}
   <div data-preview-step-wrap hidden><h4>${t.labelSteps}</h4><ol class="preview-steps" data-preview-steps></ol></div>
 </div></aside>`;
   const lead = s.id ? t.formLead : signedIn ? t.formLead : t.formPromise;
+  const gapBanner = gapPrompts.length && !s.id
+    ? `<div class="panel gap-prompts" data-gap-prompts><h2>${fill(t.gapPromptLead, { query: esc(gapPrompts[0]!) })}</h2><div class="gap-chip-row">${gapPrompts.map((gp, i) => `<button type="button" class="gap-chip${i === 0 ? '' : ' quiet'}" data-gap-chip="${esc(titleCasePrompt(gp))}">${esc(gp)}</button>`).join('')}</div></div>`
+    : '';
+  const unitOptions = ['g', 'kg', 'ml', 'l', 'tsp', 'tbsp', 'cup', 'oz', 'lb', 'pinch', 'clove', 'can', 'slice', 'piece', 'bunch', 'sprig']
+    .map((u) => `<option value="${u}">`)
+    .join('');
   return `<h1>${s.id ? t.formTitleEdit : t.formTitleNew}</h1><p class="lead">${lead}</p>${note}${errBox}
 <div class="capture-shell" data-capture-shell>
 <div class="capture-main">
-${startTiles}${photoMode}${pasteMode}${stepIndex}${stepperBar}
+${gapBanner}${startTiles}${photoMode}${pasteMode}${stepIndex}${stepperBar}
 <form method="post" action="/account/recipes/save${qs(acctLang)}" enctype="multipart/form-data" data-capture-form data-signed-in="${signedIn ? '1' : '0'}" data-step-progress-tpl="${esc(t.stepProgress)}" data-step-need-required="${esc(t.stepNeedRequired)}" data-step-soft-warn="${esc(t.stepSoftWarn)}">${s.id ? `<input type="hidden" name="id" value="${esc(s.id)}">` : ''}
 <fieldset class="form-step" id="step-basics" data-step="0"><legend class="step-heading" tabindex="-1">${t.stepBasics}</legend>
 <label><span data-category-prompt>${esc(ft.prompt)}</span><select name="category" id="f-category"${inv('category')}>${categoryOptions(s.category, lang)}</select></label>${ferr('category')}
@@ -842,10 +900,23 @@ ${startTiles}${photoMode}${pasteMode}${stepIndex}${stepperBar}
 <label><span data-preamble-label>${esc(ft.preamble)}</span> <small data-preamble-hint>${esc(ft.preambleHint)}</small><textarea name="intro" id="f-intro" maxlength="2000" style="min-height:4rem"${inv('intro')}>${esc(s.intro)}</textarea></label>${ferr('intro')}
 ${stepNav(0)}</fieldset>
 <fieldset class="form-step" id="step-ingredients" data-step="1"><legend class="step-heading" tabindex="-1">${t.stepIngredients}</legend>
-<label>${t.labelIngredients}<small>${t.ingredientsHint}</small><textarea name="ingredients" id="f-ingredients" required${inv('ingredients')}>${esc(s.ingredients)}</textarea></label>${ferr('ingredients')}
+<div class="field-head-row"><label for="f-ingredients">${t.labelIngredients}</label><span class="line-counter" data-ing-counter data-tpl="${esc(t.lineLimitBadge)}">${esc(fill(t.lineLimitBadge, { n: rawLineCount(s.ingredients), max: MAX_RECIPE_LINES }))}</span></div>
+<small class="hint">${t.ingredientsHint}</small>
+<div class="ing-builder" data-ing-builder data-ph-qty="${esc(t.ingQtyPlaceholder)}" data-ph-unit="${esc(t.ingUnitPlaceholder)}" data-ph-item="${esc(t.ingItemPlaceholder)}" data-ph-section="${esc(t.ingSectionPlaceholder)}" data-lbl-up="${esc(t.moveUp)}" data-lbl-down="${esc(t.moveDown)}" data-lbl-del="${esc(t.removeRow)}">
+  <div class="builder-toolbar"><div class="builder-mode-tabs"><button type="button" data-ing-mode-rows aria-pressed="true">${esc(t.ingModeRows)}</button><button type="button" data-ing-mode-raw aria-pressed="false">${esc(t.ingModeRaw)}</button></div></div>
+  <div class="builder-rows-wrap"><div data-ing-rows></div><div class="builder-add-actions"><button type="button" class="quiet" data-ing-add>${esc(t.ingAddRow)}</button><button type="button" class="quiet" data-ing-add-section>${esc(t.ingAddSection)}</button></div></div>
+  <datalist id="capture-units">${unitOptions}</datalist>
+  <textarea name="ingredients" id="f-ingredients" required${inv('ingredients')}>${esc(s.ingredients)}</textarea>
+</div>${ferr('ingredients')}
 ${stepNav(1)}</fieldset>
 <fieldset class="form-step" id="step-steps" data-step="2"><legend class="step-heading" tabindex="-1">${t.stepSteps}</legend>
-<label>${t.labelSteps}<small>${t.stepsHint}</small><textarea name="steps" id="f-steps" required${inv('steps')}>${esc(s.steps)}</textarea></label>${ferr('steps')}
+<div class="field-head-row"><label for="f-steps">${t.labelSteps}</label><span class="line-counter" data-step-counter data-tpl="${esc(t.lineLimitBadge)}">${esc(fill(t.lineLimitBadge, { n: rawLineCount(s.steps), max: MAX_RECIPE_LINES }))}</span></div>
+<small class="hint">${t.stepsHint}</small>
+<div class="step-builder" data-step-builder data-ph-step="${esc(t.stepPlaceholder)}" data-lbl-timer="${esc(t.stepTimerLabel)}" data-lbl-up="${esc(t.moveUp)}" data-lbl-down="${esc(t.moveDown)}" data-lbl-del="${esc(t.removeRow)}">
+  <div class="builder-toolbar"><div class="builder-mode-tabs"><button type="button" data-step-mode-cards aria-pressed="true">${esc(t.stepModeCards)}</button><button type="button" data-step-mode-raw aria-pressed="false">${esc(t.ingModeRaw)}</button></div></div>
+  <div class="builder-rows-wrap"><div data-step-cards></div><div class="builder-add-actions"><button type="button" class="quiet" data-step-add>${esc(t.stepAddCard)}</button><button type="button" class="quiet" data-step-photo-jump>${esc(t.stepPhotoJump)}</button></div></div>
+  <textarea name="steps" id="f-steps" required${inv('steps')}>${esc(s.steps)}</textarea>
+</div>${ferr('steps')}
 ${stepNav(2)}</fieldset>
 <fieldset class="form-step" id="step-details" data-step="3"><legend class="step-heading" tabindex="-1">${t.stepDetails}</legend>
 <div class="row"><label>${t.labelPrep} <small>${t.optional}</small><input type="number" name="prep" id="f-prep" min="0" max="20000" value="${esc(s.prep)}"${inv('prep')}></label><label>${t.labelCook} <small>${t.optional}</small><input type="number" name="cook" id="f-cook" min="0" max="20000" value="${esc(s.cook)}"${inv('cook')}></label></div>${ferr('prep')}${ferr('cook')}
@@ -957,14 +1028,76 @@ export async function sendAuthorReviewNotice(
   }
 }
 
-const rf = (c: Ctx, s: FormState, errors: ReadonlyArray<string | FieldError> = [], note = '', extras = '') => {
+const rf = (c: Ctx, s: FormState, errors: ReadonlyArray<string | FieldError> = [], note = '', extras = '', gapPrompts: string[] = []) => {
   const lang = langOf(c);
-  return renderForm(s, accountStrings(lang), lang, errors, note, c.env.IMPORT_ENABLED === 'true', extras, Boolean(c.get('user')));
+  return renderForm(s, accountStrings(lang), lang, errors, note, c.env.IMPORT_ENABLED === 'true', extras, Boolean(c.get('user')), gapPrompts);
 };
 
-accountApp.get('/recipes/new', (c) => {
-  const t = accountStrings(langOf(c));
-  return page(c, t.formTitleNew, rf(c, blank(c.get('user'))), 200, null, true);
+accountApp.get('/recipes/new', async (c) => {
+  const lang = langOf(c);
+  const t = accountStrings(lang);
+  const s = blank(c.get('user'));
+  let note = '';
+  let remixLoaded = false;
+
+  const rawRemix = (c.req.query('remix') ?? '').trim();
+  if (/^[A-Za-z0-9_-]{1,40}$/.test(rawRemix)) {
+    const demoFilter = c.env.ALLOW_DEMO_SEED === 'true' ? '' : "AND s.license != 'internal-demo'";
+    const rows = await c.env.DB.prepare(
+      `SELECT l.country, l.lang, l.title, l.slug, l.ingredients_json, l.steps_json,
+              r.prep_minutes, r.cook_minutes, r.base_servings, r.category, r.author_name,
+              s.name AS source_name
+       FROM recipe_locales l
+       JOIN recipes r ON r.id = l.recipe_id
+       JOIN sources s ON s.id = r.source_id
+       WHERE r.id = ? AND l.status = 'published' AND s.cleared_at IS NOT NULL ${demoFilter}`,
+    ).bind(rawRemix).all<{
+      country: string; lang: string; title: string; slug: string;
+      ingredients_json: string; steps_json: string;
+      prep_minutes: number | null; cook_minutes: number | null; base_servings: number | null;
+      category: string | null; author_name: string | null; source_name: string;
+    }>();
+    const list = rows.results ?? [];
+    const picked = list.find((r) => r.lang === lang) ?? list.find((r) => r.lang === 'en') ?? list[0];
+    if (picked) {
+      remixLoaded = true;
+      let entries: IngredientEntry[] = [];
+      let stepArr: string[] = [];
+      try {
+        const parsedIng = JSON.parse(picked.ingredients_json) as unknown[];
+        if (Array.isArray(parsedIng)) entries = parsedIng as IngredientEntry[];
+      } catch { entries = []; }
+      try {
+        const parsedSt = JSON.parse(picked.steps_json) as unknown[];
+        if (Array.isArray(parsedSt)) stepArr = parsedSt.map((x) => String(x));
+      } catch { stepArr = []; }
+      const sys = defaultUnitSystem(picked.country);
+      const httpsOrigin = (c.env.CANONICAL_ORIGIN && c.env.CANONICAL_ORIGIN.startsWith('https://') ? c.env.CANONICAL_ORIGIN : 'https://2yolks.com').replace(/\/+$/, '');
+      s.title = fill(t.remixTitleTpl, { title: picked.title }).slice(0, 200);
+      s.intro = fill(t.remixIntroTpl, { title: picked.title, author: picked.author_name?.trim() || picked.source_name }).slice(0, 2000);
+      s.locale = `${picked.country}:${picked.lang}`;
+      s.category = isRecipeCategorySlug(picked.category) ? picked.category : '';
+      s.ingredients = entries.map((e) => renderIngredient(e, picked.lang, sys, 1)).filter(Boolean).join('\n');
+      s.steps = stepArr.map((st) => renderStep(st, entries, picked.lang, sys, 1)).filter(Boolean).join('\n');
+      s.prep = picked.prep_minutes != null ? String(picked.prep_minutes) : '';
+      s.cook = picked.cook_minutes != null ? String(picked.cook_minutes) : '';
+      s.servings = picked.base_servings != null ? String(picked.base_servings) : '';
+      s.sourceKind = 'adapted';
+      s.sourceUrl = `${httpsOrigin}${recipePathFor(picked.country, picked.lang, picked.slug)}`;
+      note = `<div class="ok remix-banner" data-remix-banner>${fill(t.remixBanner, { title: esc(picked.title) })}</div>`;
+    }
+  } else {
+    const cleanPrompt = sanitizeSearchGapPrompt(c.req.query('prompt'));
+    if (cleanPrompt) {
+      s.title = titleCasePrompt(cleanPrompt);
+      note = `<div class="ok gap-prefilled" data-gap-prefilled>${fill(t.gapPrefilledBanner, { query: esc(cleanPrompt) })}</div>`;
+    }
+  }
+
+  const gapPrompts = remixLoaded
+    ? []
+    : (await loadTopSearchGaps(c.env.DB, lang, 4)).filter((g) => g.toLowerCase() !== s.title.toLowerCase());
+  return page(c, t.formTitleNew, rf(c, s, [], note, '', gapPrompts), 200, null, true);
 });
 
 accountApp.post('/recipes/paste', async (c) => {
@@ -1093,7 +1226,8 @@ accountApp.get('/recipes/:id/edit', async (c) => {
   }
   const user = c.get('user')!;
   const pendingPhoto = await activeDraftPhoto(c.env.DB, row.r.id, user.id);
-  const ing = (JSON.parse(row.l.ingredientsJson) as unknown[]).map((x) => (typeof x === 'string' ? x : String((x as { name?: string }).name ?? ''))).join('\n');
+  const sysEdit = defaultUnitSystem(row.l.country);
+  const ing = (JSON.parse(row.l.ingredientsJson) as unknown[]).map((x) => (typeof x === 'string' ? x : renderIngredient(x as IngredientEntry, row.l.lang, sysEdit, 1))).join('\n');
   const s: FormState = {
     id: row.r.id, title: row.l.title, intro: row.l.intro ?? '', ingredients: ing, steps: (JSON.parse(row.l.stepsJson) as string[]).join('\n'),
     locale: `${row.l.country}:${row.l.lang}`, prep: row.r.prepMinutes?.toString() ?? '', cook: row.r.cookMinutes?.toString() ?? '', servings: row.r.baseServings?.toString() ?? '',
@@ -1134,6 +1268,8 @@ accountApp.post('/recipes/save', async (c) => {
   if (!localeOk) push({ field: 'locale', msg: t.errPickLanguage });
   // Sending in always needs the rights attestation (also re-checked in SQL by sendForReview).
   if (wantsSubmit && !s.attest) push({ field: 'attest', msg: t.errAttestToSubmit });
+  if (rawLineCount(s.ingredients) > MAX_RECIPE_LINES) push({ field: 'ingredients', msg: fill(t.errTooManyIngredients, { max: MAX_RECIPE_LINES }) });
+  if (rawLineCount(s.steps) > MAX_RECIPE_LINES) push({ field: 'steps', msg: fill(t.errTooManySteps, { max: MAX_RECIPE_LINES }) });
   const origin = c.env.CANONICAL_ORIGIN ?? new URL(c.req.url).origin;
   // Run the validator whenever the locale is usable so every problem shows at once.
   const result = localeOk ? validateRecipeSubmission(buildSubmission(s, origin)) : null;

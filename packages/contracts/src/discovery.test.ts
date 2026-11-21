@@ -12,6 +12,12 @@ import {
   extractStepMinutes,
   contributorSlug,
   contributorInitials,
+  parseCaptureIngredientRow,
+  formatCaptureIngredientRow,
+  sanitizeSearchGapPrompt,
+  titleCasePrompt,
+  parseHaveParam,
+  PANTRY_STAPLES,
   SEARCH_PAGE_SIZE,
   type SearchableRecipe,
 } from './index';
@@ -236,5 +242,48 @@ describe('cuisines, collections, searchCatalog & suggestCatalog', () => {
     expect(extractStepMinutes('Hornear 2 horas hasta dorar.')).toBe(120);
     expect(extractStepMinutes('Add 0 min wait')).toBeNull();
     expect(extractStepMinutes('Chop onions finely.')).toBeNull();
+  });
+
+  it('parses and formats structured capture ingredient rows and section headings (S4)', () => {
+    expect(parseCaptureIngredientRow('- 1 1/2 cups of all-purpose flour')).toEqual({
+      isSection: false, qty: '1 1/2', unit: 'cups', item: 'all-purpose flour',
+    });
+    expect(parseCaptureIngredientRow('250 g pork shoulder, cubed')).toEqual({
+      isSection: false, qty: '250', unit: 'g', item: 'pork shoulder, cubed',
+    });
+    expect(parseCaptureIngredientRow('For the sauce:')).toEqual({
+      isSection: true, qty: '', unit: '', item: 'For the sauce',
+    });
+    expect(parseCaptureIngredientRow('salt to taste')).toEqual({
+      isSection: false, qty: '', unit: '', item: 'salt to taste',
+    });
+    expect(formatCaptureIngredientRow({ isSection: false, qty: '2', unit: 'tbsp', item: 'olive oil' })).toBe('2 tbsp olive oil');
+    expect(formatCaptureIngredientRow({ isSection: true, qty: '', unit: '', item: 'For the sauce' })).toBe('For the sauce:');
+  });
+
+  it('sanitizes search-gap prompts safely (S12)', () => {
+    expect(sanitizeSearchGapPrompt('  vegetarian   lasagna  ')).toBe('vegetarian lasagna');
+    expect(titleCasePrompt('vegetarian lasagna')).toBe('Vegetarian lasagna');
+    expect(sanitizeSearchGapPrompt('https://evil.example/x')).toBeNull();
+    expect(sanitizeSearchGapPrompt('<script>alert(1)</script>')).toBeNull();
+    expect(sanitizeSearchGapPrompt('12345')).toBeNull();
+    expect(sanitizeSearchGapPrompt('zz')).toBeNull();
+    expect(sanitizeSearchGapPrompt('bcdfg')).toBeNull();
+  });
+
+  it('matches & ranks cook-with-what-you-have multi-ingredient queries (Q6)', () => {
+    expect(PANTRY_STAPLES).toHaveLength(12);
+    expect(parseHaveParam('eggs, garlic, Eggs, potatoes, beans, pasta, onion')).toEqual([
+      'eggs', 'garlic', 'potatoes', 'beans', 'pasta',
+    ]);
+    const pantryRows: SearchableRecipe[] = [
+      { id: 'p2', slug: 'garlic-eggs', title: 'Garlic Eggs', country: 'us', lang: 'en', ingredients: '2 eggs\n2 cloves garlic\n1 tbsp butter', diets: ['vegetarian'], noOven: true },
+      { id: 'p3', slug: 'shakshuka', title: 'Tomato Garlic Eggs', country: 'us', lang: 'en', ingredients: '4 large eggs\n3 cloves garlic\n400 g crushed tomatoes\n1 tbsp oil', diets: ['vegetarian'], noOven: true },
+      { id: 'p1', slug: 'plain-toast', title: 'Toast', country: 'us', lang: 'en', ingredients: '2 slices bread\n1 clove garlic', diets: ['vegan'], noOven: true },
+    ];
+    const res = searchCatalog(pantryRows, { have: ['eggs', 'garlic', 'tomatoes'], diet: 'vegetarian' }, 'en');
+    expect(res.items.map((r) => r.id)).toEqual(['p3', 'p2']);
+    expect(res.pantryMatches?.p3).toEqual({ matched: ['eggs', 'garlic', 'tomatoes'], matchCount: 3, requestedCount: 3 });
+    expect(res.pantryMatches?.p2).toEqual({ matched: ['eggs', 'garlic'], matchCount: 2, requestedCount: 3 });
   });
 });

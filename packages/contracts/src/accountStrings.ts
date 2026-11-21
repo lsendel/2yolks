@@ -86,6 +86,39 @@ export interface AccountStrings {
   mailNeedsChangesSubject: string; mailNeedsChangesBody: string;
   mailDeclinedSubject: string; mailDeclinedBody: string;
   mailPublishedSubject: string; mailPublishedBody: string;
+  // S4 structured capture, S9 live celebration & remix, S12 search-gap prompts
+  lineLimitBadge: string;
+  errTooManyIngredients: string;
+  errTooManySteps: string;
+  ingModeRows: string;
+  ingModeRaw: string;
+  ingQtyPlaceholder: string;
+  ingUnitPlaceholder: string;
+  ingItemPlaceholder: string;
+  ingSectionPlaceholder: string;
+  ingAddRow: string;
+  ingAddSection: string;
+  stepModeCards: string;
+  stepPlaceholder: string;
+  stepTimerLabel: string;
+  stepAddCard: string;
+  stepPhotoJump: string;
+  moveUp: string;
+  moveDown: string;
+  removeRow: string;
+  celebrateLiveTitle: string;
+  celebrateLiveLead: string;
+  celebrateStoryBtn: string;
+  celebrateStoryReady: string;
+  celebrateCopyBtn: string;
+  celebrateLinkCopied: string;
+  celebrateWhatsApp: string;
+  remixTitleTpl: string;
+  remixIntroTpl: string;
+  remixBanner: string;
+  gapPromptLead: string;
+  gapPromptMore: string;
+  gapPrefilledBanner: string;
   savedPanelTitle: string; savedPanelLead: string; savedPanelLink: string;
 }
 
@@ -268,6 +301,38 @@ const en: AccountStrings = {
   mailDeclinedBody: 'Thank you for sending in "{title}". We decided not to publish this submission:\n\n{note}\n\nYou can still make a fresh copy in My recipes:\n{accountUrl}\n',
   mailPublishedSubject: 'Your 2yolks recipe "{title}" is live',
   mailPublishedBody: 'Good news — "{title}" passed review and is now live on 2yolks:\n\n{liveUrl}\n',
+  lineLimitBadge: '{n} / {max} lines',
+  errTooManyIngredients: 'Up to {max} ingredient lines allowed — combine garnish or spice lines.',
+  errTooManySteps: 'Up to {max} steps allowed — combine short steps.',
+  ingModeRows: 'Structured rows',
+  ingModeRaw: 'Plain text',
+  ingQtyPlaceholder: 'Qty',
+  ingUnitPlaceholder: 'Unit',
+  ingItemPlaceholder: 'Ingredient name, prep note…',
+  ingSectionPlaceholder: 'Section (e.g. For the sauce)',
+  ingAddRow: '+ Add ingredient',
+  ingAddSection: '+ Add section',
+  stepModeCards: 'Step cards',
+  stepPlaceholder: 'Describe this step clearly…',
+  stepTimerLabel: 'Timer (min)',
+  stepAddCard: '+ Add step',
+  stepPhotoJump: 'Add dish photo',
+  moveUp: 'Move up',
+  moveDown: 'Move down',
+  removeRow: 'Remove',
+  celebrateLiveTitle: 'Your recipe is live 🎉',
+  celebrateLiveLead: 'Share it directly with a friend, group chat, or story card.',
+  celebrateStoryBtn: 'Story card (PNG)',
+  celebrateStoryReady: 'Story saved',
+  celebrateCopyBtn: 'Copy link',
+  celebrateLinkCopied: 'Link copied',
+  celebrateWhatsApp: 'WhatsApp',
+  remixTitleTpl: 'My {title}',
+  remixIntroTpl: 'Adapted from "{title}" by {author}.',
+  remixBanner: 'Remixing "{title}" — edit anything you changed, add your name, and credit is already linked.',
+  gapPromptLead: 'People searched "{query}" and found nothing. Got a recipe?',
+  gapPromptMore: 'Other requested dishes:',
+  gapPrefilledBanner: 'Starting a recipe for "{query}" — requested by 2yolks readers.',
   savedPanelTitle: 'Saved recipes',
   savedPanelLead: 'Recipes you bookmarked with ♥ are synced to your account ({count}).',
   savedPanelLink: 'Open Saved recipes',
@@ -452,6 +517,38 @@ const es: AccountStrings = {
   mailDeclinedBody: 'Gracias por enviar "{title}". Decidimos no publicar esta entrega:\n\n{note}\n\nPuedes hacer una copia nueva desde Mis recetas:\n{accountUrl}\n',
   mailPublishedSubject: 'Tu receta "{title}" ya está en 2yolks',
   mailPublishedBody: '¡Buenas noticias! "{title}" pasó la revisión y ya está publicada en 2yolks:\n\n{liveUrl}\n',
+  lineLimitBadge: '{n} / {max} líneas',
+  errTooManyIngredients: 'Máximo {max} líneas de ingredientes — combina especias o guarniciones.',
+  errTooManySteps: 'Máximo {max} pasos — combina pasos cortos.',
+  ingModeRows: 'Filas guiadas',
+  ingModeRaw: 'Texto plano',
+  ingQtyPlaceholder: 'Cant.',
+  ingUnitPlaceholder: 'Unidad',
+  ingItemPlaceholder: 'Ingrediente, corte o nota…',
+  ingSectionPlaceholder: 'Sección (ej. Para la salsa)',
+  ingAddRow: '+ Añadir ingrediente',
+  ingAddSection: '+ Añadir sección',
+  stepModeCards: 'Tarjetas de pasos',
+  stepPlaceholder: 'Describe este paso con claridad…',
+  stepTimerLabel: 'Min.',
+  stepAddCard: '+ Añadir paso',
+  stepPhotoJump: 'Subir foto del plato',
+  moveUp: 'Subir',
+  moveDown: 'Bajar',
+  removeRow: 'Quitar',
+  celebrateLiveTitle: '¡Tu receta ya está publicada! 🎉',
+  celebrateLiveLead: 'Compártela con una amistad, un grupo o como tarjeta Story.',
+  celebrateStoryBtn: 'Tarjeta Story (PNG)',
+  celebrateStoryReady: 'Story guardada',
+  celebrateCopyBtn: 'Copiar enlace',
+  celebrateLinkCopied: 'Enlace copiado',
+  celebrateWhatsApp: 'WhatsApp',
+  remixTitleTpl: 'Mi versión de {title}',
+  remixIntroTpl: 'Adaptada de "{title}" de {author}.',
+  remixBanner: 'Adaptando "{title}" — edita lo que cambiaste, añade tu nombre y el crédito ya queda enlazado.',
+  gapPromptLead: 'La gente buscó "{query}" y no encontró nada. ¿Tienes una receta?',
+  gapPromptMore: 'Otras búsquedas sin receta:',
+  gapPrefilledBanner: 'Creando una receta para "{query}" — pedida por lectores de 2yolks.',
   savedPanelTitle: 'Recetas guardadas',
   savedPanelLead: 'Las recetas que marcaste con ♥ se sincronizan con tu cuenta ({count}).',
   savedPanelLink: 'Ver recetas guardadas',
@@ -636,6 +733,38 @@ const fr: AccountStrings = {
   mailDeclinedBody: 'Merci d’avoir proposé « {title} ». Nous avons choisi de ne pas publier cette version :\n\n{note}\n\nVous pouvez créer une nouvelle copie depuis Mes recettes :\n{accountUrl}\n',
   mailPublishedSubject: 'Votre recette « {title} » est en ligne sur 2yolks',
   mailPublishedBody: 'Bonne nouvelle : « {title} » a été relue et est maintenant publiée sur 2yolks :\n\n{liveUrl}\n',
+  lineLimitBadge: '{n} / {max} lignes',
+  errTooManyIngredients: 'Maximum {max} lignes d’ingrédients — regroupez épices ou garnitures.',
+  errTooManySteps: 'Maximum {max} étapes — regroupez les étapes courtes.',
+  ingModeRows: 'Lignes guidées',
+  ingModeRaw: 'Texte brut',
+  ingQtyPlaceholder: 'Qté',
+  ingUnitPlaceholder: 'Unité',
+  ingItemPlaceholder: 'Ingrédient, découpe ou note…',
+  ingSectionPlaceholder: 'Section (ex. Pour la sauce)',
+  ingAddRow: '+ Ajouter un ingrédient',
+  ingAddSection: '+ Ajouter une section',
+  stepModeCards: 'Cartes d’étapes',
+  stepPlaceholder: 'Décrivez cette étape clairement…',
+  stepTimerLabel: 'Min.',
+  stepAddCard: '+ Ajouter une étape',
+  stepPhotoJump: 'Ajouter une photo',
+  moveUp: 'Monter',
+  moveDown: 'Descendre',
+  removeRow: 'Retirer',
+  celebrateLiveTitle: 'Votre recette est en ligne 🎉',
+  celebrateLiveLead: 'Partagez-la à un proche, sur un groupe ou en carte Story.',
+  celebrateStoryBtn: 'Carte Story (PNG)',
+  celebrateStoryReady: 'Story enregistrée',
+  celebrateCopyBtn: 'Copier le lien',
+  celebrateLinkCopied: 'Lien copié',
+  celebrateWhatsApp: 'WhatsApp',
+  remixTitleTpl: 'Ma version : {title}',
+  remixIntroTpl: 'Adaptée de « {title} » par {author}.',
+  remixBanner: 'Adaptation de « {title} » — modifiez vos ajouts, signez de votre nom, le crédit est déjà lié.',
+  gapPromptLead: 'Des lecteurs ont cherché « {query} » sans résultat. Vous avez une recette ?',
+  gapPromptMore: 'Autres plats recherchés :',
+  gapPrefilledBanner: 'Création d’une recette pour « {query} » — demandée par des lecteurs de 2yolks.',
   savedPanelTitle: 'Recettes enregistrées',
   savedPanelLead: 'Les recettes marquées d’un ♥ sont synchronisées avec votre compte ({count}).',
   savedPanelLink: 'Ouvrir les recettes enregistrées',
