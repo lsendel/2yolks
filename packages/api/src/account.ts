@@ -59,6 +59,7 @@ export type AccountBindings = MailEnv & {
   /** Optional Workers rate-limit bindings (approximate, per location). Absent = skipped. */
   RL_AUTH?: RateLimiter;
   RL_SUBMIT?: RateLimiter;
+  ALLOW_DEMO_SEED?: string;
   ZELUTO_URL?: string;
   ZELUTO_CLIENT_SECRET?: string;
   ZELUTO_SYNC_SECRET?: string;
@@ -75,6 +76,7 @@ export const MAX_CODES_PER_DAY = 1000; // ceiling for the CODES_PER_DAY env over
 export const NOTICES_PER_DAY = 8; // review notices per rolling 24h, counted by kind; 32 + 8 = 40/day hard total at the default code budget
 export const MAX_DRAFTS_PER_USER = 50; // active (not removed) drafts
 export const MAX_ROWS_PER_USER = 500; // lifetime rows incl. removed ones, so remove/recreate loops cannot grow storage forever
+export const MAX_SAVED_PER_USER = 200; // max saved (bookmarked) recipes per account
 
 export type AccountUser = { id: string; email: string; displayName: string | null };
 export const accountApp = new Hono<{ Bindings: AccountBindings; Variables: { user: AccountUser | null } }>();
@@ -113,7 +115,7 @@ function zelutoConfigFromCtx(c: Ctx): Zeluto2YolksConfig {
  */
 export const MAX_NEXT_PATH = 160;
 export function safeNextPath(raw: unknown): string | null {
-  if (raw === '/account') return '/account';
+  if (raw === '/account' || raw === '/saved') return raw;
   if (typeof raw !== 'string' || raw.length < 10 || raw.length > MAX_NEXT_PATH) return null;
   if (!raw.startsWith('/account/')) return null;
   if (!/^\/account\/[A-Za-z0-9_\-/]+$/.test(raw)) return null; // also rules out \, %, :, ?, #, ., whitespace
@@ -259,14 +261,29 @@ export async function limited(
   try { return !(await rl.limit({ key: `${scope}:${ip}` })).success; } catch { return false; }
 }
 
-async function currentUser(c: Ctx) {
-  const tok = getCookie(c, SESSION_COOKIE);
-  if (!tok || !/^[0-9a-f]{64}$/.test(tok)) return null;
-  const id = await sha256Hex(tok);
-  const row = await c.env.DB.prepare(
+export async function readSessionUser(db: D1Database, cookieToken: string | undefined): Promise<AccountUser | null> {
+  if (!cookieToken || !/^[0-9a-f]{64}$/.test(cookieToken)) return null;
+  const id = await sha256Hex(cookieToken);
+  const row = await db.prepare(
     'SELECT u.id AS id, u.email AS email, u.display_name AS displayName FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.id = ? AND s.expires_at > ?',
   ).bind(id, Date.now()).first<{ id: string; email: string; displayName: string | null }>();
   return row ?? null;
+}
+
+export async function loadSavedRecipeIds(db: D1Database, userId: string): Promise<string[]> {
+  try {
+    const res = await db
+      .prepare('SELECT recipe_id FROM saved_recipes WHERE user_id = ? ORDER BY created_at DESC LIMIT ?')
+      .bind(userId, MAX_SAVED_PER_USER)
+      .all<{ recipe_id: string }>();
+    return (res.results ?? []).map((r) => String(r.recipe_id));
+  } catch {
+    return [];
+  }
+}
+
+async function currentUser(c: Ctx) {
+  return readSessionUser(c.env.DB, getCookie(c, SESSION_COOKIE));
 }
 
 accountApp.use('*', async (c, next) => {
@@ -385,14 +402,114 @@ accountApp.get('/', async (c) => {
     return `<li><div class="mine-main"><strong>${esc(r.title)}</strong> <span class="badge ${badgeCls}">${label}</span>${renderTimeline(t, state)}${note}</div><div class="mine-actions">${action}</div></li>`;
   }).join('');
   const isCreator = await hasUserSharedRecipe(c.env.DB, user.id);
+  const savedIds = await loadSavedRecipeIds(c.env.DB, user.id);
+  const savedPanel = `<div class="panel"><h2>${t.savedPanelTitle}</h2><p>${fill(t.savedPanelLead, { count: savedIds.length })}</p><p><a class="btn" href="/saved${qs(lang)}">${t.savedPanelLink}</a></p></div>`;
   const creatorSection = isCreator
     ? `<div class="panel"><h2>Creator Subscribers &amp; Zeluto CRM</h2><p>Because you shared a recipe, your Creator workspace is unlocked.</p><p><a class="btn" href="/account/subscribers${qs(lang)}">Manage Subscribers &amp; Zeluto CRM</a></p></div>`
     : '';
   return page(c, t.homePageTitle, `<h1>${t.homeTitle}</h1><p class="lead">${fill(t.homeLead, { email: esc(user.email) })}</p>
 <p><a class="btn" href="/account/recipes/new${qs(lang)}">${t.addRecipe}</a></p>
+${savedPanel}
 ${creatorSection}
 <div class="panel"><h2>${t.yourDrafts}</h2>${items ? `<ul class="mine">${items}</ul>` : `<p class="hint">${t.emptyDrafts}</p>`}</div>
 <form method="post" action="/account/logout${qs(lang)}"><button class="quiet" type="submit">${t.signOut}</button></form>`);
+});
+
+// --- Saved recipes (bookmarks) -----------------------------------------------
+
+async function isPublishedRecipeId(db: D1Database, recipeId: string, allowDemo: boolean): Promise<boolean> {
+  const demoFilter = allowDemo ? '' : "AND s.license != 'internal-demo'";
+  const row = await db
+    .prepare(
+      `SELECT 1 AS ok FROM recipe_locales l JOIN recipes r ON r.id = l.recipe_id JOIN sources s ON s.id = r.source_id WHERE r.id = ? AND l.status = 'published' AND s.cleared_at IS NOT NULL ${demoFilter} LIMIT 1`,
+    )
+    .bind(recipeId)
+    .first<{ ok: number }>();
+  return row?.ok === 1;
+}
+
+accountApp.get('/saved', async (c) => {
+  const user = c.get('user');
+  if (!user) return c.json({ ok: true, signedIn: false, ids: [] }, 200, NO_STORE);
+  const ids = await loadSavedRecipeIds(c.env.DB, user.id);
+  return c.json({ ok: true, signedIn: true, ids }, 200, NO_STORE);
+});
+
+accountApp.post('/saved/toggle', async (c) => {
+  const lang = langOf(c);
+  const t = accountStrings(lang);
+  const json = wantsJson(c);
+  const user = c.get('user');
+  if (!user) {
+    if (json) return c.json({ ok: false, signedIn: false, error: t.signInPageTitle }, 401, NO_STORE);
+    return c.redirect(`/account${qsNext(lang, '/saved')}`, 303);
+  }
+  const body = await readBody(c);
+  const recipeId = str(body['recipe_id'], 40).trim();
+  if (!/^[A-Za-z0-9_-]{1,40}$/.test(recipeId)) {
+    if (json) return c.json({ ok: false, error: t.errGeneric }, 400, NO_STORE);
+    return c.redirect(`/saved${qs(lang)}`, 303);
+  }
+  const existing = await c.env.DB
+    .prepare('SELECT 1 AS ok FROM saved_recipes WHERE user_id = ? AND recipe_id = ? LIMIT 1')
+    .bind(user.id, recipeId)
+    .first<{ ok: number }>();
+  let saved = false;
+  if (existing?.ok === 1) {
+    await c.env.DB.prepare('DELETE FROM saved_recipes WHERE user_id = ? AND recipe_id = ?').bind(user.id, recipeId).run();
+    saved = false;
+  } else {
+    const pub = await isPublishedRecipeId(c.env.DB, recipeId, c.env.ALLOW_DEMO_SEED === 'true');
+    if (!pub) {
+      if (json) return c.json({ ok: false, error: t.titleNotFound }, 404, NO_STORE);
+      return c.redirect(`/saved${qs(lang)}`, 303);
+    }
+    const cnt = await c.env.DB.prepare('SELECT count(*) AS n FROM saved_recipes WHERE user_id = ?').bind(user.id).first<{ n: number }>();
+    if ((cnt?.n ?? 0) >= MAX_SAVED_PER_USER) {
+      if (json) return c.json({ ok: false, error: t.errRowLimit }, 400, NO_STORE);
+      return c.redirect(`/saved${qs(lang)}`, 303);
+    }
+    await c.env.DB
+      .prepare('INSERT OR IGNORE INTO saved_recipes (user_id, recipe_id, created_at) VALUES (?, ?, ?)')
+      .bind(user.id, recipeId, new Date().toISOString())
+      .run();
+    saved = true;
+  }
+  const ids = await loadSavedRecipeIds(c.env.DB, user.id);
+  if (json) return c.json({ ok: true, saved, recipeId, ids }, 200, NO_STORE);
+  return c.redirect(`/saved${qs(lang)}`, 303);
+});
+
+accountApp.post('/saved/sync', async (c) => {
+  const user = c.get('user');
+  if (!user) return c.json({ ok: false, signedIn: false }, 401, NO_STORE);
+  const body = await readBody(c);
+  const rawIds = Array.isArray(body['ids']) ? body['ids'] : [];
+  const cleanIds: string[] = [];
+  for (const item of rawIds) {
+    if (typeof item === 'string' && /^[A-Za-z0-9_-]{1,40}$/.test(item) && !cleanIds.includes(item)) {
+      cleanIds.push(item);
+      if (cleanIds.length >= MAX_SAVED_PER_USER) break;
+    }
+  }
+  const current = await loadSavedRecipeIds(c.env.DB, user.id);
+  const existingSet = new Set(current);
+  let remaining = Math.max(0, MAX_SAVED_PER_USER - current.length);
+  const nowIso = new Date().toISOString();
+  const allowDemo = c.env.ALLOW_DEMO_SEED === 'true';
+  for (const rid of cleanIds) {
+    if (remaining <= 0) break;
+    if (existingSet.has(rid)) continue;
+    if (!(await isPublishedRecipeId(c.env.DB, rid, allowDemo))) continue;
+    await c.env.DB
+      .prepare('INSERT OR IGNORE INTO saved_recipes (user_id, recipe_id, created_at) VALUES (?, ?, ?)')
+      .bind(user.id, rid, nowIso)
+      .run();
+    existingSet.add(rid);
+    remaining--;
+  }
+  const ids = await loadSavedRecipeIds(c.env.DB, user.id);
+  return c.json({ ok: true, ids }, 200, NO_STORE);
 });
 
 accountApp.post('/code', async (c) => {

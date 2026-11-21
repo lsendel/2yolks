@@ -133,6 +133,13 @@ try {
   check('edit draft needs sign-in (303 to /account?next=...)', r.status === 303 && r.location === '/account?next=%2Faccount%2Frecipes%2Fabc123%2Fedit');
   r = await get('/robots.txt');
   check('robots disallows /account', r.body.includes('Disallow: /account'));
+  check('robots disallows /saved', r.body.includes('Disallow: /saved'));
+  r = await get('/saved');
+  check('saved page 200, noindex, no-store', r.status === 200 && r.headers.get('x-robots-tag') === 'noindex' && (r.headers.get('cache-control') || '').includes('no-store') && r.body.includes('data-saved-page'));
+  r = await get('/?q=ranch');
+  check('home query redirects 302 to /search', r.status === 302 && r.location === '/search?q=ranch');
+  r = await get('/search?q=ranch');
+  check('prod mode: search without demo hits returns 200 with noindex', r.status === 200 && r.headers.get('x-robots-tag') === 'noindex');
 
   // dev mode: demo seed visible
   await stopServer(server);
@@ -173,6 +180,21 @@ try {
 
     r = await get2('/sitemap.xml');
     check('sitemap dev: r1 both locales + hreflang links', r.body.includes('/mx/recipes/huevos-rancheros') && r.body.includes('/us/recipes/ranch-eggs') && r.body.includes('hreflang="es-MX"') && r.body.includes('hreflang="en-US"'));
+
+    r = await get2('/search?q=ranch');
+    check('dev mode: /search?q=ranch 200 indexable with Ranch Eggs', r.status === 200 && !r.headers.get('x-robots-tag') && r.body.includes('Ranch Eggs'));
+    r = await get2('/search?lang=es&q=huevos');
+    check('dev mode: /search?lang=es&q=huevos returns Huevos Rancheros', r.status === 200 && r.body.includes('Huevos Rancheros'));
+    r = await get2('/recipes/breakfast');
+    check('dev mode: category hub /recipes/breakfast 200', r.status === 200);
+    r = await get2('/collections/no-oven');
+    check('dev mode: collection hub /collections/no-oven 200 with Ranch Eggs', r.status === 200 && r.body.includes('Ranch Eggs'));
+    r = await get2('/cuisine/mx');
+    check('dev mode: /cuisine/mx 301 to /cuisine/mexican', r.status === 301 && r.location === '/cuisine/mexican');
+    r = await get2('/cuisine/mexican');
+    check('dev mode: /cuisine/mexican 200 with Ranch Eggs', r.status === 200 && r.body.includes('Ranch Eggs'));
+    r = await get2('/api/v1/search/suggest?lang=es&q=huevos');
+    check('dev mode: suggest api returns Huevos Rancheros', r.status === 200 && r.body.includes('Huevos Rancheros'));
 
     // submission draft path (enabled in this dev server)
     const post = async (body) => { const res = await fetch(`http://127.0.0.1:${PORT2}/api/v1/submissions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }); return { status: res.status, json: await res.json() }; };

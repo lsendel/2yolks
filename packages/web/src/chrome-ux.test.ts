@@ -17,22 +17,44 @@ const recipe = () =>
   );
 
 describe('Phase 1 navigation & search chrome', () => {
-  it('home hero has a no-JS search form that lands on results, plus quick searches', () => {
+  it('home hero has a no-JS /search form, real-intent quick chips, and language propagation', () => {
     const html = renderHome({ recipes: rows, locales: [], lang: 'en' });
-    expect(html).toContain('<form class="hero-search" role="search" action="/#recipes" method="get">');
+    expect(html).toContain('<form class="hero-search" role="search" action="/search" method="get">');
     expect(html).toContain('name="q"');
-    expect(html).toContain('href="/?q=chicken#recipes"');
+    expect(html).toContain('href="/search?time=30"');
+    expect(html).toContain('href="/search?q=chicken"');
+    expect(html).toContain('href="/search?method=no-oven"');
+    expect(html).toContain('href="/search?diet=vegetarian"');
+    expect(html).toContain('href="/collections/thanksgiving"');
     // language travels with the form and the chips
     const es = renderHome({ recipes: rows, locales: [], lang: 'es' });
     expect(es).toContain('<input type="hidden" name="lang" value="es"/>');
-    expect(es).toContain('href="/?lang=es&amp;q=pollo#recipes"');
+    expect(es).toContain('href="/search?lang=es&amp;time=30"');
+    expect(es).toContain('href="/search?lang=es&amp;q=pollo"');
+    expect(es).toContain('href="/search?lang=es&amp;method=no-oven"');
+    expect(es).toContain('href="/search?lang=es&amp;diet=vegetarian"');
+    expect(es).toContain('href="/collections/thanksgiving?lang=es"');
   });
 
-  it('search results are announced and the header search link has a target', () => {
+  it('header inline search, search sheet, mobile tab bar, save controls, and Saved/My recipes nav are rendered', () => {
     const html = renderHome({ recipes: rows, locales: [], lang: 'en' });
     expect(html).toMatch(/role="status" aria-live="polite" data-search-status/);
     expect(html).toContain('id="search"');
-    expect(html).toContain('href="/#search"');
+    expect(html).toContain('<form class="header-search-form" role="search" data-header-search="true" action="/search" method="get">');
+    expect(html).toContain('data-open-search-sheet');
+    expect(html).toContain('data-search-sheet="true"');
+    expect(html).toContain('data-mobile-tabs="true"');
+    const mobileTabsSection = html.slice(html.indexOf('data-mobile-tabs="true"'));
+    const tabLinks = mobileTabsSection.slice(0, mobileTabsSection.indexOf('</nav>')).match(/<a /g) || [];
+    expect(tabLinks).toHaveLength(5);
+    expect(mobileTabsSection).toContain('href="/saved"');
+    expect(mobileTabsSection).toContain('href="/account"');
+    expect(html).toMatch(/data-save-recipe="[^"]+"/);
+    expect(html).toContain('<a class="nav-secondary nav-saved-link" href="/saved">Saved');
+    expect(html).toContain('<a class="nav-secondary" href="/account">My recipes</a>');
+    const menu = html.slice(html.indexOf('<details class="mobile-menu">'), html.indexOf('</details>'));
+    expect(menu).toContain('<a href="/saved">Saved</a>');
+    expect(menu).toContain('<a href="/account">My recipes</a>');
   });
 
   it('offers "search all categories" only inside a category filter', () => {

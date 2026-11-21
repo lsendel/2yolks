@@ -18,31 +18,614 @@ export const THEME_CLIENT_SCRIPT = `(function () {
   });
 })();`;
 
-export const DISCOVERY_CLIENT_SCRIPT = `(function () {
-  var lists = Array.prototype.slice.call(document.querySelectorAll('[data-recipe-list]'));
-  var list = lists[0] || document.querySelector('[data-recipe-list]');
-  var groups = Array.prototype.slice.call(document.querySelectorAll('[data-recipe-group]'));
-  var viewBtns = Array.prototype.slice.call(document.querySelectorAll('[data-view-btn]'));
+export const GLOBAL_CHROME_SCRIPT = `(function () {
+  var W = typeof window !== 'undefined' ? window : null;
+  if (!document || typeof document.querySelectorAll !== 'function') return;
+  function qsa(root, sel) {
+    return root && typeof root.querySelectorAll === 'function' ? Array.prototype.slice.call(root.querySelectorAll(sel)) : [];
+  }
+  function getStore(kind) {
+    try {
+      var s = W && W[kind] ? W[kind] : (kind === 'localStorage' && typeof localStorage !== 'undefined' ? localStorage : kind === 'sessionStorage' && typeof sessionStorage !== 'undefined' ? sessionStorage : null);
+      if (!s) return null;
+      s.setItem('__2y_p', '1');
+      s.removeItem('__2y_p');
+      return s;
+    } catch (e) { return null; }
+  }
+  var local = getStore('localStorage');
+  var session = getStore('sessionStorage');
+  function safeHref(h) {
+    return typeof h === 'string' && h.length > 0 && h.charAt(0) === '/' && h.charAt(1) !== '/' ? h : null;
+  }
+  function uiLang() {
+    var l = (document.documentElement && document.documentElement.lang) || 'en';
+    return l === 'es' || l === 'fr' ? l : 'en';
+  }
+  var LABELS = {
+    en: { recipes: 'Recipes', categories: 'Categories & collections', ingredients: 'Ingredients', recent: 'Recent searches', searchFor: 'Search:', remove: 'Remove' },
+    es: { recipes: 'Recetas', categories: 'Categorías y colecciones', ingredients: 'Ingredientes', recent: 'Búsquedas recientes', searchFor: 'Buscar:', remove: 'Quitar' },
+    fr: { recipes: 'Recettes', categories: 'Catégories et collections', ingredients: 'Ingrédients', recent: 'Recherches récentes', searchFor: 'Chercher :', remove: 'Retirer' }
+  };
+
+  // --- 1. View toggle (Cards / Index across Home, Search, Hubs, Saved) -------
+  var lists = qsa(document, '[data-recipe-list]');
+  var viewBtns = qsa(document, '[data-view-btn]');
   function setView(mode) {
     var v = mode === 'grid' ? 'grid' : 'list';
-    (lists.length ? lists : (list ? [list] : [])).forEach(function (l) { l.setAttribute('data-view', v); });
+    lists.forEach(function (l) { l.setAttribute('data-view', v); });
     viewBtns.forEach(function (b) {
       b.setAttribute('aria-pressed', b.getAttribute('data-view-btn') === v ? 'true' : 'false');
     });
   }
-  if (viewBtns.length && list) {
+  if (viewBtns.length && lists.length) {
     try {
-      var savedView = localStorage.getItem('2y-view');
+      var savedView = local ? local.getItem('2y-view') : null;
       if (savedView === 'grid' || savedView === 'list') setView(savedView);
     } catch (e) {}
     viewBtns.forEach(function (b) {
       b.addEventListener('click', function () {
         var mode = b.getAttribute('data-view-btn') || 'list';
         setView(mode);
-        try { localStorage.setItem('2y-view', mode); } catch (e) {}
+        if (local) { try { local.setItem('2y-view', mode); } catch (e) {} }
       });
     });
   }
+
+  // --- 2. Auto-submit filters on /search when selects/checkboxes change ------
+  var spForm = document.querySelector ? document.querySelector('[data-search-page-form]') : null;
+  if (spForm && typeof spForm.submit === 'function') {
+    qsa(spForm, 'select, input[type="checkbox"]').forEach(function (ctrl) {
+      ctrl.addEventListener('change', function () { spForm.submit(); });
+    });
+  }
+
+  // --- 3. Save ♥ (bookmarks) + Recently Viewed + optional server sync --------
+  var SAVED_KEY = '2y-saved';
+  var RECENT_KEY = '2y-recent';
+  var RECENT_Q_KEY = '2y-recent-q';
+  var LANG_FORM_KEY = '2y-lang-form';
+
+  function readJsonArr(key) {
+    if (!local) return [];
+    try {
+      var parsed = JSON.parse(local.getItem(key) || '[]');
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (e) { return []; }
+  }
+  function writeJsonArr(key, arr) {
+    if (!local) return;
+    try { local.setItem(key, JSON.stringify(arr)); } catch (e) {}
+  }
+
+  function clearChildren(el) {
+    if (!el) return;
+    while (el.firstChild) el.removeChild(el.firstChild);
+  }
+
+  function renderLocalSaved() {
+    var root = document.querySelector ? document.querySelector('[data-saved-local-root]') : null;
+    if (!root) return;
+    var items = readJsonArr(SAVED_KEY).filter(function (x) { return x && typeof x.id === 'string' && safeHref(x.href); });
+    clearChildren(root);
+    if (!items.length) {
+      var box = document.createElement('div');
+      box.className = 'empty-note empty-search-card';
+      var p = document.createElement('p');
+      p.textContent = root.getAttribute('data-empty-text') || 'No saved recipes yet.';
+      box.appendChild(p);
+      var bHref = safeHref(root.getAttribute('data-browse-href') || '/search');
+      if (bHref) {
+        var acts = document.createElement('div');
+        acts.className = 'empty-actions';
+        var a = document.createElement('a');
+        a.className = 'empty-share-link';
+        a.href = bHref;
+        a.textContent = root.getAttribute('data-browse-label') || 'Browse recipes';
+        acts.appendChild(a);
+        box.appendChild(acts);
+      }
+      root.appendChild(box);
+      return;
+    }
+    var ul = document.createElement('ul');
+    ul.className = 'discovery-list';
+    items.forEach(function (it, idx) {
+      var li = document.createElement('li');
+      var num = document.createElement('span');
+      num.className = 'recipe-number';
+      num.textContent = (idx + 1 < 10 ? '0' : '') + (idx + 1);
+      li.appendChild(num);
+      var main = document.createElement('div');
+      if (it.cat) {
+        var ey = document.createElement('span');
+        ey.className = 'eyebrow';
+        ey.textContent = String(it.cat);
+        main.appendChild(ey);
+      }
+      var h3 = document.createElement('h3');
+      var link = document.createElement('a');
+      link.className = 'stretched-row';
+      link.href = safeHref(it.href) || '/';
+      link.textContent = String(it.title || it.id);
+      h3.appendChild(link);
+      main.appendChild(h3);
+      li.appendChild(main);
+      var end = document.createElement('div');
+      end.className = 'row-end';
+      if (typeof it.min === 'number' && it.min > 0) {
+        var st = document.createElement('span');
+        st.className = 'icon-stat';
+        st.textContent = it.min + ' min';
+        end.appendChild(st);
+      }
+      var rm = document.createElement('button');
+      rm.type = 'button';
+      rm.className = 'save-btn save-btn--labeled';
+      rm.setAttribute('aria-pressed', 'true');
+      rm.style.position = 'relative';
+      rm.style.zIndex = '2';
+      rm.textContent = root.getAttribute('data-remove-label') || (LABELS[uiLang()] || LABELS.en).remove;
+      rm.addEventListener('click', function (ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        toggleSavedById(it.id, it);
+      });
+      end.appendChild(rm);
+      li.appendChild(end);
+      ul.appendChild(li);
+    });
+    root.appendChild(ul);
+  }
+
+  function renderLocalRecent() {
+    var root = document.querySelector ? document.querySelector('[data-recent-local-root]') : null;
+    if (!root) return;
+    var items = readJsonArr(RECENT_KEY).filter(function (x) { return x && typeof x.id === 'string' && safeHref(x.href); });
+    if (!items.length) return;
+    clearChildren(root);
+    var ul = document.createElement('ul');
+    ul.className = 'recent-links-list';
+    items.forEach(function (it) {
+      var li = document.createElement('li');
+      var a = document.createElement('a');
+      a.href = safeHref(it.href) || '/';
+      a.textContent = String(it.title || it.id);
+      li.appendChild(a);
+      if (it.cat) {
+        var sp = document.createElement('span');
+        sp.className = 'recent-cat';
+        sp.textContent = String(it.cat);
+        li.appendChild(sp);
+      }
+      ul.appendChild(li);
+    });
+    root.appendChild(ul);
+  }
+
+  var knownSignedIn = null;
+  var savedPage = document.querySelector ? document.querySelector('[data-saved-page]') : null;
+  if (savedPage) knownSignedIn = savedPage.getAttribute('data-signed-in') === '1';
+
+  function refreshSaveUi(idsOverride) {
+    var items = readJsonArr(SAVED_KEY);
+    var savedSet = new Set();
+    if (Array.isArray(idsOverride)) {
+      idsOverride.forEach(function (id) { if (typeof id === 'string') savedSet.add(id); });
+    } else {
+      items.forEach(function (it) { if (it && typeof it.id === 'string') savedSet.add(it.id); });
+    }
+    qsa(document, '[data-save-recipe]').forEach(function (btn) {
+      var id = btn.getAttribute('data-save-recipe');
+      var on = !!id && savedSet.has(id);
+      btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+      var lbl = on ? btn.getAttribute('data-label-saved') : btn.getAttribute('data-label-save');
+      if (lbl) {
+        btn.setAttribute('aria-label', lbl);
+        btn.setAttribute('title', lbl);
+        var span = btn.querySelector ? btn.querySelector('[data-save-label]') : null;
+        if (span) span.textContent = lbl;
+      }
+    });
+    qsa(document, '[data-saved-count]').forEach(function (badge) {
+      badge.textContent = savedSet.size > 0 ? String(savedSet.size) : '';
+      badge.hidden = savedSet.size === 0;
+    });
+    renderLocalSaved();
+  }
+
+  function pushServerToggle(id) {
+    if (typeof fetch !== 'function') return;
+    fetch('/account/saved/toggle', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body: JSON.stringify({ recipe_id: id })
+    })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (data) {
+        if (!data || !data.ok || !Array.isArray(data.ids)) return;
+        if (savedPage && !data.saved) {
+          var btn = document.querySelector('[data-save-recipe="' + id + '"]');
+          var li = btn && btn.closest ? btn.closest('li[data-recipe-item]') : null;
+          if (li && li.parentNode) li.parentNode.removeChild(li);
+        }
+        refreshSaveUi(data.ids);
+      })
+      .catch(function () {});
+  }
+
+  function toggleSavedById(id, metaObj) {
+    if (!id) return;
+    var items = readJsonArr(SAVED_KEY);
+    var exists = items.some(function (x) { return x && x.id === id; });
+    if (exists) {
+      items = items.filter(function (x) { return !x || x.id !== id; });
+    } else {
+      var rec = metaObj && typeof metaObj === 'object' ? metaObj : { id: id, title: id, href: '/' };
+      if (!safeHref(rec.href)) rec.href = '/';
+      items.unshift({
+        id: id,
+        title: String(rec.title || id),
+        href: rec.href,
+        cat: rec.cat || null,
+        min: typeof rec.min === 'number' ? rec.min : null,
+        at: Date.now()
+      });
+      if (items.length > 200) items = items.slice(0, 200);
+    }
+    writeJsonArr(SAVED_KEY, items);
+    if (knownSignedIn === true) {
+      pushServerToggle(id);
+      return;
+    }
+    refreshSaveUi();
+    if (knownSignedIn === null && typeof fetch === 'function') {
+      fetch('/account/saved', { credentials: 'same-origin', headers: { 'Accept': 'application/json' } })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (res) {
+          if (!res || !res.ok) return;
+          knownSignedIn = !!res.signedIn;
+          if (knownSignedIn) pushServerToggle(id);
+        })
+        .catch(function () {});
+    }
+  }
+
+  qsa(document, '[data-save-recipe]').forEach(function (btn) {
+    btn.addEventListener('click', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      var id = btn.getAttribute('data-save-recipe');
+      var meta = null;
+      try { meta = JSON.parse(btn.getAttribute('data-recipe-meta') || 'null'); } catch (err) {}
+      toggleSavedById(id, meta);
+    });
+  });
+
+  if (knownSignedIn === true && savedPage) {
+    var serverBtns = qsa(savedPage, '[data-saved-server-list] [data-save-recipe]');
+    var serverIds = serverBtns.map(function (b) { return b.getAttribute('data-save-recipe'); }).filter(Boolean);
+    refreshSaveUi(serverIds);
+    var localItems = readJsonArr(SAVED_KEY);
+    if (localItems.length && typeof fetch === 'function') {
+      var localIds = localItems.map(function (x) { return x && x.id; }).filter(Boolean);
+      var toMerge = localIds.filter(function (id) { return serverIds.indexOf(id) === -1; });
+      if (toMerge.length) {
+        fetch('/account/saved/sync', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+          body: JSON.stringify({ ids: localIds })
+        })
+          .then(function (r) { return r.ok ? r.json() : null; })
+          .then(function (data) {
+            if (data && data.ok && Array.isArray(data.ids) && data.ids.length > serverIds.length && W && W.location && typeof W.location.reload === 'function') {
+              writeJsonArr(SAVED_KEY, []);
+              W.location.reload();
+            }
+          })
+          .catch(function () {});
+      } else {
+        writeJsonArr(SAVED_KEY, []);
+      }
+    }
+  } else {
+    refreshSaveUi();
+  }
+
+  // Record recipe page visit into localStorage['2y-recent']
+  var recipeMetaEl = document.getElementById ? document.getElementById('recipe-meta-data') : null;
+  if (recipeMetaEl && recipeMetaEl.textContent) {
+    try {
+      var rm = JSON.parse(recipeMetaEl.textContent);
+      if (rm && typeof rm.id === 'string' && safeHref(rm.href)) {
+        var recent = readJsonArr(RECENT_KEY).filter(function (x) { return x && x.id !== rm.id; });
+        recent.unshift({ id: rm.id, title: String(rm.title || ''), href: rm.href, cat: rm.cat || null, at: Date.now() });
+        if (recent.length > 12) recent = recent.slice(0, 12);
+        writeJsonArr(RECENT_KEY, recent);
+      }
+    } catch (e) {}
+  }
+  renderLocalRecent();
+
+  // --- 4. Recent search history + header/sheet typeahead suggestions --------
+  function saveRecentQuery(raw) {
+    var q = String(raw || '').trim();
+    if (!q || q.length > 80) return;
+    var cur = readJsonArr(RECENT_Q_KEY).filter(function (x) { return typeof x === 'string' && x.toLowerCase() !== q.toLowerCase(); });
+    cur.unshift(q);
+    if (cur.length > 6) cur = cur.slice(0, 6);
+    writeJsonArr(RECENT_Q_KEY, cur);
+  }
+
+  qsa(document, 'form[action="/search"]').forEach(function (f) {
+    f.addEventListener('submit', function () {
+      var qIn = f.querySelector('input[name="q"]');
+      if (qIn) saveRecentQuery(qIn.value);
+    });
+  });
+
+  function renderRecentChips(container, wrap, lang) {
+    if (!container) return;
+    var list = readJsonArr(RECENT_Q_KEY).filter(function (x) { return typeof x === 'string' && x.trim(); });
+    clearChildren(container);
+    if (!list.length) {
+      if (wrap) wrap.hidden = true;
+      return;
+    }
+    var amp = lang === 'en' ? '' : 'lang=' + encodeURIComponent(lang) + '&';
+    list.forEach(function (q) {
+      var a = document.createElement('a');
+      a.className = 'chip';
+      a.href = '/search?' + amp + 'q=' + encodeURIComponent(q);
+      a.textContent = q;
+      container.appendChild(a);
+    });
+    if (wrap) wrap.hidden = false;
+  }
+
+  function renderSuggestResults(container, data, lang, qVal) {
+    clearChildren(container);
+    var dict = LABELS[lang] || LABELS.en;
+    var amp = lang === 'en' ? '' : 'lang=' + encodeURIComponent(lang) + '&';
+    var hasAny = false;
+    function addGroup(heading, rows, renderLink) {
+      if (!Array.isArray(rows) || !rows.length) return;
+      hasAny = true;
+      var h = document.createElement('p');
+      h.className = 'suggest-heading';
+      h.textContent = heading;
+      container.appendChild(h);
+      var ul = document.createElement('ul');
+      ul.className = 'suggest-list';
+      rows.forEach(function (item) {
+        var built = renderLink(item);
+        if (!built) return;
+        var li = document.createElement('li');
+        li.appendChild(built);
+        ul.appendChild(li);
+      });
+      container.appendChild(ul);
+    }
+    addGroup(dict.recipes, data.recipes, function (r) {
+      var hr = safeHref(r && r.href);
+      if (!hr) return null;
+      var a = document.createElement('a');
+      a.href = hr;
+      a.textContent = String(r.title || '') + (r.totalMinutes ? ' · ' + r.totalMinutes + ' min' : '');
+      return a;
+    });
+    addGroup(dict.categories, data.categories, function (c) {
+      var hr = safeHref(c && c.href);
+      if (!hr) return null;
+      var a = document.createElement('a');
+      a.href = hr;
+      a.textContent = String(c.label || '');
+      return a;
+    });
+    addGroup(dict.ingredients, data.ingredients, function (ing) {
+      if (typeof ing !== 'string' || !ing) return null;
+      var a = document.createElement('a');
+      a.href = '/search?' + amp + 'q=' + encodeURIComponent(ing);
+      a.textContent = dict.searchFor + ' ' + ing;
+      return a;
+    });
+    if (!hasAny && qVal) {
+      var allA = document.createElement('a');
+      allA.className = 'suggest-fallback-link';
+      allA.href = '/search?' + amp + 'q=' + encodeURIComponent(qVal);
+      allA.textContent = dict.searchFor + ' ' + qVal;
+      container.appendChild(allA);
+      hasAny = true;
+    }
+    return hasAny;
+  }
+
+  function bindSuggestInput(inputEl, targetEl, wrapEl) {
+    if (!inputEl || !targetEl) return;
+    var timer = null;
+    var reqSeq = 0;
+    function showRecent() {
+      var lang = inputEl.getAttribute('data-suggest-lang') || uiLang();
+      var list = readJsonArr(RECENT_Q_KEY).filter(function (x) { return typeof x === 'string' && x.trim(); });
+      if (!list.length) {
+        if (wrapEl) wrapEl.hidden = true;
+        return;
+      }
+      clearChildren(targetEl);
+      var dict = LABELS[lang] || LABELS.en;
+      var h = document.createElement('p');
+      h.className = 'suggest-heading';
+      h.textContent = dict.recent;
+      targetEl.appendChild(h);
+      var ul = document.createElement('ul');
+      ul.className = 'suggest-list';
+      var amp = lang === 'en' ? '' : 'lang=' + encodeURIComponent(lang) + '&';
+      list.forEach(function (q) {
+        var li = document.createElement('li');
+        var a = document.createElement('a');
+        a.href = '/search?' + amp + 'q=' + encodeURIComponent(q);
+        a.textContent = q;
+        li.appendChild(a);
+        ul.appendChild(li);
+      });
+      targetEl.appendChild(ul);
+      if (wrapEl) wrapEl.hidden = false;
+    }
+    function runSuggest() {
+      var val = (inputEl.value || '').trim();
+      var lang = inputEl.getAttribute('data-suggest-lang') || uiLang();
+      if (!val) {
+        if (wrapEl && wrapEl.getAttribute('data-search-popover') != null) showRecent();
+        else if (wrapEl) wrapEl.hidden = true;
+        return;
+      }
+      if (typeof fetch !== 'function') return;
+      var mySeq = ++reqSeq;
+      fetch('/api/v1/search/suggest?q=' + encodeURIComponent(val) + '&lang=' + encodeURIComponent(lang), {
+        headers: { 'Accept': 'application/json' }
+      })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (data) {
+          if (mySeq !== reqSeq || !data) return;
+          var any = renderSuggestResults(targetEl, data, lang, val);
+          if (wrapEl) wrapEl.hidden = !any;
+        })
+        .catch(function () {});
+    }
+    inputEl.addEventListener('input', function () {
+      clearTimeout(timer);
+      timer = setTimeout(runSuggest, 120);
+    });
+    inputEl.addEventListener('focus', function () {
+      if ((inputEl.value || '').trim()) runSuggest();
+      else if (wrapEl && wrapEl.getAttribute('data-search-popover') != null) showRecent();
+    });
+  }
+
+  var headerInput = document.querySelector ? document.querySelector('[data-header-search-input]') : null;
+  var headerPopover = document.querySelector ? document.querySelector('[data-search-popover]') : null;
+  if (headerInput && headerPopover) {
+    bindSuggestInput(headerInput, headerPopover, headerPopover);
+    var headerForm = document.querySelector('[data-header-search]');
+    document.addEventListener('click', function (ev) {
+      if (headerForm && typeof headerForm.contains === 'function' && !headerForm.contains(ev.target)) {
+        headerPopover.hidden = true;
+      }
+    });
+  }
+
+  var sheet = document.querySelector ? document.querySelector('[data-search-sheet]') : null;
+  if (sheet) {
+    var sheetInput = sheet.querySelector('[data-sheet-search-input]');
+    var sheetClose = sheet.querySelector('[data-close-search-sheet]');
+    var recentWrap = sheet.querySelector('[data-recent-searches-wrap]');
+    var recentChips = sheet.querySelector('[data-recent-searches]');
+    var clearRecentBtn = sheet.querySelector('[data-clear-recent-q]');
+    var sheetSugWrap = sheet.querySelector('[data-sheet-suggestions-wrap]');
+    var sheetSug = sheet.querySelector('[data-sheet-suggestions]');
+    var lastTrigger = null;
+
+    if (sheetInput && sheetSug && sheetSugWrap) {
+      bindSuggestInput(sheetInput, sheetSug, sheetSugWrap);
+    }
+    if (clearRecentBtn) {
+      clearRecentBtn.addEventListener('click', function () {
+        writeJsonArr(RECENT_Q_KEY, []);
+        renderRecentChips(recentChips, recentWrap, uiLang());
+      });
+    }
+    function openSheet(triggerEl) {
+      lastTrigger = triggerEl || document.activeElement;
+      var mobMenu = document.querySelector ? document.querySelector('details.mobile-menu[open]') : null;
+      if (mobMenu) mobMenu.removeAttribute('open');
+      renderRecentChips(recentChips, recentWrap, uiLang());
+      sheet.hidden = false;
+      if (document.body && document.body.style) document.body.style.overflow = 'hidden';
+      if (sheetInput && typeof sheetInput.focus === 'function') sheetInput.focus();
+    }
+    function closeSheet() {
+      if (sheet.hidden) return;
+      sheet.hidden = true;
+      if (document.body && document.body.style) document.body.style.overflow = '';
+      if (lastTrigger && typeof lastTrigger.focus === 'function') lastTrigger.focus();
+    }
+    qsa(document, '[data-open-search-sheet]').forEach(function (el) {
+      el.addEventListener('click', function (e) {
+        e.preventDefault();
+        openSheet(el);
+      });
+    });
+    if (sheetClose) sheetClose.addEventListener('click', closeSheet);
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') {
+        if (!sheet.hidden) closeSheet();
+        if (headerPopover) headerPopover.hidden = true;
+      }
+    });
+  }
+
+  // --- 5. Preserve form state across language switches (N5) -----------------
+  function captureFormSnapshot() {
+    var forms = qsa(document, 'form[data-capture-form], form[data-search-page-form], form[data-report-form]');
+    if (!forms.length) return null;
+    var fields = {};
+    var any = false;
+    forms.forEach(function (f) {
+      qsa(f, 'input, textarea, select').forEach(function (el) {
+        var name = el.getAttribute('name');
+        var type = (el.getAttribute('type') || '').toLowerCase();
+        if (!name || type === 'hidden' || type === 'file' || name === 'id') return;
+        if (type === 'checkbox') { fields[name] = !!el.checked; any = true; }
+        else if (typeof el.value === 'string' && el.value !== '') { fields[name] = el.value; any = true; }
+      });
+    });
+    if (!any) return null;
+    var path = W && W.location && W.location.pathname ? W.location.pathname : '/';
+    return { path: path, at: Date.now(), fields: fields };
+  }
+
+  qsa(document, '.language-nav a, .mobile-menu-langs a').forEach(function (a) {
+    a.addEventListener('click', function () {
+      if (!session) return;
+      var snap = captureFormSnapshot();
+      if (snap) {
+        try { session.setItem(LANG_FORM_KEY, JSON.stringify(snap)); } catch (e) {}
+      }
+    });
+  });
+
+  if (session && W && W.location) {
+    try {
+      var rawSnap = session.getItem(LANG_FORM_KEY);
+      if (rawSnap) {
+        session.removeItem(LANG_FORM_KEY);
+        var parsedSnap = JSON.parse(rawSnap);
+        if (parsedSnap && parsedSnap.path === W.location.pathname && typeof parsedSnap.at === 'number' && (Date.now() - parsedSnap.at) < 60000 && parsedSnap.fields) {
+          var targetForms = qsa(document, 'form[data-capture-form], form[data-search-page-form], form[data-report-form]');
+          targetForms.forEach(function (f) {
+            Object.keys(parsedSnap.fields).forEach(function (name) {
+              var el = f.querySelector('[name="' + name + '"]');
+              if (!el) return;
+              var val = parsedSnap.fields[name];
+              if (el.type === 'checkbox') el.checked = !!val;
+              else if (typeof val === 'string') el.value = val;
+            });
+            try {
+              if (typeof Event === 'function' && typeof f.dispatchEvent === 'function') f.dispatchEvent(new Event('input'));
+            } catch (err) {}
+          });
+        }
+      }
+    } catch (e) {}
+  }
+})();`;
+
+export const DISCOVERY_CLIENT_SCRIPT = `(function () {
+  var lists = Array.prototype.slice.call(document.querySelectorAll('[data-recipe-list]'));
+  var list = lists[0] || document.querySelector('[data-recipe-list]');
+  var groups = Array.prototype.slice.call(document.querySelectorAll('[data-recipe-group]'));
 
   var input = document.querySelector('[data-recipe-search]');
   if (!input) return;
