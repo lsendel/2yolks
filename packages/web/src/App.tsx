@@ -22,11 +22,18 @@ import {
   DIET_TAGS,
   TIME_BUCKETS,
   DIFFICULTY_LEVELS,
+  contributorSlug,
+  contributorInitials,
+  inferDifficulty,
+  extractStepMinutes,
 } from '@2yolks/contracts';
 import {
   TwinYolkLogoMark,
   ArrowUpRightIcon,
   CategoryIcon,
+  CategoryArt,
+  IngredientIcon,
+  InfoBadgeIcon,
   FactIcon,
   SocialIcon,
   EmptySkilletIllustration,
@@ -146,6 +153,7 @@ export function SiteHeader({
             type="button"
             className="theme-toggle"
             data-theme-toggle
+            aria-pressed="false"
             aria-label={t.themeToggle}
             title={t.themeToggle}
           >
@@ -166,6 +174,7 @@ export function SiteHeader({
               {cuisines.slice(0, 4).map((cu) => (
                 <a key={cu.slug} className="mobile-sub-link" href={`/cuisine/${cu.slug}${lq}`}>{cu.label}</a>
               ))}
+              <a href={`/cooks${lq}`}>{t.cooksNav}</a>
               <a href={`/saved${lq}`}>{t.savedNav}</a>
               <a href={`/account${lq}`}>{t.myKitchenNav}</a>
               <a href={`/how-we-test${lq}`}>{t.testingShort}</a>
@@ -177,7 +186,7 @@ export function SiteHeader({
                 </a>
               ))}
             </nav>
-            <button type="button" className="theme-toggle theme-toggle-menu" data-theme-toggle>
+            <button type="button" className="theme-toggle theme-toggle-menu" data-theme-toggle aria-pressed="false">
               <SocialIcon name="moon" className="social-icon icon-moon" />
               <SocialIcon name="sun" className="social-icon icon-sun" />
               {t.themeToggle}
@@ -333,6 +342,7 @@ export function SiteFooter({ nav = [], lang = 'en' }: { nav?: SiteNavItem[]; lan
           <a href={`/recipes${lq}`}>{t.allRecipes}</a>
           <a href={`/collections${lq}`}>{t.collectionsNav}</a>
           <a href={`/cuisine${lq}`}>{t.cuisinesNav}</a>
+          <a href={`/cooks${lq}`}>{t.cooksNav}</a>
           <a href={`/saved${lq}`}>{t.savedNav}</a>
           <a href={`/account/recipes/new${lq}`}>{t.shareRecipeNav}</a>
           <a href={`/account${lq}`}>{t.myKitchenNav}</a>
@@ -395,6 +405,9 @@ export interface RecipeRow {
   diets?: DietTag[];
   difficulty?: DifficultyLevel | null;
   noOven?: boolean;
+  authorName?: string | null;
+  authorSlug?: string | null;
+  cookedCount?: number;
 }
 
 export function SaveButton({
@@ -417,7 +430,7 @@ export function SaveButton({
     href,
     cat: categoryLabel(recipe.category, lang),
     min: recipe.totalMinutes ?? null,
-    img: recipe.imageId && style ? `/img/recipe/${recipe.imageId}` : null,
+    img: recipe.imageId && (style === 'photo' || style === 'illustration') ? `/img/recipe/${recipe.imageId}` : null,
     style,
   });
   return (
@@ -473,19 +486,28 @@ export function DiscoveryRowCard({
     >
       {/* Always render .recipe-number so the grid title column stays aligned. */}
       <span className="recipe-number">{numbered ? String(index + 1).padStart(2, '0') : ''}</span>
-      {r.imageId && style ? (
+      {r.imageId && (style === 'photo' || style === 'illustration') ? (
         <span className="recipe-thumb">
-          <img src={`/img/recipe/${r.imageId}`} alt="" loading="lazy" width="96" height="96" />
+          <img src={`/img/recipe/${r.imageId}`} alt="" loading="lazy" width="400" height="500" />
           <span className="thumb-label">
-            {style === 'illustration'
-              ? t.imageLabelIllustration
-              : style === 'graphic'
-                ? t.imageLabelGraphic
-                : t.imageLabelPhoto}
+            <InfoBadgeIcon />
+            <span>{style === 'illustration' ? t.imageLabelIllustration : t.imageLabelPhoto}</span>
           </span>
         </span>
-      ) : null}
-      <div>
+      ) : r.imageId && style === 'graphic' ? (
+        <span className="recipe-thumb recipe-thumb--graphic">
+          <CategoryArt slug={r.category} seed={r.id} />
+          <span className="thumb-label">
+            <InfoBadgeIcon />
+            <span>{t.imageLabelGraphic}</span>
+          </span>
+        </span>
+      ) : (
+        <span className="card-art-fallback" aria-hidden="true">
+          <CategoryArt slug={r.category} seed={r.id} />
+        </span>
+      )}
+      <div className="card-body">
         {catText ? (
           <span className="eyebrow">
             <CategoryIcon slug={r.category} />
@@ -505,9 +527,27 @@ export function DiscoveryRowCard({
               {t.testedBadge}
             </span>
           )}
+          {(r.cookedCount ?? 0) >= 2 ? (
+            <span className="cooked-count-chip">{t.cookedByCount.replace('{n}', String(r.cookedCount))}</span>
+          ) : null}
           {r.lang !== lang ? <span className="fallback-language">{LANG_NAMES[r.lang]}</span> : null}
           {isCrossLocale ? <span className="provenance-badge">{localizedCountryName(r.country, lang)}</span> : null}
         </div>
+        {r.authorName ? (
+          <div className="contributor-row">
+            {r.authorSlug ? (
+              <a className="contributor-link" href={`/cooks/${r.authorSlug}${langQuery(lang)}`}>
+                <span className="contributor-avatar" aria-hidden="true">{contributorInitials(r.authorName)}</span>
+                <span>{t.sharedBy.replace('{name}', r.authorName)}</span>
+              </a>
+            ) : (
+              <span className="contributor-link">
+                <span className="contributor-avatar" aria-hidden="true">{contributorInitials(r.authorName)}</span>
+                <span>{t.sharedBy.replace('{name}', r.authorName)}</span>
+              </span>
+            )}
+          </div>
+        ) : null}
       </div>
       <div className="row-end">
         {r.totalMinutes != null ? (
@@ -687,6 +727,7 @@ export function Home({ recipes, lang = 'en', activeCategory = null, currentCount
   });
   const filtered = activeCategory ? selected.filter((r) => r.category === activeCategory) : selected;
   const featured = selected.find((r) => r.id === 'w1pozole') ?? selected[0];
+  const photoRecipes = selected.filter((r) => r.imageId && asImageStyle(r.imageStyle) === 'photo').slice(0, 4);
   const href = (r: RecipeRow) => recipePathFor(r.country, r.lang, r.slug);
   const chipHref = (chip: { kind: string; value: string }) => {
     if (chip.kind === 'time30') return `/search?${langAmp}time=30`;
@@ -738,10 +779,27 @@ export function Home({ recipes, lang = 'en', activeCategory = null, currentCount
             </a>
           </div>
         </div>
-        <figure className="identity-art">
-          <img src="/img/identity/after-hours.webp" alt="" width="900" height="900" fetchPriority="high" />
-          <figcaption>{d.illustration}</figcaption>
-        </figure>
+        {photoRecipes.length >= 2 ? (
+          <div className="hero-mosaic" data-hero-mosaic>
+            {photoRecipes.map((pr) => (
+              <a key={pr.id} className="mosaic-tile" href={href(pr)}>
+                <img src={`/img/recipe/${pr.imageId}`} alt={pr.title} width="450" height="450" fetchPriority="high" />
+                <span className="mosaic-overlay">
+                  <span className="mosaic-title">{pr.title}</span>
+                  <span className="mosaic-badge">
+                    <InfoBadgeIcon />
+                    <span>{t.imageLabelPhoto}</span>
+                  </span>
+                </span>
+              </a>
+            ))}
+          </div>
+        ) : (
+          <figure className="identity-art">
+            <img src="/img/identity/after-hours.webp" alt="" width="900" height="900" fetchPriority="high" />
+            <figcaption>{d.illustration}</figcaption>
+          </figure>
+        )}
       </section>
       {featured ? (
         <section className="featured-recipe">
@@ -778,19 +836,24 @@ export function Home({ recipes, lang = 'en', activeCategory = null, currentCount
           <p>{d.note}</p>
         </div>
         <div className="discovery-toolbar">
-          <nav className="cat-nav" aria-label={t.categories}>
-            <a href={`/?lang=${lang}#recipes`} className="chip" aria-current={!activeCategory ? 'page' : undefined}>
-              {d.all}
+          <nav className="cat-nav cat-rail" aria-label={t.categories}>
+            <a href={`/?lang=${lang}#recipes`} className="chip cat-rail-item" aria-current={!activeCategory ? 'page' : undefined}>
+              <span className="cat-rail-ring" aria-hidden="true">
+                <SocialIcon name="grid" />
+              </span>
+              <span className="cat-rail-label">{d.all}</span>
             </a>
             {categories.map((cat) => (
               <a
                 key={cat}
-                className="chip"
+                className="chip cat-rail-item"
                 aria-current={cat === activeCategory ? 'page' : undefined}
                 href={`/?lang=${lang}&cat=${cat}#recipes`}
               >
-                <CategoryIcon slug={cat} />
-                {categoryLabel(cat, lang)}
+                <span className="cat-rail-ring" aria-hidden="true">
+                  <CategoryIcon slug={cat} />
+                </span>
+                <span className="cat-rail-label">{categoryLabel(cat, lang)}</span>
               </a>
             ))}
           </nav>
@@ -806,13 +869,13 @@ export function Home({ recipes, lang = 'en', activeCategory = null, currentCount
               />
             </div>
             <div className="view-toggle" role="group" aria-label={d.index} data-view-toggle>
-              <button type="button" data-view-btn="list" aria-pressed="true" title={t.viewList}>
-                <SocialIcon name="index" />
-                {t.viewList}
-              </button>
-              <button type="button" data-view-btn="grid" aria-pressed="false" title={t.viewGrid}>
+              <button type="button" data-view-btn="grid" aria-pressed="true" title={t.viewGrid}>
                 <SocialIcon name="grid" />
                 {t.viewGrid}
+              </button>
+              <button type="button" data-view-btn="list" aria-pressed="false" title={t.viewList}>
+                <SocialIcon name="index" />
+                {t.viewList}
               </button>
             </div>
           </div>
@@ -822,7 +885,7 @@ export function Home({ recipes, lang = 'en', activeCategory = null, currentCount
         {(() => {
           if (activeCategory) {
             return (
-              <ul className="discovery-list" data-recipe-list>
+              <ul className="discovery-list" data-recipe-list data-view="grid">
                 {filtered.map((r, i) => (
                   <DiscoveryRowCard key={r.id} recipe={r} index={i} lang={lang} numbered currentCountry={currentCountry} />
                 ))}
@@ -868,7 +931,7 @@ export function Home({ recipes, lang = 'en', activeCategory = null, currentCount
                       </a>
                     ) : null}
                   </div>
-                  <ul className="discovery-list" data-recipe-list>
+                  <ul className="discovery-list" data-recipe-list data-view="grid">
                     {g.shown.map((r, i) => (
                       <DiscoveryRowCard key={r.id} recipe={r} index={i} lang={lang} currentCountry={currentCountry} />
                     ))}
@@ -1018,6 +1081,24 @@ export function RecipeView({
     imageId: page.heroImage ? page.heroImage.url.split('/').pop() ?? null : null,
     imageStyle: page.heroImage?.style ?? null,
   };
+  const authorName = r.authorName?.trim() || null;
+  const authorSlug = contributorSlug(authorName);
+  const cookedCount = r.cookedCount ?? 0;
+  const diff = inferDifficulty({
+    totalMinutes: r.totalMinutes,
+    prepMinutes: r.prepMinutes,
+    cookMinutes: r.cookMinutes,
+    stepsCount: steps.length,
+    ingredientsCount: entries.length,
+  });
+  const diffLevelNum = diff === 'easy' ? 1 : diff === 'medium' ? 2 : diff === 'project' ? 3 : 0;
+  const diffLabel =
+    diff === 'easy' ? t.difficultyEasy : diff === 'medium' ? t.difficultyMedium : diff === 'project' ? t.difficultyProject : null;
+  const prepM = r.prepMinutes ?? 0;
+  const cookM = r.cookMinutes ?? 0;
+  const restM = r.restMinutes ?? 0;
+  const splitSum = prepM + cookM + restM;
+
   return (
     <main id="main" className="recipe-page">
       <Crumbs items={crumbItems} />
@@ -1030,6 +1111,29 @@ export function RecipeView({
         ) : null}
         <h1>{page.locale.title}</h1>
         {page.locale.intro ? <p className="recipe-intro">{page.locale.intro}</p> : null}
+        {authorName || cookedCount >= 1 ? (
+          <div className="contributor-byline">
+            {authorName ? (
+              authorSlug ? (
+                <a className="contributor-byline-link" href={`/cooks/${authorSlug}${lq}`}>
+                  <span className="contributor-avatar" aria-hidden="true">{contributorInitials(authorName)}</span>
+                  <span>{t.sharedBy.replace('{name}', authorName)}</span>
+                </a>
+              ) : (
+                <span className="contributor-byline-link">
+                  <span className="contributor-avatar" aria-hidden="true">{contributorInitials(authorName)}</span>
+                  <span>{t.sharedBy.replace('{name}', authorName)}</span>
+                </span>
+              )
+            ) : null}
+            {cookedCount >= 1 ? (
+              <span className="cooked-by-pill">
+                <FactIcon kind="check" />
+                {t.cookedByCount.replace('{n}', String(cookedCount))}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
       </header>
       {page.heroImage ? (
         <figure className="hero-image">
@@ -1046,6 +1150,35 @@ export function RecipeView({
             </span>
           ))}
         </p>
+      ) : null}
+      {diffLabel || splitSum > 0 ? (
+        <div className="recipe-meter" aria-label={t.effortLabel}>
+          {diffLabel ? (
+            <span className="meter-effort">
+              <span className="meter-label">{t.effortLabel}:</span>
+              <span className="meter-dots" aria-hidden="true">
+                {[1, 2, 3].map((n) => (
+                  <span key={n} className={n <= diffLevelNum ? 'is-on' : undefined} />
+                ))}
+              </span>
+              <strong>{diffLabel}</strong>
+            </span>
+          ) : null}
+          {splitSum > 0 ? (
+            <div className="meter-time-split">
+              <div className="time-bar" aria-hidden="true">
+                {prepM > 0 ? <span className="time-seg-prep" style={{ flexGrow: prepM }} /> : null}
+                {cookM > 0 ? <span className="time-seg-cook" style={{ flexGrow: cookM }} /> : null}
+                {restM > 0 ? <span className="time-seg-rest" style={{ flexGrow: restM }} /> : null}
+              </div>
+              <div className="time-legend">
+                {prepM > 0 ? <span><i style={{ background: 'var(--yolk-gold)' }} />{t.timePrep} {fmtMin(prepM)}</span> : null}
+                {cookM > 0 ? <span><i style={{ background: 'var(--plum)' }} />{t.timeCook} {fmtMin(cookM)}</span> : null}
+                {restM > 0 ? <span><i style={{ background: '#827384' }} />{t.timeRest} {fmtMin(restM)}</span> : null}
+              </div>
+            </div>
+          ) : null}
+        </div>
       ) : null}
       <p className="recipe-actions">
         <a href="#recipe" className="jump">
@@ -1139,6 +1272,7 @@ export function RecipeView({
               <li key={i}>
                 <label>
                   <input type="checkbox" />
+                  <IngredientIcon text={plainIngredients[i] ?? ''} />
                   <span className="line" data-v={JSON.stringify(ingredientVariants(e, lang, mults))}>
                     {renderIngredient(e, lang, sys, 1)}
                   </span>
@@ -1150,11 +1284,36 @@ export function RecipeView({
         <div className="recipe-col steps-col">
           <h2>{t.steps}</h2>
           <ol className="steps">
-            {steps.map((st, i) => (
-              <li key={i} id={`step-${i + 1}`} data-v={hasStepTokens([st]) ? JSON.stringify(stepVariants(st, entries, lang, mults)) : undefined}>
-                {renderStep(st, entries, lang, sys, 1)}
-              </li>
-            ))}
+            {steps.map((st, i) => {
+              const renderedStep = renderStep(st, entries, lang, sys, 1);
+              const mins = extractStepMinutes(renderedStep);
+              const stepImg = page.stepImages?.[i] ?? null;
+              return (
+                <li key={i} id={`step-${i + 1}`}>
+                  <span className="step-text" data-step-text data-v={hasStepTokens([st]) ? JSON.stringify(stepVariants(st, entries, lang, mults)) : undefined}>
+                    {renderedStep}
+                  </span>
+                  {mins ? (
+                    <button
+                      type="button"
+                      className="step-timer-chip"
+                      data-inline-timer={mins}
+                      data-timer-label-base={`${t.tapTimer} · ${fmtMin(mins)}`}
+                      data-done-label={t.timerDone}
+                      aria-pressed="false"
+                    >
+                      <FactIcon kind="clock" />
+                      <span data-chip-display>{t.tapTimer} · {fmtMin(mins)}</span>
+                    </button>
+                  ) : null}
+                  {stepImg ? (
+                    <figure className="step-photo">
+                      <img src={stepImg.url.replace(/^https?:\/\/[^/]+/, '')} alt="" loading="lazy" />
+                    </figure>
+                  ) : null}
+                </li>
+              );
+            })}
           </ol>
         </div>
       </section>
@@ -1228,8 +1387,22 @@ export function RecipeView({
           <ul className="related-grid">
             {related.map((rel) => {
               const relCat = categoryLabel(rel.category, lang);
+              const relStyle = asImageStyle(rel.imageStyle);
               return (
                 <li key={rel.id} className="related-card">
+                  <div className="related-media">
+                    {rel.imageId && (relStyle === 'photo' || relStyle === 'illustration') ? (
+                      <>
+                        <img src={`/img/recipe/${rel.imageId}`} alt="" loading="lazy" width="320" height="240" />
+                        <span className="thumb-label">
+                          <InfoBadgeIcon />
+                          <span>{relStyle === 'illustration' ? t.imageLabelIllustration : t.imageLabelPhoto}</span>
+                        </span>
+                      </>
+                    ) : (
+                      <CategoryArt slug={rel.category} seed={rel.id} />
+                    )}
+                  </div>
                   {relCat ? <span className="eyebrow">{relCat}</span> : null}
                   <h3>
                     <a className="stretched" href={recipePathFor(rel.country, rel.lang, rel.slug)}>
@@ -1543,13 +1716,13 @@ export function SearchPage({ lang, query, result, cuisines, categories, savedIds
         <div className="search-results-bar">
           <p className="search-count" role="status" aria-live="polite">{countText}</p>
           <div className="view-toggle" role="group" aria-label={d.index} data-view-toggle>
-            <button type="button" data-view-btn="list" aria-pressed="true" title={t.viewList}>
-              <SocialIcon name="index" />
-              {t.viewList}
-            </button>
-            <button type="button" data-view-btn="grid" aria-pressed="false" title={t.viewGrid}>
+            <button type="button" data-view-btn="grid" aria-pressed="true" title={t.viewGrid}>
               <SocialIcon name="grid" />
               {t.viewGrid}
+            </button>
+            <button type="button" data-view-btn="list" aria-pressed="false" title={t.viewList}>
+              <SocialIcon name="index" />
+              {t.viewList}
             </button>
           </div>
         </div>
@@ -1557,7 +1730,7 @@ export function SearchPage({ lang, query, result, cuisines, categories, savedIds
           <p className="closest-match-note">{s.closestNote}</p>
         ) : null}
         {result.items.length > 0 ? (
-          <ul className="discovery-list" data-recipe-list>
+          <ul className="discovery-list" data-recipe-list data-view="grid">
             {result.items.map((r, i) => (
               <DiscoveryRowCard
                 key={r.id}
@@ -1618,12 +1791,13 @@ export function SearchPage({ lang, query, result, cuisines, categories, savedIds
 }
 
 export interface HubPageProps {
-  kind: 'category' | 'collection' | 'cuisine';
+  kind: 'category' | 'collection' | 'cuisine' | 'cook';
   slug: string;
   lang: string;
   title: string;
   intro: string;
   iconSlug?: string | null;
+  avatarInitials?: string | null;
   heroImage?: { id: string; style: 'photo' | 'illustration' | 'graphic'; alt: string } | null;
   marketHref?: string | null;
   marketLabel?: string | null;
@@ -1639,6 +1813,7 @@ export function HubPage({
   title,
   intro,
   iconSlug,
+  avatarInitials,
   heroImage,
   marketHref,
   marketLabel,
@@ -1655,7 +1830,9 @@ export function HubPage({
       ? { href: `/collections${lq}`, label: t.collectionsNav }
       : kind === 'cuisine'
         ? { href: `/cuisine${lq}`, label: t.cuisinesNav }
-        : { href: `/recipes${lq}`, label: t.allRecipes };
+        : kind === 'cook'
+          ? { href: `/cooks${lq}`, label: t.cooksNav }
+          : { href: `/recipes${lq}`, label: t.allRecipes };
   return (
     <main className="wide discovery" id="main">
       <section className="discovery-index">
@@ -1666,7 +1843,10 @@ export function HubPage({
               {iconSlug ? <CategoryIcon slug={iconSlug} /> : null}
               {parentCrumb.label}
             </span>
-            <h1>{title}</h1>
+            <div className="hub-hero-head">
+              {avatarInitials ? <span className="hub-avatar-lg" aria-hidden="true">{avatarInitials}</span> : null}
+              <h1>{title}</h1>
+            </div>
             <p className="hub-intro">{intro}</p>
             <div className="hub-actions">
               <a className="chip" href={searchHref}>
@@ -1706,18 +1886,18 @@ export function HubPage({
         <div className="search-results-bar">
           <p className="search-count">{recipes.length} {recipes.length === 1 ? t.recipeWord : t.recipesWord}</p>
           <div className="view-toggle" role="group" aria-label={d.index} data-view-toggle>
-            <button type="button" data-view-btn="list" aria-pressed="true" title={t.viewList}>
-              <SocialIcon name="index" />
-              {t.viewList}
-            </button>
-            <button type="button" data-view-btn="grid" aria-pressed="false" title={t.viewGrid}>
+            <button type="button" data-view-btn="grid" aria-pressed="true" title={t.viewGrid}>
               <SocialIcon name="grid" />
               {t.viewGrid}
+            </button>
+            <button type="button" data-view-btn="list" aria-pressed="false" title={t.viewList}>
+              <SocialIcon name="index" />
+              {t.viewList}
             </button>
           </div>
         </div>
         {recipes.length > 0 ? (
-          <ul className="discovery-list" data-recipe-list>
+          <ul className="discovery-list" data-recipe-list data-view="grid">
             {recipes.map((r, i) => (
               <DiscoveryRowCard key={r.id} recipe={r} index={i} lang={lang} numbered savedIds={savedIds} />
             ))}
@@ -1754,7 +1934,7 @@ export function HubDirectoryPage({
   intro,
   items,
 }: {
-  kind: 'collections' | 'cuisine';
+  kind: 'collections' | 'cuisine' | 'cooks';
   lang: string;
   title: string;
   intro: string;
@@ -1869,7 +2049,7 @@ export function SavedPage({
           <h2>{c.savedHeading}</h2>
           {signedIn ? (
             recipes.length > 0 ? (
-              <ul className="discovery-list" data-recipe-list data-saved-server-list>
+              <ul className="discovery-list" data-recipe-list data-saved-server-list data-view="grid">
                 {recipes.map((r, i) => (
                   <DiscoveryRowCard key={r.id} recipe={r} index={i} lang={lang} numbered savedIds={savedSet} />
                 ))}

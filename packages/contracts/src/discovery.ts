@@ -758,3 +758,14 @@ export function suggestCatalog<T extends SearchableRecipe>(
 
   return { recipes, categories, ingredients };
 }
+
+/** Extract the first timer duration in whole minutes from a step string (ignoring 0). */
+export function extractStepMinutes(stepText?: string | null): number | null {
+  if (!stepText) return null;
+  const m = /\b(\d{1,3})\s*(min(?:ute)?s?|minutos?|hours?|horas?|heures?)\b/i.exec(stepText);
+  if (!m) return null;
+  const n = Number.parseInt(m[1]!, 10);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  const unit = m[2]!.toLowerCase();
+  return unit.startsWith('h') ? n * 60 : n;
+}

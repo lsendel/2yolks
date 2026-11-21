@@ -230,6 +230,14 @@ export interface UiStrings {
   filtersHeading: string;
   clearFilters: string;
   mobileTabsLabel: string;
+  sharedBy: string;
+  cookedByCount: string;
+  cooksNav: string;
+  effortLabel: string;
+  difficultyEasy: string;
+  difficultyMedium: string;
+  difficultyProject: string;
+  tapTimer: string;
 }
 
 const UI_STRINGS: Record<string, UiStrings> = {
@@ -283,6 +291,9 @@ const UI_STRINGS: Record<string, UiStrings> = {
     removeSaved: 'Remove from saved', recentlyViewed: 'Recently viewed',
     collectionsNav: 'Collections', cuisinesNav: 'Cuisines',
     filtersHeading: 'Filters', clearFilters: 'Clear filters', mobileTabsLabel: 'Quick navigation',
+    sharedBy: 'Shared by {name}', cookedByCount: 'Cooked by {n}', cooksNav: 'Cooks',
+    effortLabel: 'Effort', difficultyEasy: 'Easy', difficultyMedium: 'Medium',
+    difficultyProject: 'Weekend project', tapTimer: 'Timer',
   },
   es: {
     ingredients: 'Ingredientes', steps: 'Pasos', source: 'Fuente',
@@ -334,6 +345,9 @@ const UI_STRINGS: Record<string, UiStrings> = {
     removeSaved: 'Quitar de guardadas', recentlyViewed: 'Vistas recientemente',
     collectionsNav: 'Colecciones', cuisinesNav: 'Cocinas',
     filtersHeading: 'Filtros', clearFilters: 'Limpiar filtros', mobileTabsLabel: 'Navegaci\u00f3n r\u00e1pida',
+    sharedBy: 'Compartida por {name}', cookedByCount: 'Cocinada por {n}', cooksNav: 'Cocineros',
+    effortLabel: 'Dificultad', difficultyEasy: 'F\u00e1cil', difficultyMedium: 'Media',
+    difficultyProject: 'De fin de semana', tapTimer: 'Temporizador',
   },
   fr: {
     ingredients: 'Ingr\u00e9dients', steps: '\u00c9tapes', source: 'Source',
@@ -385,6 +399,9 @@ const UI_STRINGS: Record<string, UiStrings> = {
     removeSaved: 'Retirer des favoris', recentlyViewed: 'Consult\u00e9es r\u00e9cemment',
     collectionsNav: 'Collections', cuisinesNav: 'Cuisines',
     filtersHeading: 'Filtres', clearFilters: 'Effacer les filtres', mobileTabsLabel: 'Navigation rapide',
+    sharedBy: 'Partag\u00e9e par {name}', cookedByCount: 'Cuisin\u00e9e par {n}', cooksNav: 'Cuisiniers',
+    effortLabel: 'Niveau', difficultyEasy: 'Facile', difficultyMedium: 'Interm\u00e9diaire',
+    difficultyProject: 'Projet week-end', tapTimer: 'Minuteur',
   },
 };
 
@@ -802,6 +819,29 @@ export function slugify(title: string): string {
   return slug;
 }
 
+/** Safe public contributor slug derived from display authorName; null when empty or non-slugifiable. */
+export function contributorSlug(authorName?: string | null): string | null {
+  const trimmed = (authorName ?? '').trim();
+  if (!trimmed) return null;
+  try {
+    return slugify(trimmed);
+  } catch {
+    return null;
+  }
+}
+
+/** Extract 1–2 uppercase avatar initials from a contributor name (e.g. "Sam T." -> "ST"). */
+export function contributorInitials(authorName?: string | null): string {
+  const parts = (authorName ?? '')
+    .trim()
+    .split(/\s+/)
+    .map((w) => w.replace(/^[^A-Za-z0-9\u00C0-\u024F]+|[^A-Za-z0-9\u00C0-\u024F]+$/g, ''))
+    .filter(Boolean);
+  if (parts.length === 0) return '2Y';
+  if (parts.length === 1) return parts[0]!.charAt(0).toUpperCase();
+  return `${parts[0]!.charAt(0)}${parts[1]!.charAt(0)}`.toUpperCase();
+}
+
 export function countryPath(country: string): string {
   return `/${country.toLowerCase()}/`;
 }
@@ -918,6 +958,10 @@ export interface Recipe {
   baseServings?: number | null;
   /** Dish-type category slug (migration 0004); null = uncategorized. */
   category?: RecipeCategorySlug | null;
+  /** Public contributor byline stored on curated/submitted recipes. */
+  authorName?: string | null;
+  /** Verified count of kitchen test reports / tests for this recipe. */
+  cookedCount?: number;
 }
 
 /** Honest imagery classes: a real photo (depicts an actual dish, provenance
