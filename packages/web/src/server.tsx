@@ -162,12 +162,13 @@ function shell(body: string, { title, alternates = [], jsonLd, noindex = false, 
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#211729" />
+    <meta name="theme-color" content="#000000" />
     <title>${escapeHtml(title)}</title>
     ${noindex ? '<meta name="robots" content="noindex, nofollow" />' : ''}
     ${links}
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="preload" href="/fonts/fraunces-var.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/fonts/barlow-condensed-600-latin.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/fonts/barlow-condensed-700-latin.woff2" as="font" type="font/woff2" crossorigin />
     ${og ? `<link rel="canonical" href="${escapeHtml(og.url)}" />
     <meta property="og:type" content="${og.type ?? 'article'}" />
     <meta property="og:site_name" content="2yolks" />

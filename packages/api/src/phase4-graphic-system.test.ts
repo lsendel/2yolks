@@ -138,7 +138,7 @@ describe('UX Phase 4 Graphic System (D1-D3, D5-D10)', () => {
     const html = await res.text();
 
     expect((html.match(/<style>/g) || []).length).toBe(1);
-    expect(html).toContain("--font-display:'Fraunces'");
+    expect(html).toContain("--font-display:'Barlow Condensed'");
     expect(DESIGN_SYSTEM_CSS).toContain('@media (prefers-reduced-motion: reduce)');
     expect(DESIGN_SYSTEM_CSS).toContain('@media (prefers-color-scheme: dark)');
     expect(html).toMatch(/data-theme-toggle="true" aria-pressed="false"/);

@@ -313,6 +313,11 @@ export function MobileTabBar({ lang = 'en', currentPath = '/' }: { lang?: string
 export function SiteFooter({ nav = [], lang = 'en' }: { nav?: SiteNavItem[]; lang?: string }) {
   const t = uiStrings(lang);
   const lq = langQuery(lang);
+  const headings = lang === 'es'
+    ? { find: 'Buscar un plato', placeholder: 'Buscar una receta…', submit: 'Buscar', langs: 'Idiomas', kitchen: 'Cocina', brand: '2yolks' }
+    : lang === 'fr'
+      ? { find: 'Trouver un plat', placeholder: 'Chercher une recette…', submit: 'Chercher', langs: 'Langues', kitchen: 'Cuisine', brand: '2yolks' }
+      : { find: 'Find a dish', placeholder: 'Search recipes…', submit: 'Search', langs: 'Languages', kitchen: 'Kitchen', brand: '2yolks' };
   return (
     <footer className="site-footer">
       <div className="footer-inner">
@@ -328,6 +333,12 @@ export function SiteFooter({ nav = [], lang = 'en' }: { nav?: SiteNavItem[]; lan
                 ? 'Petite cuisine. Grand appétit.'
                 : 'Small kitchen. Big appetite.'}
           </p>
+          <form className="footer-search-form" action="/search" method="get" role="search">
+            {lang !== 'en' ? <input type="hidden" name="lang" value={lang} /> : null}
+            <label className="visually-hidden" htmlFor="footer-search-q">{headings.find}</label>
+            <input id="footer-search-q" type="search" name="q" placeholder={headings.placeholder} autoComplete="off" enterKeyHint="search" />
+            <button type="submit" aria-label={headings.submit}>→</button>
+          </form>
           <p className="community-tag">{t.communityTag}</p>
           <div className="footer-social" aria-label="Social">
             {SOCIAL_LINKS.map((s) => (
@@ -338,11 +349,13 @@ export function SiteFooter({ nav = [], lang = 'en' }: { nav?: SiteNavItem[]; lan
           </div>
         </div>
         <nav className="footer-col" aria-label="Language">
+          <h4>{headings.langs}</h4>
           {nav.map((item) => (
             <a key={item.href} href={item.href}>{item.label}</a>
           ))}
         </nav>
         <nav className="footer-col" aria-label="Kitchen">
+          <h4>{headings.kitchen}</h4>
           <a href={`/recipes${lq}`}>{t.allRecipes}</a>
           <a href={`/collections${lq}`}>{t.collectionsNav}</a>
           <a href={`/cuisine${lq}`}>{t.cuisinesNav}</a>
@@ -352,6 +365,7 @@ export function SiteFooter({ nav = [], lang = 'en' }: { nav?: SiteNavItem[]; lan
           <a href={`/account${lq}`}>{t.myKitchenNav}</a>
         </nav>
         <nav className="footer-col" aria-label="2yolks">
+          <h4>{headings.brand}</h4>
           <a href={`/search${lq}`}>{t.searchNav}</a>
           <a href={`/about${lq}`}>{t.about}</a>
           <a href={`/how-we-test${lq}`}>{t.testingShort}</a>
@@ -989,6 +1003,55 @@ export function Home({ recipes, lang = 'en', activeCategory = null, currentCount
         </div>
         {filtered.length === 0 ? <p className="empty-note" data-filter-empty>{d.empty}</p> : null}
       </section>
+      {!activeCategory && photoRecipes.length >= 2 ? (() => {
+        const splitPhotos = photoRecipes.length >= 4 ? [photoRecipes[2]!, photoRecipes[3]!] : [photoRecipes[0]!, photoRecipes[1]!];
+        const copy = lang === 'es'
+          ? {
+              p1Kicker: 'DESPENSA', p1Title: 'COCINA CON LO QUE TIENES', p1Body: 'Elige de 2 a 5 ingredientes que ya tienes en casa y encuentra recetas al instante.', p1Cta: 'Abrir buscador de despensa',
+              p2Kicker: 'COMUNIDAD', p2Title: 'COMPARTE LO MEJOR DE TU COCINA', p2Body: 'Empieza a redactar ahora: pega, fotografía o escribe tu plato. Sin registro hasta enviarlo.', p2Cta: 'Compartir una receta',
+            }
+          : lang === 'fr'
+            ? {
+                p1Kicker: 'GARDE-MANGER', p1Title: 'CUISINEZ AVEC VOS INGRÉDIENTS', p1Body: 'Choisissez 2 à 5 ingrédients déjà chez vous et trouvez des recettes adaptées.', p1Cta: 'Ouvrir le garde-manger',
+                p2Kicker: 'CUISINE PARTAGÉE', p2Title: 'PARTAGEZ VOS MEILLEURS PLATS', p2Body: 'Commencez tout de suite : collez, photographiez ou écrivez. Sans compte avant l’envoi.', p2Cta: 'Partager une recette',
+              }
+            : {
+                p1Kicker: 'PANTRY MATCHER', p1Title: 'COOK WITH WHAT YOU HAVE', p1Body: 'Pick 2–5 ingredients already in your kitchen and jump straight to matching recipes.', p1Cta: 'Open pantry matcher',
+                p2Kicker: 'COMMUNITY KITCHEN', p2Title: "SHARE YOUR KITCHEN'S BEST", p2Body: 'Start drafting right away—paste, snap, or type your dish. No sign-in until you send it in.', p2Cta: 'Share a recipe',
+              };
+        return (
+          <section className="editorial-splits" data-editorial-splits>
+            <article className="editorial-split">
+              <div className="editorial-split-copy">
+                <span className="eyebrow">{copy.p1Kicker}</span>
+                <h2 className="editorial-jumbo">{copy.p1Title}</h2>
+                <p>{copy.p1Body}</p>
+                <a className="editorial-split-cta" href={`/search${lq}#pantry`}>
+                  {copy.p1Cta}
+                  <ArrowUpRightIcon />
+                </a>
+              </div>
+              <figure className="editorial-split-media">
+                <img src={`/img/recipe/${splitPhotos[0]!.imageId}`} alt={splitPhotos[0]!.title} loading="lazy" width="640" height="480" />
+              </figure>
+            </article>
+            <article className="editorial-split editorial-split--flip">
+              <div className="editorial-split-copy">
+                <span className="eyebrow">{copy.p2Kicker}</span>
+                <h2 className="editorial-jumbo">{copy.p2Title}</h2>
+                <p>{copy.p2Body}</p>
+                <a className="editorial-split-cta" href={`/account/recipes/new${lq}`}>
+                  {copy.p2Cta}
+                  <ArrowUpRightIcon />
+                </a>
+              </div>
+              <figure className="editorial-split-media">
+                <img src={`/img/recipe/${splitPhotos[1]!.imageId}`} alt={splitPhotos[1]!.title} loading="lazy" width="640" height="480" />
+              </figure>
+            </article>
+          </section>
+        );
+      })() : null}
     </main>
   );
 }

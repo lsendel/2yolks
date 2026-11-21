@@ -74,14 +74,30 @@ describe('inline client scripts & SVG/theme enhancements', () => {
     expect(CAPTURE_CLIENT_SCRIPT).toContain('cup');
     expect(CAPTURE_CLIENT_SCRIPT).toContain('data-check');
   });
-  it('activates Fraunces display typography, inline SVG marks, view/theme toggles, and 9:16 Story SVG card', () => {
+  it('activates Barlow Condensed display typography, Obsidian & Yolk tokens, editorial splits, inline SVG marks, view/theme toggles, and 9:16 Story SVG card', () => {
     const home = renderHome({ recipes: rows, locales: [], lang: 'en' });
-    expect(home).toContain("--font-display:'Fraunces'");
+    expect(home).toContain("--font-display:'Barlow Condensed'");
+    expect(home).toContain('--obsidian:#000000');
+    expect(home).toContain('--yolk-gold:#ffd166');
+    expect(home).toContain('--radius:11px');
+    expect(home).toContain('class="footer-search-form"');
     expect(home).toContain('class="brand-yolks-svg"');
     expect(home).toContain('class="cat-icon"');
     expect(home).toContain('data-view-btn="grid"');
     expect(home).toContain('data-theme-toggle');
     expect(home).toContain('/account/recipes/new');
+
+    const splitHome = renderHome({
+      recipes: [
+        { id: 'p1', country: 'us', lang: 'en', slug: 'p1', title: 'Photo 1', category: 'mains', untested: false, imageId: 'img1', imageStyle: 'photo' },
+        { id: 'p2', country: 'us', lang: 'en', slug: 'p2', title: 'Photo 2', category: 'sides', untested: true, imageId: 'img2', imageStyle: 'photo' },
+      ],
+      locales: [],
+      lang: 'en',
+    });
+    expect(splitHome).toContain('data-editorial-splits="true"');
+    expect(splitHome).toContain('COOK WITH WHAT YOU HAVE');
+    expect(splitHome).toContain("SHARE YOUR KITCHEN&#x27;S BEST");
 
     const cardSvg = renderRecipeCardSvg({
       recipe: { id: '9214e255', sourceId: 's1', originCountry: 'us', imageKey: null, createdAt: '2026-11-01', totalMinutes: 55, baseServings: 6, category: 'soups-stews', testedAt: '2026-11-05' },
