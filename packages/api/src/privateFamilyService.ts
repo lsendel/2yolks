@@ -28,14 +28,19 @@ export async function acceptPrivateVersion(store:PrivateFamilyStore, authenticat
   const digest=await requestDigest(input);
   return store.transaction(async tx=>{
     const c=await tx.candidate(input.candidateId);
-    check(c && c.ownerId===authenticatedPrincipal && c.familyId===input.familyId,'forbidden');
+    check(c && c.id===input.candidateId && c.ownerId===authenticatedPrincipal && c.familyId===input.familyId,'forbidden');
     const f=await tx.family(input.familyId);
-    check(f && f.members.some(m=>m.userId===authenticatedPrincipal && m.active),'forbidden');
+    check(f && f.id===input.familyId && f.members.some(m=>m.userId===authenticatedPrincipal && m.active),'forbidden');
     // Recheck state/withdrawal before replay, so a historical success does not
     // falsely imply current access after revocation. Never creates a new share.
     check(c!.state!=='withdrawn','conflict');
     const prior=await tx.receipt(authenticatedPrincipal,input.key);
-    if(prior)return replayReceipt(prior,authenticatedPrincipal,input.key,digest) as AcceptanceReceipt;
+    if(prior){
+      const result=replayReceipt(prior,authenticatedPrincipal,input.key,digest) as Partial<AcceptanceReceipt>|null;
+      check(result && result.candidateId===c!.id && result.familyId===c!.familyId && result.state==='family_shared' && result.digest===c!.acceptedDigest && c!.state==='family_shared' && c!.acceptedBy===authenticatedPrincipal,'conflict');
+      check(Number.isSafeInteger(result!.revision) && result!.revision===c!.revision,'conflict');
+      return result as AcceptanceReceipt;
+    }
     const next=accept(c!,authenticatedPrincipal,f!,input.expectedRevision,input.digest,input.consentVersion);
     const result:AcceptanceReceipt={candidateId:next.id,familyId:next.familyId,revision:next.revision,state:'family_shared',digest:next.acceptedDigest!};
     await tx.acceptAndBind(next,c!.revision,f!.revision);
@@ -45,8 +50,8 @@ export async function acceptPrivateVersion(store:PrivateFamilyStore, authenticat
 }
 export async function readPrivateVersion(store:PrivateFamilyStore, authenticatedPrincipal:string, candidateId:string):Promise<Version>{
   return store.transaction(async tx=>{
-    const c=await tx.candidate(candidateId);check(c,'forbidden');
-    const f=await tx.family(c!.familyId);check(f,'forbidden');
+    const c=await tx.candidate(candidateId);check(c && c.id===candidateId,'forbidden');
+    const f=await tx.family(c!.familyId);check(f && f.id===c!.familyId,'forbidden');
     return readFamilyVersion(c!,authenticatedPrincipal,f!);
   });
 }

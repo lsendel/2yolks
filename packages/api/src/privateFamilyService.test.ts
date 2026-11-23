@@ -21,3 +21,8 @@ describe('private family service contract, fake transaction only',()=>{
  it('reads only current member allowed version and strips source photo',async()=>{let x=fixture();await acceptPrivateVersion(x.store,'a',input());expect((await readPrivateVersion(x.store,'b','c')).media.map(m=>m.id)).toEqual(['p']);x.f.members[1]!.active=false;await expect(readPrivateVersion(x.store,'b','c')).rejects.toThrow('forbidden');});
  it('canonical digest is repeatable and sensitive to all acceptance fields',async()=>{let a=input();expect(await requestDigest(a)).toEqual(await requestDigest({...a}));for(const patch of [{familyId:'other'},{expectedRevision:4},{candidateId:'x'},{consentVersion:'other'},{digest:'c'.repeat(64)}])expect(await requestDigest({...a,...patch})).not.toEqual(await requestDigest(a));});
 });
+describe('fail closed against inconsistent store results',()=>{
+ it('rejects a store returning the wrong candidate or family',async()=>{let x=fixture();x.c().id='wrong';await expect(acceptPrivateVersion(x.store,'a',input())).rejects.toThrow('forbidden');x=fixture();x.f.id='wrong';await expect(acceptPrivateVersion(x.store,'a',input())).rejects.toThrow('forbidden');});
+ it('refuses malformed/stale receipt instead of claiming stored success',async()=>{let x=fixture();await acceptPrivateVersion(x.store,'a',input());x.c().state='needs_changes';await expect(acceptPrivateVersion(x.store,'a',input())).rejects.toThrow('conflict');});
+ it('propagates a concurrent CAS failure without a success receipt',async()=>{let x=fixture();x.tx.acceptAndBind=async()=>{throw Error('CAS conflict')};let save=vi.fn();x.tx.saveReceipt=save;await expect(acceptPrivateVersion(x.store,'a',input())).rejects.toThrow('CAS conflict');expect(save).not.toHaveBeenCalled();});
+});

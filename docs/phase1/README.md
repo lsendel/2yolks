@@ -52,3 +52,21 @@ media proposal was not in the short owner ask and is not implemented.
 Manual-review load is not yet measured. Recipe-photo text is manually corrected
 before owner acceptance; automatic OCR/models/voice remain deferred. Retain
 existing account behavior and never infer public publication from family approval.
+
+## Unmounted adapter milestone
+
+`privateFamilyApi.ts` is an injectable factory, not mounted in `index.ts` or
+`appapi.ts`. It fails closed before authentication unless both an explicit test
+option and a store are supplied. Cookie writes require exact trusted Origin;
+foreign Origin is rejected for bearer too. A present malformed/expired bearer
+never falls back to cookies. It caps request size, rejects unknown fields and
+returns private/no-store results with no raw DB errors. Production404 isolation
+is tested. Tests use stub authentication/session rows and a fake transaction,
+not current live accounts or a persisted DB concurrency test.
+
+Adapter authentication reuses the account session rules. There is still no
+production persistence implementation, upload, UI or route enablement. Transaction
+implementations must roll back share binding if receipt persistence fails; the
+interface alone cannot enforce that. Before wiring, test membership removal,
+withdrawal and duplicate acceptance concurrently in the actual chosen D1 CAS
+strategy. No DB schema may run under this draft approval.
