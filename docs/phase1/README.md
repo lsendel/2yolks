@@ -10,11 +10,11 @@ This branch is isolated from the unpushed native-search branch. Its base is
 
 ## What is implemented
 
-Pure domain transitions with snapshot copying: submission, review, exact-version
+Pure domain transitions with snapshot copying, plus a transaction-interface service for exact-version acceptance and private reads: submission, review, exact-version
 owner acceptance, withdrawal, family reads filtering out source photos, admin
 join approval and membership removal. Version/consent/revision checks, per-image
 and pending quota checks, principal/request-bound receipt replay, and a disabled
-30day abandoned-draft eligibility predicate. Domain tests run locally only.
+30day abandoned-draft eligibility predicate. Domain/service tests run locally only. Service tests use a fake transaction, not a persisted atomicity proof.
 
 Neither enablement flag is connected to an environment variable. Both are false.
 There are no routes, schedulers, mail sends, DB/R2 writes or public media promotion.
