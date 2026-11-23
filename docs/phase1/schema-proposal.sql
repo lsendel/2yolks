@@ -55,3 +55,12 @@ CREATE TABLE private_operation_receipts (
 );
 -- Audit and rights attestations intentionally need privacy/retention design
 -- before migration. No private text/media in public recipes/recipe_images.
+
+-- Alternative atomicity experiment for the unmounted D1 adapter.
+-- NOT a migration and NOT additional tables to create now. The normalized
+-- proposal above cannot provide a callback transaction on D1. This single-row
+-- aggregate CAS is an alternative requiring schema/privacy/size review first.
+CREATE TABLE private_family_aggregates (
+ family_id TEXT PRIMARY KEY, revision INTEGER NOT NULL CHECK(revision>0),
+ document TEXT NOT NULL CHECK(json_valid(document))
+);

@@ -70,3 +70,37 @@ implementations must roll back share binding if receipt persistence fails; the
 interface alone cannot enforce that. Before wiring, test membership removal,
 withdrawal and duplicate acceptance concurrently in the actual chosen D1 CAS
 strategy. No DB schema may run under this draft approval.
+
+## Unmounted D1 aggregate CAS experiment
+
+`privateFamilyD1.ts` implements the store interface through one conditional row
+update, atomically saving candidate/share state and principal-bound receipt.
+It does not pretend D1 supports arbitrary callback BEGIN/COMMIT transactions.
+Membership/withdrawal/review writers must use the same aggregate CAS; integrating
+only acceptance while other writers bypass it would be unsafe. Read/replay paths
+recheck the row before returning. Unknown write outcomes are not retried blindly.
+
+The schema file contains an alternative aggregate-table review proposal, not a
+migration. No database has been created or changed. Tests simulate D1 statements
+and concurrent CAS, not actual D1. The aggregate strategy still needs bounded
+family/receipt size, retention, durable schema review and actual D1 concurrency
+qualification before it can replace the normalized schema proposal. It is not
+wired to a route or environment binding. R2 and upload lifecycle remain missing.
+
+## Unmounted R2 privacy-lifecycle draft
+
+`privateFamilyMedia.ts` takes an injected catalog, private bucket and trusted
+sanitizer. It writes only re-encoded bytes, limits bytes/pixels, uses server-owned
+private keys, checks current authorization before and after retrieval, verifies
+the stored digest, and denies reads immediately when deletion begins. Object
+deletion failure keeps a resumable tombstone. Unknown verification outcomes do
+not blindly delete a possibly committed image or claim success. No public URL,
+raw upload storage, public recipe promotion or cleanup timer is provided.
+
+This is not a qualified upload pipeline: the actual image decoder/re-encoder
+and durable media catalog are absent. Their contracts are not proof of EXIF
+removal, atomic per-purpose/pending quotas, reviewer/source-photo isolation or
+cross-service erasure. Tests use synthetic bytes/fake dependencies. Those need
+implementation and real decoder/transaction tests before any route enablement.
+Aggregate draft limits fail closed at100members,100candidates,500receipts or512kB;
+these are safety bounds, not approved final product quotas or retention policy.
