@@ -1,9 +1,9 @@
 name: CI
 
+# Manual checks only. Do not dispatch hosted jobs without a separate budget
+# approval or a reviewed no-credit runner route. This does not change deploy.yml.
 on:
-  push:
-    branches: [main, workers-skeleton]
-  pull_request:
+  workflow_dispatch:
 
 jobs:
   build:
