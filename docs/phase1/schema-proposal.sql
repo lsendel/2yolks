@@ -64,3 +64,14 @@ CREATE TABLE private_family_aggregates (
  family_id TEXT PRIMARY KEY, revision INTEGER NOT NULL CHECK(revision>0),
  document TEXT NOT NULL CHECK(json_valid(document))
 );
+
+-- Draft upload catalog, NOT an executable migration. Partial unique index plus
+-- single-statement quota admission must be qualified on actual D1 before use.
+CREATE TABLE private_family_upload_slots (
+ id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, family_id TEXT NOT NULL,
+ candidate_id TEXT NOT NULL, purpose TEXT NOT NULL CHECK(purpose IN ('recipe_source','dish_cover')),
+ object_key TEXT NOT NULL UNIQUE, state TEXT NOT NULL CHECK(state IN ('reserved','verified','deleting','deleted')),
+ bytes INTEGER NOT NULL CHECK(bytes>=0 AND bytes<=3145728), digest TEXT
+);
+CREATE UNIQUE INDEX private_family_active_purpose ON private_family_upload_slots(family_id,candidate_id,purpose) WHERE state!='deleted';
+CREATE INDEX private_family_pending_bytes ON private_family_upload_slots(owner_id,state);

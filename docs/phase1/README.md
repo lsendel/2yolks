@@ -112,3 +112,20 @@ by app entrypoints, has no data/network/local-storage actions, and every action
 is disabled. Local React render inspected at390px and1280px. This is a design
 preview, not an interactive or authenticated application. Native matching screen
 source exists separately but still needs a qualified Mac compile/render.
+
+## Restrictive upload catalog experiment
+
+`privateFamilyMediaD1.ts` drafts a durable catalog using parameterized conditional
+D1 statements. Reservation checks current owner/membership/draft state, one active
+slot per purpose, and account-wide pending bytes in the same insertion. Deleting
+slots keep their byte quota until bucket deletion completes. Owner deletion works
+after membership removal; family admins cannot read contributor source images.
+Read/verification deliberately stop once a candidate leaves draft/needs_changes.
+
+This is NOT ready to inject into the R2 service: version-bound rights/consent
+attestations and authorized reviewer/source access still need a durable model,
+and accepted dish-cover reads are not implemented. Statement-contract tests do
+not execute SQL or prove D1 JSON/alias/partial-index behavior. No schema has run,
+including locally. A real decoder dependency exists among the reused development
+tools, but it is not a Worker deployment dependency or qualified sanitizer; none
+was added. Do not connect an identity sanitizer or treat metadata claims as proof.
