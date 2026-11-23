@@ -42,7 +42,7 @@ the accepted family version. Existing public publication/rights rules stay separ
 
 ## Remaining authority and gates
 
-No backend push/PR until the separate owner approval requested by main. No hosted
+Backend draft PR push approved separately on Nov23 at09:56ET, responding to the08:57ET ask. This does not approve merge or deployment. No hosted
 CI or dispatch, no spend, no notifications, no staging, production DB changes,
 release or TestFlight. Gates4-6 from the implementation plan remain unapproved.
 New30day retention is disabled pending legal/privacy review plus a separately
