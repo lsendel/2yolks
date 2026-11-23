@@ -104,3 +104,11 @@ cross-service erasure. Tests use synthetic bytes/fake dependencies. Those need
 implementation and real decoder/transaction tests before any route enablement.
 Aggregate draft limits fail closed at100members,100candidates,500receipts or512kB;
 these are safety bounds, not approved final product quotas or retention policy.
+
+## Unconnected web screen draft
+
+`PrivateFamilyDraft.tsx` has compose, review and family states. It is not imported
+by app entrypoints, has no data/network/local-storage actions, and every action
+is disabled. Local React render inspected at390px and1280px. This is a design
+preview, not an interactive or authenticated application. Native matching screen
+source exists separately but still needs a qualified Mac compile/render.
