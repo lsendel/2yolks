@@ -258,6 +258,50 @@ app.get('/api/v1/recipes', async (c) => {
   }, 200, { 'cache-control': 'public, max-age=300' });
 });
 
+function parseSearchQuery(req: { query(name: string): string | undefined; queries(name: string): string[] | undefined }): SearchQuery {
+  const q = (req.query('q') ?? '').trim().slice(0, 120);
+  const rawCat = req.query('cat');
+  const cat = rawCat && isRecipeCategorySlug(rawCat) ? rawCat : null;
+  const rawTime = req.query('time');
+  const time = isTimeBucket(rawTime) ? rawTime : null;
+  const rawDiet = req.query('diet');
+  const diet = isDietTag(rawDiet) ? rawDiet : null;
+  const rawCuisine = req.query('cuisine');
+  const cuisine = resolveCuisineSlug(rawCuisine);
+  const rawDiff = req.query('difficulty');
+  const difficulty = isDifficultyLevel(rawDiff) ? rawDiff : null;
+  const tested = req.query('tested') === '1';
+  const method = req.query('method') === 'no-oven' ? 'no-oven' : null;
+  const rawHave = req.queries('have') ?? (req.query('have') ? [req.query('have')!] : []);
+  const have = parseHaveParam(rawHave);
+  const parsedPage = Number.parseInt(req.query('page') ?? '1', 10);
+  const pageNum = Number.isFinite(parsedPage) && parsedPage >= 1 ? Math.min(200, parsedPage) : 1;
+
+  return { q, cat, time, diet, cuisine, difficulty, tested, method, have, page: pageNum };
+}
+
+// Additive native contract. Uses the same parser, ranking and filters as /search.
+// Intentionally read-only: no search-gap or account mutations.
+app.get('/api/v1/search', async (c) => {
+  const lang = c.req.query('lang') ?? 'en';
+  const languages = [...new Set(Object.values(LOCALES).flat())].sort();
+  if (!languages.includes(lang)) return c.json({ error: 'unsupported language', languages }, 404);
+  const query = parseSearchQuery(c.req);
+  const db = createDb(c.env.DB);
+  const rows = discoveryRecipes(await loadDiscoveryRecipeRows(db, demoAllowed(c)), lang);
+  const result = searchCatalog(rows, query, lang);
+  const origin = c.env.CANONICAL_ORIGIN ?? new URL(c.req.url).origin;
+  return c.json({
+    lang, query, total: result.total, page: result.page, pageSize: result.pageSize,
+    totalPages: result.totalPages, usedFuzzy: result.usedFuzzy,
+    recipes: result.items.map((r) => ({
+      id: r.id, country: r.country, lang: r.lang, slug: r.slug, title: r.title,
+      category: r.category ?? null,
+      heroImage: r.imageId && r.imageStyle ? { url: `${origin}/img/recipe/${r.imageId}`, style: r.imageStyle } : null,
+    })),
+  }, 200, { 'cache-control': 'public, max-age=120' });
+});
+
 app.get('/api/v1/search/suggest', async (c) => {
   const requested = c.req.query('lang') ?? 'en';
   const lang = ['en', 'es', 'fr'].includes(requested) ? requested : 'en';
@@ -874,25 +918,8 @@ app.get('/cooks/:slug', async (c) => {
 
 app.get('/search', async (c) => {
   const { lang } = discoveryLang(c);
-  const q = (c.req.query('q') ?? '').trim().slice(0, 120);
-  const rawCat = c.req.query('cat');
-  const cat = rawCat && isRecipeCategorySlug(rawCat) ? rawCat : null;
-  const rawTime = c.req.query('time');
-  const time = isTimeBucket(rawTime) ? rawTime : null;
-  const rawDiet = c.req.query('diet');
-  const diet = isDietTag(rawDiet) ? rawDiet : null;
-  const rawCuisine = c.req.query('cuisine');
-  const cuisine = resolveCuisineSlug(rawCuisine);
-  const rawDiff = c.req.query('difficulty');
-  const difficulty = isDifficultyLevel(rawDiff) ? rawDiff : null;
-  const tested = c.req.query('tested') === '1';
-  const method = c.req.query('method') === 'no-oven' ? 'no-oven' : null;
-  const rawHave = c.req.queries('have') ?? (c.req.query('have') ? [c.req.query('have')!] : []);
-  const have = parseHaveParam(rawHave);
-  const parsedPage = Number.parseInt(c.req.query('page') ?? '1', 10);
-  const pageNum = Number.isFinite(parsedPage) && parsedPage >= 1 ? Math.min(200, parsedPage) : 1;
-
-  const query: SearchQuery = { q, cat, time, diet, cuisine, difficulty, tested, method, have, page: pageNum };
+  const query = parseSearchQuery(c.req);
+  const { q = '', have = [], page: pageNum = 1 } = query;
   const db = createDb(c.env.DB);
   const selected = discoveryRecipes(await loadDiscoveryRecipeRows(db, demoAllowed(c)), lang);
   const result = searchCatalog(selected, query, lang);
@@ -917,7 +944,7 @@ app.get('/search', async (c) => {
   const categories = [...new Set(selected.map((r) => r.category).filter((x): x is string => Boolean(x)))];
   const nav = await siteNav(db, demoAllowed(c), lang, new URL(c.req.url));
   const origin = c.env.CANONICAL_ORIGIN ?? new URL(c.req.url).origin;
-  const noindex = result.total === 0 || result.page > result.totalPages || have.length > 0;
+  const noindex = result.total === 0 || result.page > result.totalPages || (have?.length ?? 0) > 0;
   return c.html(
     renderSearchPage({ lang, query, result, cuisines, categories, missingPrompts }, nav, origin),
     200,
