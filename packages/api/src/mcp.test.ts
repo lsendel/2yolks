@@ -221,6 +221,80 @@ describe('admin MCP', () => {
     expect(body.tools.map((t) => t.name)).not.toContain('blog.publish');
   });
 
+  describe('dedicated Sam editor key', () => {
+    const samKey = 'test-only-sam-credential-000000000000';
+    const samEnv = { SAM_TELESCO_MCP_KEY: samKey };
+
+    it.each([undefined, '', '   ', 'short', 'x'.repeat(31)])(
+      'ignores absent, blank or short dedicated binding: %s', async (value) => {
+        const res = await call(samKey, 'ping', undefined, { SAM_TELESCO_MCP_KEY: value });
+        expect(res.status).toBe(401);
+      },
+    );
+
+    it('fails closed with no other configured keys and a short Sam binding', async () => {
+      const res = await call('short', 'ping', undefined, {
+        ADMIN_MCP_API_KEY: undefined, MCP_READ_KEY: undefined,
+        MCP_NAMED_KEYS: undefined, SAM_TELESCO_MCP_KEY: 'short',
+      });
+      expect(res.status).toBe(503);
+    });
+
+    it('accepts the dedicated key, rejects another key and exposes only editor tools', async () => {
+      expect((await call(samKey, 'ping', undefined, samEnv)).status).toBe(200);
+      expect((await call('wrong-sam-key', 'ping', undefined, samEnv)).status).toBe(401);
+      const res = await app.request('https://2yolks.com/api/admin/mcp/tools',
+        { headers: { authorization: `Bearer ${samKey}` } }, env(DB, samEnv));
+      const body = await res.json() as { role: string; tools: { name: string }[] };
+      expect(body.role).toBe('editor');
+      expect(body.tools.map(t => t.name)).toContain('recipes.update_draft');
+      expect(body.tools.map(t => t.name)).not.toContain('recipes.publish');
+      expect(body.tools.map(t => t.name)).not.toContain('blog.publish');
+    });
+
+    it('preserves shared admin, read and existing named operator roles', async () => {
+      for (const [key, role] of [[ADMIN_KEY, 'admin'], [READ_KEY, 'viewer'], [EDITOR_KEY, 'editor']]) {
+        const res = await app.request('https://2yolks.com/api/admin/mcp/tools',
+          { headers: { authorization: `Bearer ${key}` } }, env(DB, samEnv));
+        expect(res.status).toBe(200);
+        expect((await res.json() as { role: string }).role).toBe(role);
+      }
+    });
+
+    it('allows draft and metadata updates, denies publication, and fixes authenticated audit actor', async () => {
+      const created = await toolCall(samKey, 'recipes.create_draft', { ...RECIPE, confirmed: true }, samEnv);
+      expect(created.isError).toBe(false);
+      const id = created.data?.['id'] as string;
+      const updated = await toolCall(samKey, 'recipes.update_draft', {
+        id, confirmed: true, prepMinutes: 12,
+        locales: [{ country: 'us', lang: 'en', intro: 'Sam test draft update.' }],
+      }, samEnv);
+      expect(updated.isError).toBe(false);
+      const row = await DB.prepare('SELECT prep_minutes FROM recipes WHERE id = ?').bind(id).first<{ prep_minutes: number }>();
+      expect(row?.prep_minutes).toBe(12);
+      const denied = await toolCall(samKey, 'recipes.publish', { id, confirmed: true }, samEnv);
+      expect(denied.isError).toBe(true);
+      expect(denied.data?.['error']).toBe('insufficient role');
+      const spoofed = await app.request('https://2yolks.com/api/admin/mcp', {
+        method: 'POST', headers: { 'content-type': 'application/json',
+          authorization: `Bearer ${samKey}`, 'x-mcp-caller': 'claimed-admin' },
+        body: JSON.stringify(rpc('tools/call', { name: 'recipes.update_draft',
+          arguments: { id, confirmed: true, locales: [], prepMinutes: 13 } })),
+      }, env(DB, samEnv));
+      expect(spoofed.status).toBe(200);
+      const rows = await DB.prepare("SELECT actor, details_json FROM mcp_audit WHERE tool = 'recipes.update_draft' ORDER BY id").all<{ actor: string; details_json: string }>();
+      expect(rows.results.length).toBe(2);
+      for (const audit of rows.results) expect(audit.actor).toBe('sam-telesco-2yolks-pilot-20261125');
+      expect(rows.results[1]?.details_json).toContain('claimed-admin');
+    });
+
+    it('revokes only Sam when the dedicated binding is removed', async () => {
+      expect((await call(samKey, 'ping', undefined, samEnv)).status).toBe(200);
+      expect((await call(samKey, 'ping')).status).toBe(401);
+      expect((await call(EDITOR_KEY, 'ping')).status).toBe(200);
+    });
+  });
+
   it('runs the full recipe lifecycle with draft-first and rights gating', async () => {
     // editor creates a draft
     const created = await toolCall(EDITOR_KEY, 'recipes.create_draft', { ...RECIPE, confirmed: true });
