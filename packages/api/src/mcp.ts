@@ -48,6 +48,8 @@ export type McpBindings = MailEnv & {
   ADMIN_MCP_API_KEY?: string;
   MCP_READ_KEY?: string;
   MCP_NAMED_KEYS?: string;
+  /** Dedicated Sam editor credential; does not replace the legacy named array. */
+  SAM_TELESCO_MCP_KEY?: string;
   GEMINI_API_KEY?: string;
   CANONICAL_ORIGIN?: string;
   // Fail-closed gate for translations.mark_reviewed. The human-vs-agent
@@ -127,6 +129,15 @@ async function tryAudit(
 async function resolveAuth(c: Context<{ Bindings: McpBindings }>): Promise<AuthResult> {
   const env = c.env;
   const namedKeys = parseNamedKeys(env.MCP_NAMED_KEYS);
+  // Keep existing operators intact. Missing/short dedicated keys fail closed.
+  const samKey = env.SAM_TELESCO_MCP_KEY?.trim();
+  if (samKey && samKey.length >= 32) {
+    namedKeys.push({
+      name: 'sam-telesco-2yolks-pilot-20261125',
+      key: samKey,
+      role: 'editor',
+    });
+  }
   const configured =
     (env.ADMIN_MCP_API_KEY?.trim().length ?? 0) > 0 ||
     (env.MCP_READ_KEY?.trim().length ?? 0) > 0 ||
